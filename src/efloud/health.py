@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_none
 from efloud.transport.rsync import read_rsync_mirror_meta
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from efloud.models import NormalizedManifest
@@ -17,10 +18,10 @@ class MirrorHealthSummary:
     mirror_timestamps: dict[str, float | None]
     missing_roots: tuple[str, ...]
     manifest_errors: tuple[str, ...]
-    rsync_results: dict[str, dict[str, object]]
-    http_results: dict[str, dict[str, object]]
+    rsync_results: dict[str, JsonObject]
+    http_results: dict[str, JsonObject]
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "mirror_timestamps": self.mirror_timestamps,
             "missing_roots": list(self.missing_roots),
@@ -46,14 +47,15 @@ def _mirror_last_sync(root: Path | None) -> float | None:
 def _manifest_section(
     manifest: NormalizedManifest | None,
     section: Literal["rsync", "http"],
-) -> dict[str, dict[str, object]]:
+) -> dict[str, JsonObject]:
     if not manifest:
         return {}
     sec = manifest["results"][section]
-    out: dict[str, dict[str, object]] = {}
+    out: dict[str, JsonObject] = {}
     for name, value in sec.items():
-        if isinstance(value, Mapping):
-            out[name] = dict(value)
+        value_mapping = json_mapping_or_none(value)
+        if value_mapping is not None:
+            out[name] = copy_json_mapping(value_mapping)
     return out
 
 

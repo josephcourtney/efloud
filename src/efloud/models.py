@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 
     from efloud.derived import DerivedTask
     from efloud.indexing import IndexRegistry
+    from efloud.json_types import JsonObject
     from efloud.policy import SyncPolicy
     from efloud.registry import SourceDefinition
     from efloud.source_aliases import AliasMap
@@ -21,43 +22,10 @@ class ManifestError(TypedDict):
     url: NotRequired[str]
 
 
-class HttpRequest(TypedDict):
-    url: str
-    method: str
-    headers: dict[str, str]
-    refresh: bool
-
-
-class HttpEntry(TypedDict, total=False):
-    source_id: str | None
-    description: str
-    ok: bool
-    kind: str
-    dest: str
-    url: str
-    request: HttpRequest
-    status_code: int
-    freshness: dict[str, object]
-    error: str
-
-
-class RsyncEntry(TypedDict, total=False):
-    source_id: str | None
-    description: str
-    ok: bool
-    remote: str
-    local: str
-    mode: str
-    request: dict[str, object]
-    results: dict[str, object]
-    freshness: dict[str, object]
-    error: str
-
-
 class ManifestResults(TypedDict):
-    http: dict[str, HttpEntry | dict[str, object]]
-    rsync: dict[str, RsyncEntry | dict[str, object]]
-    derived: dict[str, dict[str, object]]
+    http: dict[str, JsonObject]
+    rsync: dict[str, JsonObject]
+    derived: dict[str, JsonObject]
 
 
 class Manifest(TypedDict, total=False):
@@ -68,7 +36,7 @@ class Manifest(TypedDict, total=False):
     finished_at_iso: str
     duration_seconds: float
     root: str
-    config: dict[str, object]
+    config: JsonObject
     results: ManifestResults
     errors: list[ManifestError]
 

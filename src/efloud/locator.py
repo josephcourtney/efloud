@@ -3,8 +3,9 @@ from __future__ import annotations
 import gzip
 import json
 import re
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
+
+from efloud.json_types import JsonValue, json_mapping_or_none
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,7 +77,7 @@ def locator_parts(locator: str) -> list[str]:
     return [part for part in loc.split("/") if part]
 
 
-def apply_structured_locator(value: object, locator: str) -> tuple[object | None, str | None]:
+def apply_structured_locator(value: JsonValue, locator: str) -> tuple[JsonValue | None, str | None]:
     """
     Apply a structured locator to a nested Python object.
 
@@ -89,12 +90,13 @@ def apply_structured_locator(value: object, locator: str) -> tuple[object | None
     -------
     (resolved_value, error_message)
     """
-    current: object = value
+    current: JsonValue = value
     for part in locator_parts(locator):
-        if isinstance(current, Mapping):
-            if part not in current:
+        current_mapping = json_mapping_or_none(current)
+        if current_mapping is not None:
+            if part not in current_mapping:
                 return None, f"Locator segment {part!r} not found in object"
-            current = current[part]
+            current = current_mapping[part]
             continue
 
         if isinstance(current, list):
@@ -111,7 +113,7 @@ def apply_structured_locator(value: object, locator: str) -> tuple[object | None
     return current, None
 
 
-def resolve_single_locator_from_file(path: Path, locator: str) -> tuple[object | None, str | None]:
+def resolve_single_locator_from_file(path: Path, locator: str) -> tuple[JsonValue | None, str | None]:
     """
     Resolve a locator against a file.
 
@@ -148,7 +150,7 @@ def resolve_single_locator_from_file(path: Path, locator: str) -> tuple[object |
     return _resolve_text_locator(text, locator)
 
 
-def resolve_locator_from_file(path: Path, locator: str) -> tuple[object | None, str | None, str | None]:
+def resolve_locator_from_file(path: Path, locator: str) -> tuple[JsonValue | None, str | None, str | None]:
     """
     Resolve a locator from a file, trying a small set of normalized fallback forms.
 
@@ -205,53 +207,58 @@ def locator_candidates(locator: str) -> tuple[str, ...]:
     return tuple(candidates)
 
 
-def _resolve_text_locator(text: str, locator: str) -> tuple[object | None, str | None]:
+def _resolve_text_locator(text: str, locator: str) -> tuple[JsonValue | None, str | None]:
     loc = locator.strip()
-
     if loc == "text":
         return text, None
-
     if loc.startswith("line:"):
-        number = loc.removeprefix("line:").strip()
-        if not number.isdigit():
-            return None, f"Invalid line locator: {locator!r}"
-        line_no = int(number)
-        lines = text.splitlines()
-        if line_no < 1 or line_no > len(lines):
-            return None, f"Line {line_no} out of range (1..{len(lines)})"
-        return lines[line_no - 1], None
-
+        return _resolve_line_locator(text, locator)
     if loc.startswith("lines:"):
-        spec = loc.removeprefix("lines:").strip()
-        match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", spec)
-        if match is None:
-            return None, f"Invalid lines locator: {locator!r}"
-        start = int(match.group(1))
-        end = int(match.group(2))
-        if start < 1 or end < start:
-            return None, f"Invalid line range {start}-{end}"
-        lines = text.splitlines()
-        if end > len(lines):
-            return None, f"Line range {start}-{end} exceeds file length {len(lines)}"
-        return "\n".join(lines[start - 1 : end]), None
-
+        return _resolve_lines_locator(text, locator)
     if loc.startswith("regex:"):
-        pattern = loc.removeprefix("regex:")
-        try:
-            compiled = re.compile(pattern, re.MULTILINE | re.DOTALL)
-        except re.error as exc:
-            return None, f"Invalid regex locator {locator!r}: {exc}"
-        match = compiled.search(text)
-        if match is None:
-            return None, f"Regex locator {locator!r} did not match"
-        if match.groups():
-            return match.group(1), None
-        return match.group(0), None
-
+        return _resolve_regex_locator(text, locator)
     return None, (
         f"Unsupported locator for non-JSON file: {locator!r}. "
         "Use one of: text, line:<n>, lines:<a>-<b>, regex:<pattern>."
     )
+
+
+def _resolve_line_locator(text: str, locator: str) -> tuple[JsonValue | None, str | None]:
+    number = locator.removeprefix("line:").strip()
+    if not number.isdigit():
+        return None, f"Invalid line locator: {locator!r}"
+    line_no = int(number)
+    lines = text.splitlines()
+    if line_no < 1 or line_no > len(lines):
+        return None, f"Line {line_no} out of range (1..{len(lines)})"
+    return lines[line_no - 1], None
+
+
+def _resolve_lines_locator(text: str, locator: str) -> tuple[JsonValue | None, str | None]:
+    spec = locator.removeprefix("lines:").strip()
+    match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", spec)
+    if match is None:
+        return None, f"Invalid lines locator: {locator!r}"
+    start = int(match.group(1))
+    end = int(match.group(2))
+    if start < 1 or end < start:
+        return None, f"Invalid line range {start}-{end}"
+    lines = text.splitlines()
+    if end > len(lines):
+        return None, f"Line range {start}-{end} exceeds file length {len(lines)}"
+    return "\n".join(lines[start - 1 : end]), None
+
+
+def _resolve_regex_locator(text: str, locator: str) -> tuple[JsonValue | None, str | None]:
+    pattern = locator.removeprefix("regex:")
+    try:
+        compiled = re.compile(pattern, re.MULTILINE | re.DOTALL)
+    except re.error as exc:
+        return None, f"Invalid regex locator {locator!r}: {exc}"
+    match = compiled.search(text)
+    if match is None:
+        return None, f"Regex locator {locator!r} did not match"
+    return (match.group(1) if match.groups() else match.group(0)), None
 
 
 def _jsonpath_to_pointer(locator: str) -> str | None:
@@ -269,52 +276,54 @@ def _jsonpath_to_pointer(locator: str) -> str | None:
     if not loc:
         return None
 
-    if loc.startswith("#/"):
-        return loc[1:]
+    loc = loc.removeprefix("#")
     if loc.startswith("/"):
         return loc
-
-    loc = loc.removeprefix("#")
-
-    loc = loc.removeprefix("$")
-
-    loc = loc.removeprefix(".")
-
+    loc = loc.removeprefix("$").removeprefix(".")
     if not loc:
         return "/"
+    return _pointer_from_jsonpath_segments(loc)
 
+
+def _pointer_from_jsonpath_segments(text: str) -> str | None:
     parts: list[str] = []
     i = 0
-    while i < len(loc):
-        ch = loc[i]
-
+    while i < len(text):
+        ch = text[i]
         if ch == ".":
             i += 1
             continue
-
         if ch == "[":
-            end = loc.find("]", i + 1)
-            if end == -1:
+            token, next_index = _parse_bracket_token(text, i)
+            if token is None:
                 return None
-            token = loc[i + 1 : end].strip()
-            if not token:
-                return None
-            if (token.startswith("'") and token.endswith("'")) or (
-                token.startswith('"') and token.endswith('"')
-            ):
-                token = token[1:-1]
             parts.append(token)
-            i = end + 1
+            i = next_index
             continue
-
-        start = i
-        while i < len(loc) and loc[i] not in ".[":
-            i += 1
-        token = loc[start:i].strip()
+        token, next_index = _parse_bare_token(text, i)
         if token:
             parts.append(token)
-
+        i = next_index
     return "/" + "/".join(parts)
+
+
+def _parse_bracket_token(text: str, start: int) -> tuple[str | None, int]:
+    end = text.find("]", start + 1)
+    if end == -1:
+        return None, len(text)
+    token = text[start + 1 : end].strip()
+    if not token:
+        return None, len(text)
+    if (token.startswith("'") and token.endswith("'")) or (token.startswith('"') and token.endswith('"')):
+        token = token[1:-1]
+    return token, end + 1
+
+
+def _parse_bare_token(text: str, start: int) -> tuple[str, int]:
+    end = start
+    while end < len(text) and text[end] not in ".[":
+        end += 1
+    return text[start:end].strip(), end
 
 
 __all__ = [

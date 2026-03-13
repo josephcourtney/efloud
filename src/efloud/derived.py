@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Protocol
 
-from efloud.manifest import NormalizedManifest
+from efloud.models import NormalizedManifest
 from efloud.registry import SourceDefinition
 
 

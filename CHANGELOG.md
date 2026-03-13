@@ -24,8 +24,11 @@ Items should be categorized under these headings:
 ### Deprecated
 
 ### Removed
+- remove obsolete check-command tests that still targeted the retired `efloud.app` and `efloud.cli.root` package layout
 
 ### Fixed
+- fix lint violations across sync, locator, query, status, and transport helpers by extracting smaller helper routines and cleaning import/docstring issues
+- fix pytest warning noise by installing `pytest-test-categories`, adding explicit size markers to the unit suite, and aligning pytest category enforcement settings with the current medium-sized test mix
 
 ### Security
 

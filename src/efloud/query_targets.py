@@ -41,10 +41,7 @@ def parse_query_target(raw: str) -> QueryTarget:
                 raise ValueError(msg)
             return QueryTarget(kind=kind, identifier=identifier, locator=locator, raw=text)
 
-    msg = (
-        f"Unsupported query target: {raw!r}. "
-        "Use one of: root, source:<id>, store:<id>, index:<id>."
-    )
+    msg = f"Unsupported query target: {raw!r}. Use one of: root, source:<id>, store:<id>, index:<id>."
     raise ValueError(msg)
 
 

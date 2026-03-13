@@ -5,11 +5,13 @@ import json
 import logging
 import operator
 import time
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from efloud.json_types import JsonMapping, JsonObject, JsonValue, json_mapping_or_none
+
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -25,28 +27,30 @@ class MirrorStateNode:
     hash: str
     children: HashTreeChildren | None = None
 
-    def to_dict(self) -> dict[str, object]:
-        payload: dict[str, object] = {"type": self.path_type, "hash": self.hash}
+    def to_dict(self) -> JsonObject:
+        payload: JsonObject = {"type": self.path_type, "hash": self.hash}
         if self.children is not None:
             payload["children"] = {name: child.to_dict() for name, child in self.children.items()}
         return payload
 
     @staticmethod
-    def from_dict(raw: Mapping[str, object]) -> MirrorStateNode | None:
-        path_type = raw.get("type")
-        if path_type not in {"file", "dir"}:
+    def from_dict(raw: JsonMapping) -> MirrorStateNode | None:
+        path_type = _node_type(raw.get("type"))
+        if path_type is None:
             return None
         hash_value = raw.get("hash")
         if not isinstance(hash_value, str):
             return None
         children_raw = raw.get("children")
         children: HashTreeChildren | None = None
-        if isinstance(children_raw, Mapping):
+        children_mapping = json_mapping_or_none(children_raw)
+        if children_mapping is not None:
             entries: dict[str, MirrorStateNode] = {}
-            for name, child in children_raw.items():
-                if not isinstance(name, str) or not isinstance(child, Mapping):
+            for name, child in children_mapping.items():
+                child_mapping = json_mapping_or_none(child)
+                if child_mapping is None:
                     continue
-                node = MirrorStateNode.from_dict(child)
+                node = MirrorStateNode.from_dict(child_mapping)
                 if node is not None:
                     entries[name] = node
             if entries:
@@ -175,42 +179,55 @@ def compare_hash_trees(
     max_diffs: int = 24,
 ) -> list[str]:
     diffs: list[str] = []
+    _append_tree_diffs(expected, actual, base_path, diffs=diffs, max_diffs=max_diffs)
+    return diffs
 
-    def _describe(path: str) -> str:
-        return path or "."
 
-    def _walk(exp: MirrorStateNode | None, act: MirrorStateNode | None, path: str) -> None:
+def _append_tree_diffs(
+    expected: MirrorStateNode | None,
+    actual: MirrorStateNode | None,
+    path: str,
+    *,
+    diffs: list[str],
+    max_diffs: int,
+) -> None:
+    if len(diffs) >= max_diffs or (expected is None and actual is None):
+        return
+    if expected is None:
+        diffs.append(f"unexpected artifact at {_describe_tree_path(path)}")
+        return
+    if actual is None:
+        diffs.append(f"missing artifact at {_describe_tree_path(path)}")
+        return
+    if expected.path_type != actual.path_type:
+        diffs.append(
+            "type mismatch at "
+            f"{_describe_tree_path(path)}: expected {expected.path_type}, "
+            f"found {actual.path_type}",
+        )
+        return
+    if expected.hash != actual.hash:
+        diffs.append(f"hash mismatch at {_describe_tree_path(path)}")
+    if expected.path_type != "dir":
+        return
+    for name in _child_names(expected, actual):
+        _append_tree_diffs(
+            (expected.children or {}).get(name),
+            (actual.children or {}).get(name),
+            f"{path}/{name}" if path else name,
+            diffs=diffs,
+            max_diffs=max_diffs,
+        )
         if len(diffs) >= max_diffs:
             return
-        if exp is None and act is None:
-            return
-        if exp is None:
-            diffs.append(f"unexpected artifact at {_describe(path)}")
-            return
-        if act is None:
-            diffs.append(f"missing artifact at {_describe(path)}")
-            return
-        if exp.path_type != act.path_type:
-            diffs.append(
-                f"type mismatch at {_describe(path)}: expected {exp.path_type}, found {act.path_type}",
-            )
-            return
-        if exp.hash != act.hash:
-            diffs.append(f"hash mismatch at {_describe(path)}")
-        if exp.path_type == "dir":
-            expected_children = exp.children or {}
-            actual_children = act.children or {}
-            for name in sorted(set(expected_children) | set(actual_children)):
-                _walk(
-                    expected_children.get(name),
-                    actual_children.get(name),
-                    f"{path}/{name}" if path else name,
-                )
-                if len(diffs) >= max_diffs:
-                    return
 
-    _walk(expected, actual, base_path)
-    return diffs
+
+def _describe_tree_path(path: str) -> str:
+    return path or "."
+
+
+def _child_names(expected: MirrorStateNode, actual: MirrorStateNode) -> list[str]:
+    return sorted(set(expected.children or {}) | set(actual.children or {}))
 
 
 @dataclass(frozen=True)
@@ -219,11 +236,11 @@ class MirrorSourceState:
     local_subdir: str
     hash: str | None
 
-    def to_dict(self) -> dict[str, object | None]:
+    def to_dict(self) -> JsonObject:
         return {"source_id": self.source_id, "local_subdir": self.local_subdir, "hash": self.hash}
 
     @staticmethod
-    def from_dict(raw: Mapping[str, object]) -> MirrorSourceState | None:
+    def from_dict(raw: JsonMapping) -> MirrorSourceState | None:
         local_subdir = raw.get("local_subdir")
         if not isinstance(local_subdir, str):
             return None
@@ -247,8 +264,8 @@ class MirrorState:
     tree: MirrorStateNode
     sources: tuple[MirrorSourceState, ...]
 
-    def to_dict(self) -> dict[str, object]:
-        payload: dict[str, object] = {
+    def to_dict(self) -> JsonObject:
+        payload: JsonObject = {
             "version": self.version,
             "generated_at_unix": self.generated_at_unix,
             "cache_root": self.cache_root,
@@ -261,7 +278,7 @@ class MirrorState:
         return payload
 
     @staticmethod
-    def from_dict(raw: Mapping[str, object]) -> MirrorState | None:
+    def from_dict(raw: JsonMapping) -> MirrorState | None:
         version = raw.get("version")
         if not isinstance(version, int):
             return None
@@ -280,16 +297,17 @@ class MirrorState:
         manifest_path = raw.get("manifest_path")
         if manifest_path is not None and not isinstance(manifest_path, str):
             return None
-        tree_raw = raw.get("tree")
-        tree = MirrorStateNode.from_dict(tree_raw) if isinstance(tree_raw, Mapping) else None
+        tree_raw = json_mapping_or_none(raw.get("tree"))
+        tree = MirrorStateNode.from_dict(tree_raw) if tree_raw is not None else None
         if tree is None:
             return None
         sources_raw = raw.get("sources")
         sources: list[MirrorSourceState] = []
         if isinstance(sources_raw, list):
             for entry in sources_raw:
-                if isinstance(entry, Mapping):
-                    source_state = MirrorSourceState.from_dict(entry)
+                entry_mapping = json_mapping_or_none(entry)
+                if entry_mapping is not None:
+                    source_state = MirrorSourceState.from_dict(entry_mapping)
                     if source_state is not None:
                         sources.append(source_state)
         return MirrorState(
@@ -345,6 +363,15 @@ def load_mirror_state(path: Path) -> MirrorState | None:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(raw, Mapping):
+    raw_mapping = json_mapping_or_none(raw)
+    if raw_mapping is None:
         return None
-    return MirrorState.from_dict(raw)
+    return MirrorState.from_dict(raw_mapping)
+
+
+def _node_type(value: JsonValue | None) -> Literal["file", "dir"] | None:
+    if value == "file":
+        return "file"
+    if value == "dir":
+        return "dir"
+    return None

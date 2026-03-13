@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 import httpx
 from hishel import AsyncSqliteStorage, CacheOptions, SpecificationPolicy
@@ -63,10 +63,11 @@ def _retry_decorator(cfg: HttpCacheConfig) -> Callable[[F], F]:
 
 class HttpCache:
     """
-    Thin wrapper around httpx.AsyncClient with:
-      - tenacity retries for HTTP errors
-      - smartratelimit gating per scope
-      - hishel RFC9111 caching (persistent sqlite storage).
+    Thin wrapper around httpx.AsyncClient.
+
+    - tenacity retries for HTTP errors
+    - smartratelimit gating per scope
+    - hishel RFC9111 caching (persistent sqlite storage)
     """
 
     def __init__(self, cfg: HttpCacheConfig, *, client: httpx.AsyncClient | None = None) -> None:
@@ -92,11 +93,6 @@ class HttpCache:
                 )
 
                 next_transport = httpx.AsyncHTTPTransport()
-                transport = AsyncCacheTransport(
-                    next_transport=next_transport,
-                    storage=storage,
-                )
-
                 # Optionally force caching even without cache headers
                 policy = None
                 if cfg.force_cache and SpecificationPolicy is not None and CacheOptions is not None:
@@ -113,12 +109,16 @@ class HttpCache:
                         )
                         policy = None
 
+                transport = AsyncCacheTransport(
+                    next_transport=next_transport,
+                    storage=cast("Any", storage),
+                    policy=cast("Any", policy),
+                )
+
                 client = httpx.AsyncClient(
                     headers=cfg.headers or {},
                     timeout=cfg.timeout,
                     transport=transport,
-                    # Only pass policy if we actually built it
-                    **({"policy": policy} if policy is not None else {}),
                 )
                 logger.info("HttpCache %s using hishel cache %s", cfg.name, db_path)
             else:
@@ -153,6 +153,7 @@ class HttpCache:
         return self._cfg.name
 
     async def __aenter__(self) -> Self:
+        """Return the cache instance for async context-manager use."""
         return self
 
     async def __aexit__(
@@ -161,6 +162,7 @@ class HttpCache:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
+        """Close the underlying HTTP client when leaving a context."""
         await self.aclose()
 
     async def _send_request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
@@ -172,8 +174,8 @@ class HttpCache:
         """
         Request by absolute URL.
 
-        If hishel is enabled, GET responses may be served from (or stored into) the cache
-        according to RFC 9111. :contentReference[oaicite:2]{index=2}
+        If hishel is enabled, GET responses may be served from or stored in the cache
+        according to RFC 9111.
         """
         method_u = method.upper()
         return await self._send(method_u, url, **kwargs)
@@ -188,18 +190,24 @@ class HttpCache:
     async def post(self, url: str, **kwargs: Any) -> httpx.Response:
         return await self.request("POST", url, **kwargs)
 
-    async def invalidate(self, _urls: Iterable[str]) -> None:
+    @staticmethod
+    async def invalidate(_urls: Iterable[str]) -> None:
         """
-        Reviewer note: "Hishel supports cache invalidation via storage APIs, but there's no
-        stable cross-version public invalidate(urls) in the httpx integration."
         Keep no-op until you need it.
+
+        Reviewer note: Hishel supports cache invalidation via storage APIs, but
+        there is no stable cross-version public invalidate(urls) in the httpx
+        integration.
         """
         return
 
-    async def clear(self) -> None:
+    @staticmethod
+    async def clear() -> None:
         """
-        Reviewer note: "Can be implemented by deleting the sqlite DB file if you control db_path."
         Keep no-op until required.
+
+        Reviewer note: can be implemented by deleting the sqlite DB file if you
+        control `db_path`.
         """
         return
 

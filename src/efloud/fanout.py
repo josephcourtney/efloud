@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from efloud.registry import SourceDefinition
 
 ResponseMode = Literal["json", "bytes"]
+MIN_BUCKET_SOURCE_LENGTH = 3
+HTTP_NOT_FOUND = 404
 
 
 @dataclass(frozen=True)
@@ -43,7 +45,7 @@ class BucketStrategy(Protocol):
 
 def two_char_bucket(item_id: str, *, suffix: str = ".json") -> Path:
     text = item_id.lower()
-    bucket = text[1:3] if len(text) >= 3 else "xx"
+    bucket = text[1:3] if len(text) >= MIN_BUCKET_SOURCE_LENGTH else "xx"
     return Path(bucket) / f"{text}{suffix}"
 
 
@@ -171,10 +173,10 @@ async def _materialize_fanout(
                 }
                 try:
                     resp = await cache.get(url, refresh=refresh)
-                    if resp.status_code == 404:
+                    if resp.status_code == HTTP_NOT_FOUND:
                         statuses[item.item_id] = {
                             "status": "error",
-                            "error": "404",
+                            "error": str(HTTP_NOT_FOUND),
                             "request": request,
                             "dest": str(dest),
                             "item_id": item.item_id,

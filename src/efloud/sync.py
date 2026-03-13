@@ -18,14 +18,16 @@ from efloud.fs import (
     prune_orphan_mirrors,
     safe_json_dump,
 )
+from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.manifest import merge_manifests, normalize_manifest
-from efloud.models import EngineConfig, NormalizedManifest, SyncResult
+from efloud.models import EngineConfig, ManifestError, NormalizedManifest, SyncResult
 from efloud.policy import DefaultSyncPolicy
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.state import (
     HASH_ALGORITHM,
     MirrorSourceState,
     MirrorState,
+    MirrorStateNode,
     load_mirror_state,
     node_at_path,
     update_hash_tree_for_subdirs,
@@ -71,8 +73,8 @@ class ManifestRecorder:
     def manifest(self) -> NormalizedManifest:
         return self._manifest
 
-    def error(self, *, phase: str, error: str, **fields: object) -> None:
-        payload = {"phase": phase, "error": error, **fields}
+    def error(self, *, phase: str, error: str, **fields: str) -> None:
+        payload: ManifestError = {"phase": phase, "error": error, **fields}
         self._manifest["errors"].append(payload)
 
     def record_http(self, *, manifest_key: str, entry: dict[str, Any]) -> None:
@@ -113,7 +115,7 @@ def _manifest_key_for_source(source: SourceDefinition) -> str:
     return source.id
 
 
-def _http_freshness_record(result: HttpFetchResult) -> dict[str, object]:
+def _http_freshness_record(result: HttpFetchResult) -> dict[str, Any]:
     headers = result.headers or {}
     return {
         "status_code": result.status_code,
@@ -134,8 +136,8 @@ def _http_manifest_entry(
     result: HttpFetchResult | None = None,
     ok: bool = True,
     error: str | None = None,
-) -> dict[str, object]:
-    entry: dict[str, object] = {
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
         "source_id": source.id,
         "description": source.description,
         "ok": ok,
@@ -161,15 +163,15 @@ def _rsync_manifest_entry(
     source: SourceDefinition,
     local: Path,
     mode: str,
-    results: dict[str, object] | None,
+    results: dict[str, Any] | None,
     *,
     force: bool,
     paths: list[str] | None = None,
-    freshness: dict[str, object] | None = None,
+    freshness: dict[str, Any] | None = None,
     ok: bool = True,
     error: str | None = None,
-) -> dict[str, object]:
-    entry: dict[str, object] = {
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
         "source_id": source.id,
         "description": source.description,
         "ok": ok,
@@ -193,12 +195,12 @@ def _rsync_manifest_entry(
     return entry
 
 
-def _rsync_freshness_record(root: Path) -> dict[str, object]:
+def _rsync_freshness_record(root: Path) -> dict[str, Any]:
     meta = read_rsync_mirror_meta(root)
     if meta is None or not isinstance(meta.paths, dict):
         return {}
 
-    paths: dict[str, dict[str, object]] = {}
+    paths: dict[str, dict[str, Any]] = {}
     for rel, info in meta.paths.items():
         if not isinstance(info, dict):
             continue
@@ -206,7 +208,7 @@ def _rsync_freshness_record(root: Path) -> dict[str, object]:
         updated = info.get("updated")
         if not isinstance(ts, (int, float)):
             continue
-        entry: dict[str, object] = {"last_updated_unix": float(ts)}
+        entry: dict[str, Any] = {"last_updated_unix": float(ts)}
         if isinstance(updated, list):
             entry["updated"] = list(updated)
         paths[rel] = entry
@@ -214,7 +216,7 @@ def _rsync_freshness_record(root: Path) -> dict[str, object]:
     if not paths:
         return {}
 
-    freshness: dict[str, object] = {"paths": paths}
+    freshness: dict[str, Any] = {"paths": paths}
     root_info = paths.get(".")
     if root_info:
         freshness["root_last_updated_unix"] = root_info["last_updated_unix"]
@@ -421,7 +423,7 @@ async def run_rsync_phase(
 
         try:
             if cfg.dry_run:
-                results_payload: dict[str, object]
+                results_payload: dict[str, Any]
                 if mirror_paths:
                     results_payload = {
                         rel: {"status": "dry_run", "detail": "dry run (mirror skipped)", "returncode": 0}
@@ -491,7 +493,7 @@ async def run_rsync_phase(
             )
 
             if cfg.remove_empty_dirs_after_rsync:
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(OSError, RuntimeError):
                     await mirror.prune_local_empty_dirs()
 
         except (OSError, RuntimeError) as exc:
@@ -516,6 +518,160 @@ async def run_rsync_phase(
             )
 
     return expected_mirror_dirs
+
+
+async def _run_derived_tasks(
+    *,
+    cfg: EngineConfig,
+    paths: SyncPaths,
+    recorder: ManifestRecorder,
+) -> None:
+    if cfg.skip_derived or cfg.dry_run:
+        return
+    for task in cfg.derived_tasks:
+        try:
+            payload = await task.run(
+                sync_root=paths.root,
+                manifest=recorder.manifest,
+                sources=tuple(cfg.sources),
+            )
+            payload_mapping = json_mapping_or_none(payload)
+            recorder.record_derived(
+                name=task.name,
+                payload=copy_json_mapping(payload_mapping) if payload_mapping is not None else {},
+            )
+        except (OSError, RuntimeError, TypeError, ValueError, httpx.HTTPError) as exc:
+            recorder.error(
+                phase="derived",
+                error=f"{type(exc).__name__}: {exc}",
+                name=task.name,
+            )
+
+
+async def _close_http_caches(http_caches: dict[str, HttpCache]) -> None:
+    for cache in http_caches.values():
+        with contextlib.suppress(OSError, RuntimeError):
+            await cache.aclose()
+
+
+async def _write_manifest_outputs(
+    *,
+    cfg: EngineConfig,
+    paths: SyncPaths,
+    recorder: ManifestRecorder,
+) -> Path | None:
+    log_manifest_target = _timestamped_manifest_path(paths.log, cfg.manifest_filename)
+    try:
+        manifest_path = await recorder.write_if_requested(log_manifest_target)
+        if cfg.manifest_path and Path(cfg.manifest_path) != log_manifest_target:
+            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                await recorder.write_if_requested(Path(cfg.manifest_path))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    return manifest_path
+
+
+def _update_canonical_manifest(
+    *,
+    cfg: EngineConfig,
+    paths: SyncPaths,
+    recorder: ManifestRecorder,
+) -> None:
+    if cfg.dry_run:
+        return
+    canonical_manifest_target = _default_manifest_path(paths, cfg.manifest_filename)
+    try:
+        prev_raw: Any | None = None
+        if canonical_manifest_target.exists():
+            prev_raw = json.loads(canonical_manifest_target.read_text(encoding="utf-8"))
+        merged = merge_manifests(prev_raw, recorder.manifest)
+        merged = normalize_manifest(merged)
+        atomic_write_text(canonical_manifest_target, safe_json_dump(merged))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        logger.warning(
+            "failed to update canonical manifest file %s",
+            canonical_manifest_target,
+            exc_info=True,
+        )
+
+
+def _mirror_source_info(cfg: EngineConfig) -> list[tuple[str, str]]:
+    return [
+        (source.id, source.local_subpath or "") for source in cfg.sources if source.local_subpath is not None
+    ]
+
+
+def _build_source_states(
+    previous_state: MirrorState,
+    tree: MirrorStateNode,
+    source_info: list[tuple[str, str]],
+) -> tuple[MirrorSourceState, ...]:
+    source_states: dict[tuple[str | None, str], MirrorSourceState] = {
+        (src_state.source_id, src_state.local_subdir): src_state for src_state in previous_state.sources
+    }
+    for source_id, subdir in source_info:
+        node = node_at_path(tree, subdir)
+        source_states[source_id, subdir] = MirrorSourceState(
+            source_id=source_id,
+            local_subdir=subdir,
+            hash=node.hash if node is not None else None,
+        )
+    return tuple(sorted(source_states.values(), key=lambda item: (item.local_subdir, item.source_id or "")))
+
+
+def _build_incremental_state(
+    *,
+    cfg: EngineConfig,
+    paths: SyncPaths,
+    manifest_path: Path,
+    previous_state: MirrorState,
+) -> MirrorState:
+    source_info = _mirror_source_info(cfg)
+    source_subdirs = sorted({subdir for _, subdir in source_info if subdir})
+    tree = previous_state.tree
+    if source_subdirs:
+        tree = update_hash_tree_for_subdirs(tree, paths.mirrors, source_subdirs)
+    return MirrorState(
+        version=1,
+        generated_at_unix=time.time(),
+        cache_root=str(paths.root.resolve()),
+        mirrors_root=str(paths.mirrors.resolve()),
+        hash_algo=HASH_ALGORITHM,
+        manifest_path=str(manifest_path),
+        tree=tree,
+        sources=_build_source_states(previous_state, tree, source_info),
+    )
+
+
+def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: Path) -> None:
+    if cfg.dry_run:
+        return
+    state_path = paths.root / cfg.state_filename
+    source_info = _mirror_source_info(cfg)
+    try:
+        previous_state = load_mirror_state(state_path)
+        can_reuse_tree = (
+            previous_state is not None
+            and Path(previous_state.mirrors_root) == paths.mirrors.resolve()
+            and previous_state.hash_algo == HASH_ALGORITHM
+        )
+        if can_reuse_tree and previous_state is not None:
+            state = _build_incremental_state(
+                cfg=cfg,
+                paths=paths,
+                manifest_path=manifest_path,
+                previous_state=previous_state,
+            )
+        else:
+            state = MirrorState.build(
+                cache_root=paths.root,
+                mirrors_root=paths.mirrors,
+                manifest_path=manifest_path,
+                sources_info=source_info,
+            )
+        atomic_write_text(state_path, safe_json_dump(state.to_dict()))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        logger.warning("failed to write mirror state file %s", state_path)
 
 
 async def sync(cfg: EngineConfig) -> SyncResult:
@@ -544,110 +700,15 @@ async def sync(cfg: EngineConfig) -> SyncResult:
             removed = prune_orphan_mirrors(paths.mirrors, expected_mirror_dirs)
             recorder.record_pruned_orphan_mirrors(removed)
 
-        if not cfg.skip_derived and not cfg.dry_run:
-            for task in cfg.derived_tasks:
-                try:
-                    payload = await task.run(
-                        sync_root=paths.root,
-                        manifest=recorder.manifest,
-                        sources=tuple(cfg.sources),
-                    )
-                    recorder.record_derived(name=task.name, payload=payload)
-                except Exception as exc:
-                    recorder.error(
-                        phase="derived",
-                        error=f"{type(exc).__name__}: {exc}",
-                        name=task.name,
-                    )
+        await _run_derived_tasks(cfg=cfg, paths=paths, recorder=recorder)
 
     finally:
-        for cache in http_caches.values():
-            with contextlib.suppress(Exception):
-                await cache.aclose()
-
+        await _close_http_caches(http_caches)
         recorder.finish()
-
-        log_manifest_target = _timestamped_manifest_path(paths.log, cfg.manifest_filename)
-        canonical_manifest_target = _default_manifest_path(paths, cfg.manifest_filename)
-
-        try:
-            manifest_path = await recorder.write_if_requested(log_manifest_target)
-            if cfg.manifest_path and Path(cfg.manifest_path) != log_manifest_target:
-                with contextlib.suppress(Exception):
-                    await recorder.write_if_requested(Path(cfg.manifest_path))
-        except (OSError, RuntimeError, TypeError, ValueError):
-            manifest_path = None
-
-        if not cfg.dry_run:
-            try:
-                prev_raw: object | None = None
-                if canonical_manifest_target.exists():
-                    prev_raw = json.loads(canonical_manifest_target.read_text(encoding="utf-8"))
-                merged = merge_manifests(prev_raw, recorder.manifest)
-                merged = normalize_manifest(merged)
-                atomic_write_text(canonical_manifest_target, safe_json_dump(merged))
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                logger.warning(
-                    "failed to update canonical manifest file %s",
-                    canonical_manifest_target,
-                    exc_info=True,
-                )
-
-        if not cfg.dry_run and manifest_path:
-            state_path = paths.root / cfg.state_filename
-            source_info = [
-                (source.id, source.local_subpath or "")
-                for source in cfg.sources
-                if source.local_subpath is not None
-            ]
-            try:
-                source_subdirs = sorted({subdir for _, subdir in source_info if subdir})
-                previous_state = load_mirror_state(state_path)
-                can_reuse_tree = (
-                    previous_state is not None
-                    and Path(previous_state.mirrors_root) == paths.mirrors.resolve()
-                    and previous_state.hash_algo == HASH_ALGORITHM
-                )
-                if can_reuse_tree:
-                    tree = previous_state.tree
-                    if source_subdirs:
-                        tree = update_hash_tree_for_subdirs(tree, paths.mirrors, source_subdirs)
-                    source_states: dict[tuple[str | None, str], MirrorSourceState] = {
-                        (src_state.source_id, src_state.local_subdir): src_state
-                        for src_state in previous_state.sources
-                    }
-                    for source_id, subdir in source_info:
-                        node = node_at_path(tree, subdir)
-                        source_states[source_id, subdir] = MirrorSourceState(
-                            source_id=source_id,
-                            local_subdir=subdir,
-                            hash=node.hash if node is not None else None,
-                        )
-                    state = MirrorState(
-                        version=1,
-                        generated_at_unix=time.time(),
-                        cache_root=str(paths.root.resolve()),
-                        mirrors_root=str(paths.mirrors.resolve()),
-                        hash_algo=HASH_ALGORITHM,
-                        manifest_path=str(manifest_path),
-                        tree=tree,
-                        sources=tuple(
-                            sorted(
-                                source_states.values(),
-                                key=lambda item: (item.local_subdir, item.source_id or ""),
-                            ),
-                        ),
-                    )
-                else:
-                    state = MirrorState.build(
-                        cache_root=paths.root,
-                        mirrors_root=paths.mirrors,
-                        manifest_path=manifest_path,
-                        sources_info=source_info,
-                    )
-                atomic_write_text(state_path, safe_json_dump(state.to_dict()))
-            except (OSError, RuntimeError, TypeError, ValueError):
-                logger.warning("failed to write mirror state file %s", state_path)
+        manifest_path = await _write_manifest_outputs(cfg=cfg, paths=paths, recorder=recorder)
+        _update_canonical_manifest(cfg=cfg, paths=paths, recorder=recorder)
+        if manifest_path is not None:
+            _update_mirror_state(cfg=cfg, paths=paths, manifest_path=manifest_path)
 
     ok = len(recorder.manifest["errors"]) == 0
     return SyncResult(

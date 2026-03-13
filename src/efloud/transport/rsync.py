@@ -10,11 +10,12 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from smartratelimit import RateLimiter
 
 from efloud.fs import atomic_write_text
+from efloud.json_types import JsonObject, JsonValue, json_object_or_none
 
 if TYPE_CHECKING:
     import io
@@ -95,22 +96,28 @@ class RsyncMirrorMeta:
     """
 
     version: int = 1
-    paths: dict[str, dict[str, object]] | None = None
+    paths: dict[str, JsonObject] | None = None
 
-    def to_json(self) -> dict[str, object]:
-        return {"version": self.version, "paths": self.paths or {}}
+    def to_json(self) -> JsonObject:
+        payload: JsonObject = {"version": self.version, "paths": {}}
+        payload["paths"] = dict((self.paths or {}).items())
+        return payload
 
     @staticmethod
-    def from_json(obj: object) -> RsyncMirrorMeta:
-        if not isinstance(obj, dict):
+    # Stored metadata is read from disk and can contain arbitrary payloads.
+    def from_json(obj: Any) -> RsyncMirrorMeta:  # noqa: ANN401
+        json_obj = json_object_or_none(obj)
+        if json_obj is None:
             return RsyncMirrorMeta()
-        version = int(obj.get("version", 1)) if isinstance(obj.get("version", 1), (int, float)) else 1
-        paths_v = obj.get("paths")
-        paths: dict[str, dict[str, object]] = {}
-        if isinstance(paths_v, dict):
+        version_value = json_obj.get("version")
+        version = int(version_value) if isinstance(version_value, int | float) else 1
+        paths_v = json_object_or_none(json_obj.get("paths"))
+        paths: dict[str, JsonObject] = {}
+        if paths_v is not None:
             for k, v in paths_v.items():
-                if isinstance(k, str) and isinstance(v, dict):
-                    paths[k] = dict(v)
+                path_payload = json_object_or_none(v)
+                if path_payload is not None:
+                    paths[k] = dict(path_payload.items())
         return RsyncMirrorMeta(version=version, paths=paths)
 
 
@@ -125,7 +132,7 @@ def read_rsync_mirror_meta(root: Path) -> RsyncMirrorMeta | None:
     return RsyncMirrorMeta.from_json(data)
 
 
-def _read_json(path: Path) -> object:
+def _read_json(path: Path) -> JsonValue:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -169,36 +176,11 @@ def _build_rsync_cmd(cfg: RsyncMirrorConfig, *, remote: str, local: Path) -> lis
     c = cfg.cmd
 
     cmd: list[str] = [c.rsync_bin]
-
-    if c.archive:
-        cmd.append("--archive")
-    if c.compress:
-        cmd.append("--compress")
-    if c.copy_links:
-        cmd.append("--copy-links")
-    if c.delay_updates:
-        cmd.append("--delay-updates")
-    if c.itemize_changes:
-        cmd.append("--itemize-changes")
-
-    if _uses_daemon_protocol(remote):
-        cmd.append(f"--contimeout={t}")
-    cmd.append(f"--timeout={t}")
-
-    if cfg.delete:
-        cmd.append("--delete")
-    if cfg.verbose:
-        cmd.append("--verbose")
-    if cfg.progress:
-        cmd.extend(("--progress", "--info=progress2"))
-    if cfg.dry_run:
-        cmd.extend(("--dry-run",))
-
-    for pattern in cfg.include:
-        cmd.extend(["--include", pattern])
-    for pattern in cfg.exclude:
-        cmd.extend(["--exclude", pattern])
-
+    cmd.extend(_base_rsync_args(c))
+    cmd.extend(_timeout_args(remote, timeout_seconds=t))
+    cmd.extend(_runtime_rsync_args(cfg))
+    cmd.extend(_pattern_args("--include", cfg.include))
+    cmd.extend(_pattern_args("--exclude", cfg.exclude))
     cmd.extend(c.extra_args)
     cmd.extend([remote, str(local)])
     logger.debug(
@@ -209,6 +191,44 @@ def _build_rsync_cmd(cfg: RsyncMirrorConfig, *, remote: str, local: Path) -> lis
     )
     logger.debug(" ".join(cmd))
     return cmd
+
+
+def _base_rsync_args(cmd_cfg: RsyncCommandConfig) -> list[str]:
+    option_flags = (
+        (cmd_cfg.archive, "--archive"),
+        (cmd_cfg.compress, "--compress"),
+        (cmd_cfg.copy_links, "--copy-links"),
+        (cmd_cfg.delay_updates, "--delay-updates"),
+        (cmd_cfg.itemize_changes, "--itemize-changes"),
+    )
+    return [flag for enabled, flag in option_flags if enabled]
+
+
+def _timeout_args(remote: str, *, timeout_seconds: int) -> list[str]:
+    args = [f"--timeout={timeout_seconds}"]
+    if _uses_daemon_protocol(remote):
+        args.insert(0, f"--contimeout={timeout_seconds}")
+    return args
+
+
+def _runtime_rsync_args(cfg: RsyncMirrorConfig) -> list[str]:
+    args: list[str] = []
+    if cfg.delete:
+        args.append("--delete")
+    if cfg.verbose:
+        args.append("--verbose")
+    if cfg.progress:
+        args.extend(("--progress", "--info=progress2"))
+    if cfg.dry_run:
+        args.append("--dry-run")
+    return args
+
+
+def _pattern_args(flag: str, patterns: tuple[str, ...]) -> list[str]:
+    args: list[str] = []
+    for pattern in patterns:
+        args.extend([flag, pattern])
+    return args
 
 
 def _parse_itemize_changes(stdout: str) -> list[str]:
@@ -296,6 +316,12 @@ def _remove_empty_dirs(root: Path) -> None:
             p.rmdir()
 
 
+def _updated_paths(value: Any) -> list[str]:  # noqa: ANN401 - persisted metadata may contain arbitrary values
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
 class RsyncMirror:
     def __init__(self, cfg: RsyncMirrorConfig) -> None:
         self._cfg = cfg
@@ -327,11 +353,10 @@ class RsyncMirror:
     def _meta_write(self, meta: RsyncMirrorMeta) -> None:
         atomic_write_text(self._meta_path, json.dumps(meta.to_json(), indent=2, sort_keys=True))
 
-    def _meta_get_path(self, rel: str) -> dict[str, object] | None:
+    def _meta_get_path(self, rel: str) -> JsonObject | None:
         meta = self._meta_load()
         paths = meta.paths or {}
-        v = paths.get(rel)
-        return v if isinstance(v, dict) else None
+        return paths.get(rel)
 
     def _meta_set_path(self, rel: str, updated: list[str]) -> None:
         meta = self._meta_load()
@@ -366,7 +391,7 @@ class RsyncMirror:
             detail=detail,
             returncode=0,
             stdout=detail,
-            updated=updated if isinstance(updated, list) else [],
+            updated=_updated_paths(updated),
         )
 
     async def update(self, *, force: bool = False) -> OpResult:

@@ -3,30 +3,34 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
+
+from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_none
 
 if TYPE_CHECKING:
     from efloud.models import NormalizedManifest
 
 
-def normalize_manifest(raw: object) -> NormalizedManifest:
-    if not isinstance(raw, Mapping):
+# Manifest payloads come from callers and JSON files, so the entrypoint must accept arbitrary input.
+def normalize_manifest(raw: Any) -> NormalizedManifest:  # noqa: ANN401
+    raw_mapping = json_mapping_or_none(raw)
+    if raw_mapping is None:
         msg = "manifest must be a JSON object"
         raise TypeError(msg)
 
-    m = dict(raw)  # shallow copy
+    m: JsonObject = copy_json_mapping(raw_mapping)
     m.setdefault("version", 1)
     m.setdefault("root", "")
     m.setdefault("errors", [])
     m.setdefault("results", {"rsync": {}, "http": {}, "derived": {}})
 
     # --- normalize results container
-    results = m.get("results")
-    if not isinstance(results, Mapping):
+    results = json_mapping_or_none(m.get("results"))
+    if results is None:
         results = {"rsync": {}, "http": {}, "derived": {}}
         m["results"] = results
     else:
-        results = dict(results)
+        results = copy_json_mapping(results)
         m["results"] = results
         results.setdefault("rsync", {})
         results.setdefault("http", {})
@@ -34,32 +38,34 @@ def normalize_manifest(raw: object) -> NormalizedManifest:
 
         # Ensure each subsection is a dict-like object
         for key in ("rsync", "http", "derived"):
-            sec = results.get(key)
-            if not isinstance(sec, Mapping):
+            sec = json_mapping_or_none(results.get(key))
+            if sec is None:
                 results[key] = {}
             else:
-                results[key] = dict(sec)
+                results[key] = copy_json_mapping(sec)
 
     # --- normalize http entries to always have top-level "url"
-    http = results.get("http")
-    if isinstance(http, Mapping):
-        http = dict(http)
+    http = json_mapping_or_none(results.get("http"))
+    if http is not None:
+        http = copy_json_mapping(http)
         results["http"] = http
         for k, rec in list(http.items()):
-            if isinstance(rec, Mapping):
-                entry = dict(rec)
+            rec_mapping = json_mapping_or_none(rec)
+            if rec_mapping is not None:
+                entry = copy_json_mapping(rec_mapping)
                 if "url" not in entry:
-                    req = entry.get("request")
-                    if isinstance(req, Mapping) and isinstance(req.get("url"), str):
-                        entry["url"] = req["url"]
+                    req = json_mapping_or_none(entry.get("request"))
+                    req_url = req.get("url") if req is not None else None
+                    if isinstance(req_url, str):
+                        entry["url"] = req_url
                 http[k] = entry  # write back
 
     # You can add more migrations here if needed.
 
-    return m  # type: ignore[return-value]
+    return cast("NormalizedManifest", m)
 
 
-def merge_manifests(previous: object | None, new: object) -> NormalizedManifest:
+def merge_manifests(previous: Any | None, new: Any) -> NormalizedManifest:  # noqa: ANN401
     """
     Merge two manifests such that per-source results are retained across runs.
 
@@ -78,7 +84,7 @@ def merge_manifests(previous: object | None, new: object) -> NormalizedManifest:
         prev = normalize_manifest({})
     nxt = normalize_manifest(new)
 
-    out: dict[str, object] = dict(prev)
+    out = dict(prev.items())
 
     # Prefer the most recent run metadata.
     for key in (
@@ -92,7 +98,7 @@ def merge_manifests(previous: object | None, new: object) -> NormalizedManifest:
         "config",
     ):
         if key in nxt:
-            out[key] = nxt[key]  # type: ignore[literal-required]
+            out[key] = nxt[key]
 
     out["errors"] = list(nxt.get("errors", []))
 
@@ -108,7 +114,7 @@ def merge_manifests(previous: object | None, new: object) -> NormalizedManifest:
         dst = merged_results.get(section)
         if not isinstance(dst, dict):
             dst = {}
-            merged_results[section] = dst  # type: ignore[literal-required]
+            merged_results[section] = dst
 
         if isinstance(prev_sec, Mapping):
             for k, v in prev_sec.items():

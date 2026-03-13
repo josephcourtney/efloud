@@ -22,7 +22,8 @@ class SyncPolicy(Protocol):
 
 
 class DefaultSyncPolicy:
-    def should_refresh(self, source: SourceDefinition, cfg: EngineConfig) -> bool:
+    @staticmethod
+    def should_refresh(source: SourceDefinition, cfg: EngineConfig) -> bool:
         if cfg.refresh_all:
             return True
         if source.kind.value in {"HTTP", "REST", "REST_BASE"}:
@@ -31,7 +32,9 @@ class DefaultSyncPolicy:
             return cfg.refresh_rsync
         return False
 
+    @staticmethod
     def rsync_paths_for_source(
-        self, *, source: SourceDefinition, cache_root: Path, manifest: NormalizedManifest | None
+        *, source: SourceDefinition, cache_root: Path, manifest: NormalizedManifest | None
     ) -> tuple[str, ...] | None:
+        del cache_root, manifest
         return source.mirror_paths if source.mirror_mode is not None else None

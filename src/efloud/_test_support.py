@@ -38,6 +38,10 @@ _COMMON_MARKERS: tuple[str, ...] = (
     "mutation: Mutation-testing related.",
     "observability: Tests asserting presence/shape of logs/metrics/traces.",
     "slow: Known slow tests.",
+    "small: Fast unit test (<1s, no network/filesystem/subprocess/database/sleep).",
+    "medium: Integration test (<5min, localhost network, filesystem allowed).",
+    "large: System test (<15min, full network and resource access).",
+    "xlarge: Extended test (<15min, full network and resource access).",
     "flaky: Known flaky tests under triage.",
     "legacy: Legacy tests awaiting refactor/removal.",
     "experimental: Experimental tests or tooling not yet mandatory.",
@@ -62,9 +66,9 @@ class _RouteHTTPServer(ThreadingHTTPServer):
 
 
 class _Handler(BaseHTTPRequestHandler):
-    @staticmethod
-    def log_message(_message_format: str, *_args: Any) -> None:
-        return
+    # BaseHTTPRequestHandler passes printf-style args with mixed runtime types here.
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002, PLR6301
+        del format, args
 
     def do_HEAD(self) -> None:
         self._respond(send_body=False)

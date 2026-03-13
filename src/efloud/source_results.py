@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from efloud.json_types import JsonMapping, json_mapping_or_none
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.source_aliases import AliasMap, SourceAliasResolver
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from efloud.models import NormalizedManifest
 
 
@@ -20,41 +22,64 @@ def manifest_section_for_kind(kind: SourceKind) -> str:
 
 
 def manifest_entry_for_source_id(
-    manifest: Mapping[str, object] | None,
+    manifest: Mapping[str, Any] | None,
     source_id: str,
     *,
     kind: SourceKind | None = None,
     aliases: AliasMap | None = None,
-) -> Mapping[str, object] | None:
+) -> JsonMapping | None:
     if manifest is None:
         return None
 
-    results = manifest.get("results", {})
-    if not isinstance(results, Mapping):
+    results = json_mapping_or_none(manifest.get("results"))
+    if results is None:
         return None
-
-    sections: tuple[str, ...]
-    sections = ("http", "rsync", "derived") if kind is None else (manifest_section_for_kind(kind),)
 
     resolver = SourceAliasResolver(aliases)
     candidate_ids = resolver.candidates(source_id)
 
-    for section_name in sections:
-        section = results.get(section_name)
-        if not isinstance(section, Mapping):
+    for section_name in _candidate_sections(kind):
+        section = json_mapping_or_none(results.get(section_name))
+        if section is None:
             continue
 
-        for candidate_id in candidate_ids:
-            entry = section.get(candidate_id)
-            if isinstance(entry, Mapping):
-                return entry
+        entry = _entry_for_candidate_ids(section, candidate_ids)
+        if entry is not None:
+            return entry
 
-        # derived results may carry source_id inside the payload instead of under the key
         if section_name == "derived":
-            for value in section.values():
-                if isinstance(value, Mapping) and value.get("source_id") in candidate_ids:
-                    return value
+            derived_entry = _derived_entry_for_candidate_ids(section, candidate_ids)
+            if derived_entry is not None:
+                return derived_entry
 
+    return None
+
+
+def _candidate_sections(kind: SourceKind | None) -> tuple[str, ...]:
+    return ("http", "rsync", "derived") if kind is None else (manifest_section_for_kind(kind),)
+
+
+def _entry_for_candidate_ids(
+    section: JsonMapping,
+    candidate_ids: tuple[str, ...],
+) -> JsonMapping | None:
+    for candidate_id in candidate_ids:
+        entry_mapping = json_mapping_or_none(section.get(candidate_id))
+        if entry_mapping is not None:
+            return entry_mapping
+    return None
+
+
+def _derived_entry_for_candidate_ids(
+    section: JsonMapping, candidate_ids: tuple[str, ...]
+) -> JsonMapping | None:
+    for value in section.values():
+        value_mapping = json_mapping_or_none(value)
+        if value_mapping is None:
+            continue
+        source_value = value_mapping.get("source_id")
+        if isinstance(source_value, str) and source_value in candidate_ids:
+            return value_mapping
     return None
 
 
@@ -63,7 +88,7 @@ def manifest_entry_for_source(
     source: SourceDefinition,
     *,
     aliases: AliasMap | None = None,
-) -> Mapping[str, object] | None:
+) -> JsonMapping | None:
     return manifest_entry_for_source_id(
         manifest,
         source.id,
@@ -72,7 +97,7 @@ def manifest_entry_for_source(
     )
 
 
-def local_materialized_path(entry: Mapping[str, object] | None) -> Path | None:
+def local_materialized_path(entry: JsonMapping | None) -> Path | None:
     if entry is None:
         return None
 
@@ -81,24 +106,24 @@ def local_materialized_path(entry: Mapping[str, object] | None) -> Path | None:
         if isinstance(value, str):
             return Path(value)
 
-    request = entry.get("request")
-    if isinstance(request, Mapping):
-        fanout_root = request.get("fanout_root")
-        if isinstance(fanout_root, str):
-            return Path(fanout_root)
+    request = json_mapping_or_none(entry.get("request"))
+    fanout_root = request.get("fanout_root") if request is not None else None
+    if isinstance(fanout_root, str):
+        return Path(fanout_root)
 
     return None
 
 
-def source_status_hint(entry: Mapping[str, object] | None) -> str:
+def source_status_hint(entry: JsonMapping | None) -> str:
     if entry is None:
         return "missing"
     if entry.get("ok") is True:
         return "ok"
     if entry.get("ok") is False:
         return "error"
-    if isinstance(entry.get("err"), int):
-        return "error" if int(entry["err"]) > 0 else "ok"
+    err_value = entry.get("err")
+    if isinstance(err_value, int):
+        return "error" if err_value > 0 else "ok"
     if entry.get("error"):
         return "error"
     return "present"
@@ -109,7 +134,7 @@ def iter_manifest_entries(
     sources: Sequence[SourceDefinition],
     *,
     aliases: AliasMap | None = None,
-) -> list[tuple[SourceDefinition, Mapping[str, object] | None]]:
+) -> list[tuple[SourceDefinition, JsonMapping | None]]:
     return [(source, manifest_entry_for_source(manifest, source, aliases=aliases)) for source in sources]
 
 

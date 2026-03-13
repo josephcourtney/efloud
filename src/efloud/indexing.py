@@ -2,26 +2,25 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol
 
 from efloud.fs import atomic_write_text, safe_json_dump
+from efloud.json_types import JsonMapping, JsonObject, JsonValue, copy_json_mapping, json_mapping_or_none
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
-
-TIndex = TypeVar("TIndex", bound="CachedIndex")
 
 
 class CachedIndex(Protocol):
     fetched_at: float
     ttl_seconds: int
 
-    def to_dict(self) -> dict[str, object]: ...
+    def to_dict(self) -> JsonObject: ...
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, object]) -> CachedIndex: ...
+    def from_dict(cls, data: JsonMapping) -> CachedIndex: ...
 
     def is_expired(self) -> bool: ...
 
@@ -30,7 +29,7 @@ class CachedIndex(Protocol):
 class JsonTtlIndex:
     fetched_at: float
     ttl_seconds: int
-    payload: dict[str, object]
+    payload: JsonObject
 
     @property
     def expires_at(self) -> float:
@@ -39,7 +38,7 @@ class JsonTtlIndex:
     def is_expired(self) -> bool:
         return time.time() > self.expires_at
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self) -> JsonObject:
         return {
             "fetched_at": self.fetched_at,
             "ttl_seconds": self.ttl_seconds,
@@ -47,24 +46,24 @@ class JsonTtlIndex:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, object]) -> JsonTtlIndex:
-        payload = data.get("payload")
-        if not isinstance(payload, Mapping):
+    def from_dict(cls, data: JsonMapping) -> JsonTtlIndex:
+        payload = json_mapping_or_none(data.get("payload"))
+        if payload is None:
             msg = "Index payload must be an object."
             raise TypeError(msg)
         return cls(
-            fetched_at=float(data.get("fetched_at", 0.0)),
-            ttl_seconds=int(data.get("ttl_seconds", 0)),
-            payload=dict(payload),
+            fetched_at=_float_value(data.get("fetched_at"), default=0.0),
+            ttl_seconds=_int_value(data.get("ttl_seconds"), default=0),
+            payload=copy_json_mapping(payload),
         )
 
 
-class IndexBuilder(Protocol[TIndex]):
+class IndexBuilder[TIndex: CachedIndex](Protocol):
     def __call__(self, *, root: Path) -> TIndex: ...
 
 
 @dataclass(frozen=True)
-class IndexDefinition[TIndex]:
+class IndexDefinition[TIndex: CachedIndex]:
     index_id: str
     filename: str
     ttl_seconds: int
@@ -82,7 +81,7 @@ class IndexStatus:
     loaded: bool
     error: str | None = None
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self) -> JsonObject:
         return {
             "index_id": self.index_id,
             "path": str(self.path),
@@ -94,15 +93,15 @@ class IndexStatus:
 
 
 class IndexRegistry:
-    def __init__(self, definitions: Sequence[IndexDefinition[Any]] = ()) -> None:
-        self._definitions: dict[str, IndexDefinition[Any]] = {
+    def __init__(self, definitions: Sequence[IndexDefinition[CachedIndex]] = ()) -> None:
+        self._definitions: dict[str, IndexDefinition[CachedIndex]] = {
             definition.index_id: definition for definition in definitions
         }
 
-    def register(self, definition: IndexDefinition[Any]) -> None:
+    def register(self, definition: IndexDefinition[CachedIndex]) -> None:
         self._definitions[definition.index_id] = definition
 
-    def definition(self, index_id: str) -> IndexDefinition[Any] | None:
+    def definition(self, index_id: str) -> IndexDefinition[CachedIndex] | None:
         return self._definitions.get(index_id)
 
     def ids(self) -> tuple[str, ...]:
@@ -150,7 +149,7 @@ class IndexRegistry:
 
         try:
             loaded = load_index(path, definition.parser)
-        except Exception as exc:  # pragma: no cover - defensive surface for callers
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
             return IndexStatus(
                 index_id=index_id,
                 path=path,
@@ -184,19 +183,28 @@ def write_index(path: Path, index: CachedIndex) -> None:
     atomic_write_text(path, safe_json_dump(index.to_dict()))
 
 
-def load_index[TIndex](path: Path, parser: type[TIndex]) -> TIndex | None:
+def load_index[TIndex: CachedIndex](path: Path, parser: type[TIndex]) -> TIndex | None:
     if not path.exists():
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(raw, Mapping):
+    raw_mapping = json_mapping_or_none(raw)
+    if raw_mapping is None:
         return None
     try:
-        return parser.from_dict(raw)  # type: ignore[return-value]
+        return parser.from_dict(raw_mapping)
     except (TypeError, ValueError):
         return None
+
+
+def _float_value(value: JsonValue | None, *, default: float) -> float:
+    return float(value) if isinstance(value, int | float) else default
+
+
+def _int_value(value: JsonValue | None, *, default: int) -> int:
+    return int(value) if isinstance(value, int | float) else default
 
 
 __all__ = [

@@ -1,31 +1,37 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING
+import operator
+from typing import TYPE_CHECKING, Any
+
+from efloud.json_types import JsonObject, JsonValue, json_mapping_or_none
 
 if TYPE_CHECKING:
     from efloud.models import SyncResult
 
 
-def _normalize_transport_section(raw: object) -> dict[str, object]:
-    rows: list[dict[str, object]] = []
-    if isinstance(raw, Mapping):
-        for source_id, value in sorted(raw.items(), key=lambda item: str(item[0])):
-            if not isinstance(value, Mapping):
+def _normalize_transport_section(raw: JsonValue | dict[str, Any] | None) -> dict[str, Any]:
+    rows: list[JsonObject] = []
+    raw_mapping = json_mapping_or_none(raw)
+    if raw_mapping is not None:
+        for source_id, value in sorted(raw_mapping.items(), key=operator.itemgetter(0)):
+            value_mapping = json_mapping_or_none(value)
+            if value_mapping is None:
                 continue
-            status_val = value.get("status")
+            status_val = value_mapping.get("status")
             status = str(status_val) if isinstance(status_val, str) else None
-            ok_val = value.get("ok")
-            ok = bool(ok_val) if isinstance(ok_val, bool | int) else None
-            row: dict[str, object] = {
+            ok_val = value_mapping.get("ok")
+            ok = bool(ok_val) if isinstance(ok_val, int | bool) else None
+            updated = value_mapping.get("updated")
+            updated_count = len(updated) if isinstance(updated, list) and _is_string_list(updated) else None
+            row: dict[str, Any] = {
                 "source_id": str(source_id),
                 "status": status,
                 "ok": ok,
-                "updated_count": len(value["updated"]) if isinstance(value.get("updated"), list) else None,
-                "status_code": value.get("status_code"),
+                "updated_count": updated_count,
+                "status_code": value_mapping.get("status_code"),
                 "extensions": {
                     key: val
-                    for key, val in value.items()
+                    for key, val in value_mapping.items()
                     if key not in {"status", "ok", "updated", "status_code"}
                 },
             }
@@ -46,7 +52,11 @@ def _normalize_transport_section(raw: object) -> dict[str, object]:
     }
 
 
-def build_summary(result: SyncResult) -> dict[str, object]:
+def _is_string_list(value: JsonValue | None) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def build_summary(result: SyncResult) -> dict[str, Any]:
     errors = result.manifest.get("errors", [])
     results = result.manifest.get("results", {})
     rsync_payload = _normalize_transport_section(results.get("rsync"))

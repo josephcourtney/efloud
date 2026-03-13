@@ -5,7 +5,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from efloud.locator import resolve_locator_from_file
 from efloud.manifest import load_latest_manifest
@@ -15,6 +15,7 @@ from efloud.source_results import local_materialized_path, manifest_entry_for_so
 from efloud.state import load_mirror_state
 
 if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
 
@@ -122,7 +123,101 @@ def _store_summary_entries(cfg: EngineConfig) -> list[dict[str, str]]:
     ]
 
 
-def store_payload(store_id: str, *, cfg: EngineConfig) -> dict[str, object]:
+def _base_store_payload(
+    spec: StoreSpec,
+    *,
+    root: Path,
+    exists: bool,
+    warnings: list[str],
+) -> dict[str, Any]:
+    return {
+        "target_kind": "store",
+        "store_id": spec.store_id,
+        "category": spec.category,
+        "label": spec.label,
+        "description": spec.description,
+        "path_kind": spec.path_kind,
+        "path": str(spec.path),
+        "root_relative_path": _rel_to_root(spec.path, root),
+        "present": exists,
+        "store_status": "present" if exists else "missing",
+        "warnings": warnings,
+    }
+
+
+def _populate_store_stat_payload(path: Path, payload: dict[str, Any], warnings: list[str]) -> bool:
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        payload["store_status"] = "unreadable"
+        warnings.append(f"Unreadable path: {exc}")
+        return False
+    payload["size_bytes"] = int(stat.st_size)
+    payload["modified_at_unix"] = float(stat.st_mtime)
+    return True
+
+
+def _populate_directory_payload(path: Path, payload: dict[str, Any], warnings: list[str]) -> None:
+    try:
+        payload["entry_count"] = sum(1 for _ in path.iterdir())
+    except OSError as exc:
+        payload["store_status"] = "unreadable"
+        warnings.append(f"Unreadable directory: {exc}")
+
+
+def _store_metadata(spec: StoreSpec, path: Path, warnings: list[str]) -> dict[str, Any]:
+    if spec.store_id == "mirror_state":
+        return _mirror_state_metadata(path, warnings)
+    if spec.store_id == "sync_manifest":
+        return _sync_manifest_metadata(path, warnings)
+    if path.suffix == ".sqlite":
+        return _sqlite_store_metadata(path, warnings)
+    return _generic_store_metadata(path)
+
+
+def _mirror_state_metadata(path: Path, warnings: list[str]) -> dict[str, Any]:
+    state = load_mirror_state(path)
+    if state is None:
+        warnings.append("Mirror state exists but could not be parsed.")
+        return {}
+    return {
+        "generated_at_unix": state.generated_at_unix,
+        "hash_algo": state.hash_algo,
+        "sources_count": len(state.sources),
+        "manifest_path": state.manifest_path,
+    }
+
+
+def _sync_manifest_metadata(path: Path, warnings: list[str]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        warnings.append(f"Sync manifest unreadable: {exc}")
+        return metadata
+    if not isinstance(raw, Mapping):
+        warnings.append("Sync manifest is not a JSON object.")
+        return metadata
+    results = raw.get("results")
+    metadata["results_sections"] = sorted(str(key) for key in results) if isinstance(results, Mapping) else []
+    metadata["errors_count"] = len(raw.get("errors", [])) if isinstance(raw.get("errors"), list) else 0
+    return metadata
+
+
+def _sqlite_store_metadata(path: Path, warnings: list[str]) -> JsonObject:
+    meta, err = _sqlite_meta(path)
+    if err is not None:
+        warnings.append(f"SQLite metadata unreadable: {err}")
+        return {}
+    return dict((meta or {}).items())
+
+
+def _generic_store_metadata(path: Path) -> dict[str, Any]:
+    shape = _json_shape(path)
+    return {"json_shape": shape} if shape is not None else {}
+
+
+def store_payload(store_id: str, *, cfg: EngineConfig) -> dict[str, Any]:
     specs = {spec.store_id: spec for spec in store_specs(cfg)}
     spec = specs.get(store_id)
     if spec is None:
@@ -133,78 +228,18 @@ def store_payload(store_id: str, *, cfg: EngineConfig) -> dict[str, object]:
     path = spec.path
     exists = path.exists()
     warnings: list[str] = []
-
-    payload: dict[str, object] = {
-        "target_kind": "store",
-        "store_id": spec.store_id,
-        "category": spec.category,
-        "label": spec.label,
-        "description": spec.description,
-        "path_kind": spec.path_kind,
-        "path": str(path),
-        "root_relative_path": _rel_to_root(path, root),
-        "present": exists,
-        "store_status": "present" if exists else "missing",
-        "warnings": warnings,
-    }
+    payload = _base_store_payload(spec, root=root, exists=exists, warnings=warnings)
     if not exists:
         return payload
 
-    try:
-        stat = path.stat()
-        payload["size_bytes"] = int(stat.st_size)
-        payload["modified_at_unix"] = float(stat.st_mtime)
-    except OSError as exc:
-        payload["store_status"] = "unreadable"
-        warnings.append(f"Unreadable path: {exc}")
+    if not _populate_store_stat_payload(path, payload, warnings):
         return payload
 
     if spec.path_kind == "dir":
-        try:
-            payload["entry_count"] = sum(1 for _ in path.iterdir())
-        except OSError as exc:
-            payload["store_status"] = "unreadable"
-            warnings.append(f"Unreadable directory: {exc}")
+        _populate_directory_payload(path, payload, warnings)
         return payload
 
-    metadata: dict[str, object] = {}
-    if spec.store_id == "mirror_state":
-        state = load_mirror_state(path)
-        if state is None:
-            warnings.append("Mirror state exists but could not be parsed.")
-        else:
-            metadata = {
-                "generated_at_unix": state.generated_at_unix,
-                "hash_algo": state.hash_algo,
-                "sources_count": len(state.sources),
-                "manifest_path": state.manifest_path,
-            }
-    elif spec.store_id == "sync_manifest":
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(raw, Mapping):
-                results = raw.get("results")
-                metadata["results_sections"] = (
-                    sorted(str(key) for key in results) if isinstance(results, Mapping) else []
-                )
-                metadata["errors_count"] = (
-                    len(raw.get("errors", [])) if isinstance(raw.get("errors"), list) else 0
-                )
-            else:
-                warnings.append("Sync manifest is not a JSON object.")
-        except (OSError, json.JSONDecodeError) as exc:
-            warnings.append(f"Sync manifest unreadable: {exc}")
-    elif path.suffix == ".sqlite":
-        meta, err = _sqlite_meta(path)
-        if err is not None:
-            warnings.append(f"SQLite metadata unreadable: {err}")
-        elif meta is not None:
-            metadata = meta
-    else:
-        shape = _json_shape(path)
-        if shape is not None:
-            metadata["json_shape"] = shape
-
+    metadata = _store_metadata(spec, path, warnings)
     if metadata:
         payload["metadata"] = metadata
     if warnings and payload["store_status"] == "present":
@@ -212,14 +247,14 @@ def store_payload(store_id: str, *, cfg: EngineConfig) -> dict[str, object]:
     return payload
 
 
-def index_payload(index_id: str, *, cfg: EngineConfig) -> dict[str, object]:
+def index_payload(index_id: str, *, cfg: EngineConfig) -> dict[str, Any]:
     if cfg.index_registry is None:
         msg = "No index registry configured for this engine instance."
         raise ValueError(msg)
     root = Path(cfg.root)
     status = cfg.index_registry.status(index_id, root=root)
     definition = cfg.index_registry.definition(index_id)
-    payload: dict[str, object] = {
+    payload: dict[str, Any] = {
         "target_kind": "index",
         "index_id": index_id,
         "description": definition.description if definition is not None else "",
@@ -231,7 +266,7 @@ def index_payload(index_id: str, *, cfg: EngineConfig) -> dict[str, object]:
     return payload
 
 
-def root_payload(cfg: EngineConfig) -> dict[str, object]:
+def root_payload(cfg: EngineConfig) -> dict[str, Any]:
     return {
         "target_kind": "root",
         "stores": _store_summary_entries(cfg),
@@ -255,7 +290,7 @@ def root_payload(cfg: EngineConfig) -> dict[str, object]:
     }
 
 
-def query_target(raw: str, *, cfg: EngineConfig, fetch_requested: bool = False) -> dict[str, object]:
+def query_target(raw: str, *, cfg: EngineConfig, fetch_requested: bool = False) -> dict[str, Any]:
     target = parse_query_target(raw)
 
     if target.kind == "root":
@@ -298,7 +333,7 @@ def source_payload(
     locator: str | None,
     fetch_requested: bool,
     cfg: EngineConfig,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     root = Path(cfg.root)
     manifest, manifest_warnings, _ = load_latest_manifest(
         root / cfg.log_dir,
@@ -314,7 +349,7 @@ def source_payload(
 
     local_path = local_materialized_path(manifest_entry)
 
-    payload: dict[str, object] = {
+    payload: dict[str, Any] = {
         "target_kind": "source",
         "source_id": source.id,
         "kind": source.kind.value,
@@ -332,7 +367,7 @@ def source_payload(
     if locator is None:
         return payload
 
-    result: dict[str, object | None] = {
+    result: dict[str, Any] = {
         "path": locator,
         "resolved_locator": None,
         "value": None,

@@ -5,9 +5,17 @@ from efloud.health import MirrorHealthSummary, build_mirror_health_summary
 from efloud.indexing import IndexDefinition, IndexRegistry, IndexStatus, JsonTtlIndex
 from efloud.manifest import load_latest_manifest, merge_manifests, normalize_manifest
 from efloud.models import EngineConfig
+from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
 from efloud.query import query_target, root_payload, source_payload, store_payload
 from efloud.query_targets import QueryTarget, parse_query_target
 from efloud.registry import MirrorMode, SourceDefinition, SourceKind
+from efloud.resolve import (
+    manifest_entry_for_source_aliasable,
+    manifest_http_dest_for_url,
+    materialized_path_for_source,
+    mirror_dir,
+    mirror_root_subdir_for_source,
+)
 from efloud.source_aliases import AliasMap, SourceAliasResolver, source_by_id_or_alias
 from efloud.source_results import (
     iter_manifest_entries,
@@ -27,6 +35,7 @@ from efloud.transport.rsync import OpResult, RsyncCommandConfig, RsyncMirror, Rs
 
 __all__ = [
     "AliasMap",
+    "DefaultSyncPolicy",
     "EngineConfig",
     "FanoutItem",
     "HttpCache",
@@ -43,6 +52,7 @@ __all__ = [
     "OpResult",
     "QueryTarget",
     "RestBaseFanoutTask",
+    "RoleDrivenSyncPolicy",
     "RsyncCommandConfig",
     "RsyncMirror",
     "RsyncMirrorConfig",
@@ -60,9 +70,14 @@ __all__ = [
     "load_latest_manifest",
     "local_materialized_path",
     "manifest_entry_for_source",
+    "manifest_entry_for_source_aliasable",
     "manifest_entry_for_source_id",
+    "manifest_http_dest_for_url",
     "manifest_section_for_kind",
+    "materialized_path_for_source",
     "merge_manifests",
+    "mirror_dir",
+    "mirror_root_subdir_for_source",
     "normalize_manifest",
     "parse_query_target",
     "query_target",

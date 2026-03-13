@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
-from efloud.policy import DefaultSyncPolicy
+from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
 from efloud.registry import MirrorMode, SourceDefinition, SourceKind
 from efloud.resolve import (
     manifest_entry_for_source,
@@ -158,3 +158,48 @@ def test_default_sync_policy_uses_refresh_flags_and_rsync_paths(tmp_path: Path, 
         DefaultSyncPolicy.rsync_paths_for_source(source=sources[0], cache_root=tmp_path, manifest=None)
         is None
     )
+
+
+def test_role_driven_sync_policy_overrides_refresh_by_role_and_rest_base(tmp_path: Path):
+    sources = [
+        SourceDefinition(
+            "holdings-id",
+            "Holdings",
+            "https://example.test/holdings",
+            SourceKind.HTTP,
+            role="holdings",
+        ),
+        SourceDefinition(
+            "mapping-id",
+            "Mappings",
+            "https://example.test/map",
+            SourceKind.REST,
+            role="mappings_exact",
+        ),
+        SourceDefinition(
+            "core-id",
+            "Core",
+            "https://example.test/core",
+            SourceKind.REST_BASE,
+        ),
+        SourceDefinition(
+            "mirror-id",
+            "Mirror",
+            "rsync.example.test::mirror",
+            SourceKind.RSYNC,
+            mirror_mode=MirrorMode.PATHS,
+            mirror_paths=("subset",),
+        ),
+    ]
+    policy = RoleDrivenSyncPolicy(
+        http_role_refresh={"holdings": True, "mappings_exact": False},
+        rest_base_refresh=True,
+        rsync_mode=MirrorMode.PATHS,
+    )
+    cfg = EngineConfig(root=tmp_path, sources=sources, refresh_http=False, refresh_rsync=True)
+
+    assert policy.should_refresh(sources[0], cfg) is True
+    assert policy.should_refresh(sources[1], cfg) is False
+    assert policy.should_refresh(sources[2], cfg) is True
+    assert policy.should_refresh(sources[3], cfg) is True
+    assert policy.rsync_paths_for_source(source=sources[3], cache_root=tmp_path, manifest=None) == ("subset",)

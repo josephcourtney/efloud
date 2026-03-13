@@ -16,7 +16,6 @@ except ModuleNotFoundError:  # pragma: no cover - optional plugin import during 
     _test_reporting = None
 
 if TYPE_CHECKING:
-
     from pytest_test_categories.distribution.stats import DistributionStats
     from pytest_test_categories.services.test_reporting import TestReportingService
     from pytest_test_categories.types import OutputWriterPort

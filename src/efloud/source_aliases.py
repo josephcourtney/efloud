@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from efloud.registry import SourceDefinition
+from typing import Protocol
 
 AliasMap = Mapping[str, tuple[str, ...] | list[str]]
+
+
+class SupportsSourceId(Protocol):
+    id: str
 
 
 class SourceAliasResolver:
@@ -48,14 +49,16 @@ class SourceAliasResolver:
                 values.append(canonical)
         return tuple(values)
 
-    def resolve_id(self, source_id: str, sources: Sequence[SourceDefinition]) -> str | None:
+    def resolve_id(self, source_id: str, sources: Sequence[SupportsSourceId]) -> str | None:
         available = {source.id for source in sources}
         for candidate in self.candidates(source_id):
             if candidate in available:
                 return candidate
         return None
 
-    def source_by_id(self, source_id: str, sources: Sequence[SourceDefinition]) -> SourceDefinition | None:
+    def source_by_id[TSource: SupportsSourceId](
+        self, source_id: str, sources: Sequence[TSource]
+    ) -> TSource | None:
         resolved = self.resolve_id(source_id, sources)
         if resolved is None:
             return None
@@ -65,16 +68,17 @@ class SourceAliasResolver:
         return None
 
 
-def source_by_id_or_alias(
+def source_by_id_or_alias[TSource: SupportsSourceId](
     source_id: str,
-    sources: Sequence[SourceDefinition],
+    sources: Sequence[TSource],
     aliases: AliasMap | None = None,
-) -> SourceDefinition | None:
+) -> TSource | None:
     return SourceAliasResolver(aliases).source_by_id(source_id, sources)
 
 
 __all__ = [
     "AliasMap",
     "SourceAliasResolver",
+    "SupportsSourceId",
     "source_by_id_or_alias",
 ]

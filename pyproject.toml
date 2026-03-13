@@ -1,0 +1,201 @@
+# =================================== project ====================================
+[project]
+  name = "efloud"
+  version = "0.0.0"
+  description = "mirror"
+  readme = "README.md"
+  authors = [
+    { name = "Joseph M Courtney", email = "5942706+josephcourtney@users.noreply.github.com" },
+  ]
+  urls = { "Homepage" = "https://github.com/josephcourtney/efloud", "Bug Tracker" = "https://github.com/josephcourtney/efloud/issues" }
+  license = { text = "GPL-3.0-only" }
+  classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: GNU General Public License (GPL)",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+  ]
+  requires-python = ">=3.12,<3.15"
+  dependencies = [
+  ]
+
+  [project.scripts]
+    efloud = "efloud.cli:cli"
+
+[dependency-groups]
+  dev = [
+    "coverage>=7.13.4",
+    "freezegun>=1.5.5",
+    "grimp>=3.14",
+    "hypothesis>=6.151.9",
+    "import-linter>=2.10",
+    "mkdocs-material>=9.7.2",
+    "mkdocs>=1.6.1",
+    "mutmut>=3.4.0",
+    "pyfakefs>=6.1.1",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "pytest-randomly>=4.0.1",
+    "pytest-regressions>=2.10.0",
+    "pytest-subprocess>=1.5.3",
+    "pytest-testmon>=2.2.0",
+    "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "pytest>=9.0.2",
+    "radon>=6.0.1",
+    "rope>=1.14.0",
+    "ruff>=0.15.2",
+    "rust-just>=1.46.0",
+    "showcov>=0.3.5",
+    "ty>=0.0.17",
+    "vulture>=2.14",
+    "watchdog>=6.0.0",
+  ]
+
+# =================================== build ====================================
+[build-system]
+  requires      = ["uv_build>=0.10.0,<0.11.0"]
+  build-backend = "uv_build"
+[tool.uv]
+  [tool.uv.sources]
+    showcov = { git = "https://github.com/josephcourtney/showcov.git", rev = "main" }
+
+
+# ==================================== lint ====================================
+[tool.ruff]
+  extend         = "./ruff.default.toml"
+  extend-exclude = ["tests/fixtures/rules"]
+
+  [tool.ruff.lint]
+    ignore = [
+      "TD002",   # Missing author in TODO; try: `# TODO(<author_name>): ...` or `# TODO @<author_name>: ...`
+      "TD003",   # Missing issue link for this TODO
+      "FIX002",  # Line contains TODO, consider resolving the issue
+      "PLC1901", # `{expression} != ""` can be simplified to `{expression}` as an empty string is falsey
+    ]
+    [tool.ruff.lint.per-file-ignores]
+      "tests/**/*" = [
+        "ANN",     # Type annotations
+        "S101",    # Use of `assert` detected
+        "SLF001",  # Private member accessed
+        "PLR2004", # Magic value used in comparison, consider replacing with a constant variable
+        "ARG001",  # Unused function argument
+        "ARG002",  # Unused method argument
+        "ARG005",  # Unused lambda argument
+        "PLC0415", # `import` should be at the top-level of a file
+        # "PLC2701",
+        "INP001",  # File is part of an implicit namespace package
+        "PLC1901", # `r.stderr.strip() != ""` can be simplified to `r.stderr.strip()` as an empty string is falsey
+      ]
+
+# =================================== test ===================================
+[tool.pytest.ini_options]
+
+  minversion = "9.0"
+  testpaths = ["tests"]
+  python_files = ["test_*.py"]
+  addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--import-mode=importlib",
+    "--cov=efloud",
+    "--cov-branch",
+    "--cov-report=",
+    "--cov-context=test",
+    "--timeout=300",
+    "--timeout-method=thread",
+  ]
+  timeout = 600
+  timeout_method = "thread"
+  xfail_strict = true
+
+  log_cli             = true
+  log_cli_level       = "INFO"
+  log_cli_format      = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+  log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+  norecursedirs = [
+    ".hypothesis",
+    ".git",
+    ".tox",
+    ".venv",
+    "dist",
+    "build",
+    ".pytest_cache",
+    ".eggs",
+    ".uv",
+    ".cache",
+  ]
+  test_categories_enforcement = "fail"
+  test_categories_distribution_enforcement = "fail"
+  asyncio_mode = "auto"
+
+  filterwarnings = [
+    "error::DeprecationWarning:showcov\\.",
+    "ignore::DeprecationWarning:pkg_resources",
+    "ignore::DeprecationWarning:distutils",
+    "ignore::UserWarning:hypothesis",
+    "ignore:`use_rich_markup=` will be deprecated.*:PendingDeprecationWarning:rich_click.*",
+  ]
+
+  markers = [
+    # Structural levels
+    "unit: Fast, isolated tests of individual functions/classes. No real I/O or global state.",
+    "component: Tests of a bounded context via public APIs with in-process fakes.",
+    "integration: Tests involving real external dependencies (DB, queues, containers, external services).",
+    "system: Full system / end-to-end tests treating the app as a black box.",
+    "contract: Service/API or data/schema contract tests.",
+
+    # Purpose markers
+    "acceptance: Requirement-driven system tests tied to user stories or acceptance criteria.",
+    "regression: Prevent re-introduction of known bugs or failures.",
+    "sanity: Narrow checks verifying specific bugfixes or features.",
+    "smoke: Fast, critical-path tests run before larger suites.",
+    "performance: Performance tests (latency, throughput, resource usage).",
+    "performance_regression: Tests comparing runtime metrics to stored baselines.",
+    "security: Security-focused tests.",
+    "fuzz: Fuzzing-style tests feeding malformed/randomized inputs.",
+    "chaos: Chaos/resilience tests injecting faults or disruptions.",
+    "privacy: Privacy-impact tests ensuring correct PII/data handling.",
+    "data_quality: Tests of data integrity, freshness, referential integrity, etc.",
+    "drift: Model/data drift detection tests (PSI, KS, etc.).",
+    "usability: Automated usability tests (accessibility, i18n).",
+    "synthetic_monitoring: Synthetic production probes.",
+
+    # Technique / infra markers
+    "snapshot: Snapshot-based tests.",
+    "property_based: Property-based tests (Hypothesis).",
+    "mutation: Mutation-testing related.",
+    "observability: Tests asserting presence/shape of logs/metrics/traces.",
+
+    # Operational/meta
+    "slow: Known slow tests.",
+    "flaky: Known flaky tests under triage.",
+    "legacy: Legacy tests awaiting refactor/removal.",
+    "experimental: Experimental tests or tooling not yet mandatory.",
+    "external_data: Tests requiring external vendor data (skip if vendor fixtures are absent).",
+
+    # Domain-specific
+    "db: Database behavior tests.",
+    "api: API-centric tests (HTTP/RPC).",
+    "ml: ML-related tests.",
+    "ui: UI-layer tests (web, CLI).",
+  ]
+
+
+# =================================== test:coverage ===================================
+[tool.coverage.run]
+  source   = ["efloud"]
+  branch   = true
+  parallel = true
+
+[tool.mutmut]
+  paths_to_mutate = ["src/wrixlere"]
+  tests_dir = ["tests/unit"]
+  also_copy = ["src", ".coverage.xml", ".coverage"]
+  mutate_only_covered_lines = true
+  pytest_add_cli_args = [
+    "-m unit",
+    "--no-cov",
+  ]

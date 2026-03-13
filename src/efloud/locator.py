@@ -61,7 +61,7 @@ def locator_parts(locator: str) -> list[str]:
 
     loc = loc.removeprefix("#")
 
-    pointer = _jsonpath_to_pointer(loc)
+    pointer = jsonpath_to_pointer(loc)
     if pointer is not None:
         loc = pointer
 
@@ -70,7 +70,7 @@ def locator_parts(locator: str) -> list[str]:
 
     # Allow plain "a.b[0].c" as a convenience.
     if "." in loc or "[" in loc:
-        converted = _jsonpath_to_pointer("$." + loc if not loc.startswith("$") else loc)
+        converted = jsonpath_to_pointer("$." + loc if not loc.startswith("$") else loc)
         if converted is not None:
             return [part for part in converted.split("/") if part]
 
@@ -189,12 +189,12 @@ def locator_candidates(locator: str) -> tuple[str, ...]:
     if raw.startswith("#"):
         add(raw[1:])
 
-    pointer = _jsonpath_to_pointer(raw)
+    pointer = jsonpath_to_pointer(raw)
     if pointer is not None:
         add(pointer)
 
     if raw.startswith("#"):
-        pointer = _jsonpath_to_pointer(raw[1:])
+        pointer = jsonpath_to_pointer(raw[1:])
         if pointer is not None:
             add(pointer)
 
@@ -261,7 +261,7 @@ def _resolve_regex_locator(text: str, locator: str) -> tuple[JsonValue | None, s
     return (match.group(1) if match.groups() else match.group(0)), None
 
 
-def _jsonpath_to_pointer(locator: str) -> str | None:
+def jsonpath_to_pointer(locator: str) -> str | None:
     """
     Convert a narrow JSONPath-lite syntax into JSON Pointer-like form.
 
@@ -283,6 +283,41 @@ def _jsonpath_to_pointer(locator: str) -> str | None:
     if not loc:
         return "/"
     return _pointer_from_jsonpath_segments(loc)
+
+
+def csv_locator_to_rfc7111(locator: str) -> str | None:
+    if not locator.startswith("CSV row="):
+        return None
+    row_str = locator.removeprefix("CSV row=").split(" ", 1)[0]
+    if not row_str.isdigit():
+        return None
+    row = int(row_str)
+    cols: list[int] = []
+    cursor = 0
+    while True:
+        idx = locator.find("cols[", cursor)
+        if idx == -1:
+            break
+        end = locator.find("]", idx)
+        if end == -1:
+            break
+        raw = locator[idx + 5 : end]
+        if raw.isdigit():
+            cols.append(int(raw) + 1)
+        cursor = end + 1
+    if cols:
+        cols.sort()
+        return f"#row={row}&col={cols[0]}-{cols[-1]}"
+    return f"#row={row}"
+
+
+def star_locator_to_pointer(locator: str) -> str | None:
+    if not locator.startswith("STAR tag="):
+        return None
+    tag = locator.removeprefix("STAR tag=").split(" value=", 1)[0].strip()
+    if not tag.startswith("_"):
+        return None
+    return f"#/{tag[1:].replace('.', '/')}"
 
 
 def _pointer_from_jsonpath_segments(text: str) -> str | None:
@@ -328,10 +363,13 @@ def _parse_bare_token(text: str, start: int) -> tuple[str, int]:
 
 __all__ = [
     "apply_structured_locator",
+    "csv_locator_to_rfc7111",
+    "jsonpath_to_pointer",
     "locator_candidates",
     "locator_parts",
     "read_text_auto",
     "resolve_locator_from_file",
     "resolve_single_locator_from_file",
     "split_locator",
+    "star_locator_to_pointer",
 ]

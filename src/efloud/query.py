@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
-import sqlite3
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -12,57 +9,18 @@ from efloud.manifest import load_latest_manifest
 from efloud.query_targets import parse_query_target
 from efloud.source_aliases import source_by_id_or_alias
 from efloud.source_results import local_materialized_path, manifest_entry_for_source
-from efloud.state import load_mirror_state
+from efloud.store_inspection import (
+    StoreSpec,
+    generic_store_metadata,
+    mirror_state_metadata,
+    store_payload_for_specs,
+    store_summary_entries,
+    sync_manifest_metadata,
+)
 
 if TYPE_CHECKING:
-    from efloud.json_types import JsonObject
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
-
-
-@dataclass(frozen=True)
-class StoreSpec:
-    store_id: str
-    label: str
-    path: Path
-    category: str
-    path_kind: str  # "file" | "dir"
-    description: str
-
-
-def _rel_to_root(path: Path, root: Path) -> str:
-    try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except (OSError, ValueError):
-        return path.as_posix()
-
-
-def _json_shape(path: Path) -> str | None:
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if isinstance(raw, dict):
-        return "object"
-    if isinstance(raw, list):
-        return "array"
-    return type(raw).__name__
-
-
-def _sqlite_meta(path: Path) -> tuple[dict[str, str] | None, str | None]:
-    if not path.exists():
-        return None, None
-    try:
-        con = sqlite3.connect(path)
-    except sqlite3.Error as exc:
-        return None, str(exc)
-    try:
-        rows = con.execute("SELECT key, value FROM meta").fetchall()
-    except sqlite3.Error as exc:
-        return None, str(exc)
-    finally:
-        con.close()
-    return {str(k): str(v) for (k, v) in rows}, None
 
 
 def store_specs(cfg: EngineConfig) -> tuple[StoreSpec, ...]:
@@ -75,6 +33,7 @@ def store_specs(cfg: EngineConfig) -> tuple[StoreSpec, ...]:
             category="derived",
             path_kind="file",
             description="Canonical merged sync manifest.",
+            metadata_provider=sync_manifest_metadata,
         ),
         StoreSpec(
             store_id="mirror_state",
@@ -83,6 +42,7 @@ def store_specs(cfg: EngineConfig) -> tuple[StoreSpec, ...]:
             category="derived",
             path_kind="file",
             description="Hash-tree snapshot of mirrored filesystem state.",
+            metadata_provider=mirror_state_metadata,
         ),
         StoreSpec(
             store_id="http_cache_dir",
@@ -108,143 +68,24 @@ def store_specs(cfg: EngineConfig) -> tuple[StoreSpec, ...]:
             path_kind="dir",
             description="Directory containing sync manifests and related run artifacts.",
         ),
+        StoreSpec(
+            store_id="http_cache_sqlite",
+            label="HTTP cache sqlite",
+            path=root / cfg.cache_dir / cfg.http_cache_dir / "cache.sqlite",
+            category="cached",
+            path_kind="file",
+            description="SQLite metadata store used by the persistent HTTP cache.",
+            metadata_provider=generic_store_metadata,
+        ),
     )
 
 
 def _store_summary_entries(cfg: EngineConfig) -> list[dict[str, str]]:
-    return [
-        {
-            "store_id": spec.store_id,
-            "category": spec.category,
-            "label": spec.label,
-            "path": str(spec.path),
-        }
-        for spec in store_specs(cfg)
-    ]
-
-
-def _base_store_payload(
-    spec: StoreSpec,
-    *,
-    root: Path,
-    exists: bool,
-    warnings: list[str],
-) -> dict[str, Any]:
-    return {
-        "target_kind": "store",
-        "store_id": spec.store_id,
-        "category": spec.category,
-        "label": spec.label,
-        "description": spec.description,
-        "path_kind": spec.path_kind,
-        "path": str(spec.path),
-        "root_relative_path": _rel_to_root(spec.path, root),
-        "present": exists,
-        "store_status": "present" if exists else "missing",
-        "warnings": warnings,
-    }
-
-
-def _populate_store_stat_payload(path: Path, payload: dict[str, Any], warnings: list[str]) -> bool:
-    try:
-        stat = path.stat()
-    except OSError as exc:
-        payload["store_status"] = "unreadable"
-        warnings.append(f"Unreadable path: {exc}")
-        return False
-    payload["size_bytes"] = int(stat.st_size)
-    payload["modified_at_unix"] = float(stat.st_mtime)
-    return True
-
-
-def _populate_directory_payload(path: Path, payload: dict[str, Any], warnings: list[str]) -> None:
-    try:
-        payload["entry_count"] = sum(1 for _ in path.iterdir())
-    except OSError as exc:
-        payload["store_status"] = "unreadable"
-        warnings.append(f"Unreadable directory: {exc}")
-
-
-def _store_metadata(spec: StoreSpec, path: Path, warnings: list[str]) -> dict[str, Any]:
-    if spec.store_id == "mirror_state":
-        return _mirror_state_metadata(path, warnings)
-    if spec.store_id == "sync_manifest":
-        return _sync_manifest_metadata(path, warnings)
-    if path.suffix == ".sqlite":
-        return _sqlite_store_metadata(path, warnings)
-    return _generic_store_metadata(path)
-
-
-def _mirror_state_metadata(path: Path, warnings: list[str]) -> dict[str, Any]:
-    state = load_mirror_state(path)
-    if state is None:
-        warnings.append("Mirror state exists but could not be parsed.")
-        return {}
-    return {
-        "generated_at_unix": state.generated_at_unix,
-        "hash_algo": state.hash_algo,
-        "sources_count": len(state.sources),
-        "manifest_path": state.manifest_path,
-    }
-
-
-def _sync_manifest_metadata(path: Path, warnings: list[str]) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        warnings.append(f"Sync manifest unreadable: {exc}")
-        return metadata
-    if not isinstance(raw, Mapping):
-        warnings.append("Sync manifest is not a JSON object.")
-        return metadata
-    results = raw.get("results")
-    metadata["results_sections"] = sorted(str(key) for key in results) if isinstance(results, Mapping) else []
-    metadata["errors_count"] = len(raw.get("errors", [])) if isinstance(raw.get("errors"), list) else 0
-    return metadata
-
-
-def _sqlite_store_metadata(path: Path, warnings: list[str]) -> JsonObject:
-    meta, err = _sqlite_meta(path)
-    if err is not None:
-        warnings.append(f"SQLite metadata unreadable: {err}")
-        return {}
-    return dict((meta or {}).items())
-
-
-def _generic_store_metadata(path: Path) -> dict[str, Any]:
-    shape = _json_shape(path)
-    return {"json_shape": shape} if shape is not None else {}
+    return store_summary_entries(store_specs(cfg))
 
 
 def store_payload(store_id: str, *, cfg: EngineConfig) -> dict[str, Any]:
-    specs = {spec.store_id: spec for spec in store_specs(cfg)}
-    spec = specs.get(store_id)
-    if spec is None:
-        msg = f"Unknown store identifier: {store_id!r}"
-        raise ValueError(msg)
-
-    root = Path(cfg.root)
-    path = spec.path
-    exists = path.exists()
-    warnings: list[str] = []
-    payload = _base_store_payload(spec, root=root, exists=exists, warnings=warnings)
-    if not exists:
-        return payload
-
-    if not _populate_store_stat_payload(path, payload, warnings):
-        return payload
-
-    if spec.path_kind == "dir":
-        _populate_directory_payload(path, payload, warnings)
-        return payload
-
-    metadata = _store_metadata(spec, path, warnings)
-    if metadata:
-        payload["metadata"] = metadata
-    if warnings and payload["store_status"] == "present":
-        payload["store_status"] = "degraded"
-    return payload
+    return store_payload_for_specs(store_id, root=Path(cfg.root), specs=store_specs(cfg))
 
 
 def index_payload(index_id: str, *, cfg: EngineConfig) -> dict[str, Any]:

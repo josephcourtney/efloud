@@ -28,11 +28,14 @@ from efloud.json_types import (
 )
 from efloud.locator import (
     apply_structured_locator,
+    csv_locator_to_rfc7111,
+    jsonpath_to_pointer,
     locator_candidates,
     locator_parts,
     resolve_locator_from_file,
     resolve_single_locator_from_file,
     split_locator,
+    star_locator_to_pointer,
 )
 from efloud.manifest import load_latest_manifest, merge_manifests, normalize_manifest
 
@@ -194,6 +197,9 @@ def test_split_locator_and_parts_cover_supported_forms():
     assert locator_parts("$.items[0].name") == ["items", "0", "name"]
     assert locator_parts("items[0]['name']") == ["items", "0", "name"]
     assert locator_parts("") == []
+    assert jsonpath_to_pointer("$.items[0].name") == "/items/0/name"
+    assert csv_locator_to_rfc7111("CSV row=3 cols[0] cols[2]") == "#row=3&col=1-3"
+    assert star_locator_to_pointer("STAR tag=_Entry.ID value=1") == "#/Entry/ID"
 
 
 def test_apply_structured_locator_handles_dict_list_and_errors():

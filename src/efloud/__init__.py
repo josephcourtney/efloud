@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from efloud.artifacts import build_path_index, canonical_path, sha256_hex, verify_gzip
 from efloud.fanout import FanoutItem, RestBaseFanoutTask, two_char_bucket
 from efloud.health import MirrorHealthSummary, build_mirror_health_summary
 from efloud.indexing import IndexDefinition, IndexRegistry, IndexStatus, JsonTtlIndex
@@ -27,6 +28,20 @@ from efloud.source_results import (
 )
 from efloud.state import MirrorState, MirrorStateNode
 from efloud.status import collect_status_payload, derived_summary, source_status_rows
+from efloud.store_inspection import (
+    StoreMetadataProvider,
+    StorePathKind,
+    StoreSpec,
+    generic_store_metadata,
+    json_shape,
+    mirror_state_metadata,
+    rel_to_root,
+    sqlite_meta,
+    sqlite_store_metadata,
+    store_payload_for_specs,
+    store_summary_entries,
+    sync_manifest_metadata,
+)
 from efloud.summary import build_summary
 from efloud.sync import SyncResult, sync
 from efloud.transport.http import HttpCache, HttpCacheConfig
@@ -59,14 +74,21 @@ __all__ = [
     "SourceAliasResolver",
     "SourceDefinition",
     "SourceKind",
+    "StoreMetadataProvider",
+    "StorePathKind",
+    "StoreSpec",
     "SyncResult",
     "build_mirror_health_summary",
+    "build_path_index",
     "build_summary",
     "cache_group_name",
+    "canonical_path",
     "collect_status_payload",
     "derived_summary",
     "dest_for_http_source",
+    "generic_store_metadata",
     "iter_manifest_entries",
+    "json_shape",
     "load_latest_manifest",
     "local_materialized_path",
     "manifest_entry_for_source",
@@ -78,15 +100,24 @@ __all__ = [
     "merge_manifests",
     "mirror_dir",
     "mirror_root_subdir_for_source",
+    "mirror_state_metadata",
     "normalize_manifest",
     "parse_query_target",
     "query_target",
+    "rel_to_root",
     "root_payload",
+    "sha256_hex",
     "source_by_id_or_alias",
     "source_payload",
     "source_status_hint",
     "source_status_rows",
+    "sqlite_meta",
+    "sqlite_store_metadata",
     "store_payload",
+    "store_payload_for_specs",
+    "store_summary_entries",
     "sync",
+    "sync_manifest_metadata",
     "two_char_bucket",
+    "verify_gzip",
 ]

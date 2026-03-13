@@ -12,6 +12,7 @@ from efloud.models import EngineConfig, SyncResult
 from efloud.query import index_payload, query_target, root_payload, store_payload
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.status import collect_status_payload, derived_summary, describe_source_status, source_status_rows
+from efloud.store_inspection import rel_to_root
 from efloud.summary import build_summary
 
 if TYPE_CHECKING:
@@ -195,6 +196,7 @@ def test_store_index_root_and_query_payloads(cfg: EngineConfig, tmp_path: Path):
     manifest_store = store_payload("sync_manifest", cfg=cfg)
     state_store = store_payload("mirror_state", cfg=cfg)
     rate_store = store_payload("rate_limits_dir", cfg=cfg)
+    sqlite_store = store_payload("http_cache_sqlite", cfg=cfg)
     index_info = index_payload("alpha", cfg=cfg)
     root_info = root_payload(cfg)
     source_info = query_target("source:http-id#/dest", cfg=cfg)
@@ -202,6 +204,8 @@ def test_store_index_root_and_query_payloads(cfg: EngineConfig, tmp_path: Path):
     assert manifest_store["metadata"]["results_sections"] == ["derived", "http", "rsync"]
     assert state_store["metadata"]["hash_algo"] == "sha256"
     assert rate_store["store_status"] == "missing"
+    assert sqlite_store["metadata"] == {"a": "b"}
+    assert sqlite_store["root_relative_path"] == rel_to_root(sqlite_path, tmp_path)
     assert index_info["status"]["present"] is True
     assert root_info["target_kind"] == "root"
     assert source_info["locator"]["value"] == str(source_file)

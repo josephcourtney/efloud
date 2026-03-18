@@ -66,6 +66,7 @@ STATUS.md captures the current state of the project for continuity and handoff. 
 
 ### Contents
 STATUS.md SHOULD contain:
+- A brief header explaining the purpose of the STATUS.md file itself
 - Current focus or active area of work
 - Summary of recently completed plan elements
 - Known gaps, limitations, or incomplete areas
@@ -81,7 +82,8 @@ STATUS.md SHOULD NOT contain:
 - STATUS.md is short-horizon and pragmatic.
 - It is updated as work progresses and pruned to remain high-signal.
 - It may reference sections of PLAN.md or ADRs rather than restating them.
-- STATUS.md is not an archive; obsolete information should be removed.
+- It is not an archive; obsolete information should be removed.
+- It should be compact. It should not have more than ~50 lines / ~2500 characters unless it is not possible to meet the other requirements without exceeding those limits
 
 ---
 

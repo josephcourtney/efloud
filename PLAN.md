@@ -42,7 +42,7 @@ These constraints apply to every phase:
 - preserve deterministic file naming and metadata content where practical
 - add tests for every compatibility shim and every new subsystem boundary
 
-## Phase 0: Baseline And Mapping
+## Phase 0: Baseline And Mapping (Complete)
 
 Objective:
 

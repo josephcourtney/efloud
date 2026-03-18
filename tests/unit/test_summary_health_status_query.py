@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import TYPE_CHECKING
+from enum import StrEnum
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -18,7 +19,16 @@ from efloud.summary import build_summary
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from efloud.models import NormalizedManifest
+
 pytestmark = [pytest.mark.unit, pytest.mark.medium]
+
+
+class ForeignSourceKind(StrEnum):
+    HTTP = "HTTP"
+    REST = "REST"
+    REST_BASE = "REST_BASE"
+    RSYNC = "RSYNC"
 
 
 @pytest.fixture
@@ -217,3 +227,46 @@ def test_store_index_root_and_query_payloads(cfg: EngineConfig, tmp_path: Path):
         index_payload("alpha", cfg=EngineConfig(root=tmp_path, sources=[]))
     with pytest.raises(ValueError, match="Unsupported query target"):
         query_target("bad", cfg=cfg)
+
+
+def test_status_helpers_accept_foreign_but_value_compatible_source_kind_enum(tmp_path: Path):
+    foreign_rsync = SourceDefinition(
+        "foreign-rsync",
+        "Foreign Mirror",
+        "rsync.example.test::module",
+        cast("SourceKind", ForeignSourceKind.RSYNC),
+        local_subpath="mirror/source",
+    )
+    manifest = cast(
+        "NormalizedManifest",
+        {
+            "results": {
+                "http": {},
+                "rsync": {
+                    "foreign-rsync": {
+                        "ok": True,
+                        "local": str(tmp_path / "mirrors" / "mirror/source"),
+                        "mode": "update",
+                        "results": {"update": {"status": "success"}},
+                    }
+                },
+                "derived": {},
+            },
+        },
+    )
+
+    rows = source_status_rows(manifest, [foreign_rsync])
+
+    assert rows == [
+        {
+            "source_id": "foreign-rsync",
+            "kind": "RSYNC",
+            "status": "ok",
+            "details": {
+                "description": "Foreign Mirror",
+                "local": str(tmp_path / "mirrors" / "mirror/source"),
+                "mode": "update",
+                "updates": [{"name": "update", "status": "success"}],
+            },
+        }
+    ]

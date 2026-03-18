@@ -33,7 +33,7 @@ def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]
     mirror_roots = {
         source.id: (root / cfg.mirrors_dir / source.local_subpath) if source.local_subpath else None
         for source in cfg.sources
-        if source.kind is SourceKind.RSYNC
+        if _kind_name(source.kind) == SourceKind.RSYNC.value
     }
 
     payload = {
@@ -61,11 +61,12 @@ def describe_source_status(
     if not entry:
         return status, details
 
-    if source.kind in {SourceKind.HTTP, SourceKind.REST}:
+    kind_value = _kind_name(source.kind)
+    if kind_value in {SourceKind.HTTP.value, SourceKind.REST.value}:
         _add_http_source_details(entry, details)
-    elif source.kind is SourceKind.RSYNC:
+    elif kind_value == SourceKind.RSYNC.value:
         _add_rsync_source_details(entry, details)
-    elif source.kind is SourceKind.REST_BASE:
+    elif kind_value == SourceKind.REST_BASE.value:
         _add_rest_base_details(entry, details)
 
     if isinstance(entry.get("error"), str):
@@ -164,6 +165,11 @@ def _copy_int(source: JsonMapping, dest: JsonObject, key: str) -> None:
     value = source.get(key)
     if isinstance(value, int):
         dest[key] = value
+
+
+def _kind_name(kind: object) -> str:
+    value = getattr(kind, "value", kind)
+    return str(value)
 
 
 def source_status_rows(

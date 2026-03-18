@@ -14,11 +14,17 @@ if TYPE_CHECKING:
 
 
 def manifest_section_for_kind(kind: SourceKind) -> str:
-    if kind in {SourceKind.HTTP, SourceKind.REST}:
+    kind_value = _kind_name(kind)
+    if kind_value in {SourceKind.HTTP.value, SourceKind.REST.value}:
         return "http"
-    if kind is SourceKind.RSYNC:
+    if kind_value == SourceKind.RSYNC.value:
         return "rsync"
     return "derived"
+
+
+def _kind_name(kind: object) -> str:
+    value = getattr(kind, "value", kind)
+    return str(value)
 
 
 def manifest_entry_for_source_id(

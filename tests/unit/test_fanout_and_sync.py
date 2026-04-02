@@ -674,6 +674,60 @@ def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_
     assert len(attempts) == 1
 
 
+def test_rsync_transport_does_not_retry_host_key_or_path_failures(monkeypatch, tmp_path: Path):
+    transport_mod = importlib.import_module("efloud.transport.rsync")
+    cfg = RsyncMirrorConfig(
+        name="Retry Test",
+        remote="rsync.example.test::module",
+        local=tmp_path / "mirror",
+    )
+    attempts: list[int] = []
+
+    failures = [
+        OpResult(
+            status="failed",
+            detail="rsync failed",
+            returncode=255,
+            stderr="Host key verification failed.",
+        ),
+        OpResult(
+            status="failed",
+            detail="rsync failed",
+            returncode=23,
+            stderr=(
+                'rsync: [sender] change_dir "data/structures/all/mmcif" '
+                "(in ftp) failed: No such file or directory (2)"
+            ),
+        ),
+    ]
+
+    def fake_once(_cfg, *, cmd, remote, local, attempt, max_attempts):
+        del _cfg, cmd, remote, local, attempt, max_attempts
+        attempts.append(1)
+        return failures[len(attempts) - 1]
+
+    monkeypatch.setattr(transport_mod, "_run_rsync_process_once", fake_once)
+    monkeypatch.setattr(transport_mod, "_preflight_connectivity", lambda _cfg, *, remote: None)
+    monkeypatch.setattr(transport_mod.time, "sleep", lambda _seconds: None)
+
+    first = transport_mod._run_rsync_process(
+        cfg,
+        cmd=["rsync"],
+        remote="rsync.example.test::module",
+        local=tmp_path / "mirror",
+    )
+    second = transport_mod._run_rsync_process(
+        cfg,
+        cmd=["rsync"],
+        remote="rsync.example.test::module",
+        local=tmp_path / "mirror",
+    )
+
+    assert first.attempt_count == 1
+    assert second.attempt_count == 1
+    assert len(attempts) == 2
+
+
 def test_remote_display_target_uses_rsync_daemon_module_syntax() -> None:
     transport_mod = importlib.import_module("efloud.transport.rsync")
 

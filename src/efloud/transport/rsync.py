@@ -608,9 +608,20 @@ def _result_error_summary(result: OpResult) -> str:
 def _is_transient_rsync_failure(result: OpResult) -> bool:
     if result.status not in {"failed", "timed_out"}:
         return False
+    text = " ".join(part for part in (result.detail, result.stderr) if part).lower()
+    permanent_markers = (
+        "host key verification failed",
+        "unknown module",
+        "@error:",
+        'change_dir "',
+        "no such file or directory",
+        "permission denied",
+        "protocol version mismatch",
+    )
+    if any(marker in text for marker in permanent_markers):
+        return False
     if result.returncode in _TRANSIENT_RSYNC_RETURN_CODES:
         return True
-    text = " ".join(part for part in (result.detail, result.stderr) if part).lower()
     transient_markers = (
         "failed to connect",
         "operation timed out",

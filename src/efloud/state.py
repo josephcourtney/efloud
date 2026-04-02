@@ -25,10 +25,17 @@ HashTreeChildren = dict[str, "MirrorStateNode"]
 class MirrorStateNode:
     path_type: Literal["file", "dir"]
     hash: str
+    file_count: int
+    dir_count: int
     children: HashTreeChildren | None = None
 
     def to_dict(self) -> JsonObject:
-        payload: JsonObject = {"type": self.path_type, "hash": self.hash}
+        payload: JsonObject = {
+            "type": self.path_type,
+            "hash": self.hash,
+            "file_count": self.file_count,
+            "dir_count": self.dir_count,
+        }
         if self.children is not None:
             payload["children"] = {name: child.to_dict() for name, child in self.children.items()}
         return payload
@@ -55,7 +62,32 @@ class MirrorStateNode:
                     entries[name] = node
             if entries:
                 children = entries
-        return MirrorStateNode(path_type=path_type, hash=hash_value, children=children)
+        file_count = raw.get("file_count")
+        dir_count = raw.get("dir_count")
+        if not isinstance(file_count, int) or not isinstance(dir_count, int):
+            file_count, dir_count = _node_counts(path_type=path_type, children=children)
+        return MirrorStateNode(
+            path_type=path_type,
+            hash=hash_value,
+            file_count=file_count,
+            dir_count=dir_count,
+            children=children,
+        )
+
+
+def _node_counts(
+    *,
+    path_type: Literal["file", "dir"],
+    children: HashTreeChildren | None,
+) -> tuple[int, int]:
+    if path_type == "file":
+        return (1, 0)
+    file_count = 0
+    dir_count = 1
+    for child in (children or {}).values():
+        file_count += child.file_count
+        dir_count += child.dir_count
+    return (file_count, dir_count)
 
 
 def _hash_file(path: Path) -> str | None:
@@ -98,7 +130,7 @@ def build_hash_tree(
         progress_state["files"] = int(progress_state["files"]) + 1
         if on_progress is not None:
             on_progress(int(progress_state["files"]), int(progress_state["dirs"]), path)
-        return MirrorStateNode(path_type="file", hash=file_hash)
+        return MirrorStateNode(path_type="file", hash=file_hash, file_count=1, dir_count=0)
     if path.is_dir():
         entries: list[tuple[str, MirrorStateNode]] = []
         sorted_paths = sorted(path.iterdir(), key=lambda child: child.name)
@@ -108,10 +140,17 @@ def build_hash_tree(
                 entries.append((child.name, node))
         directory_hash = _hash_directory(entries)
         children = dict(entries) if entries else None
+        file_count, dir_count = _node_counts(path_type="dir", children=children)
         progress_state["dirs"] = int(progress_state["dirs"]) + 1
         if on_progress is not None:
             on_progress(int(progress_state["files"]), int(progress_state["dirs"]), path)
-        return MirrorStateNode(path_type="dir", hash=directory_hash, children=children)
+        return MirrorStateNode(
+            path_type="dir",
+            hash=directory_hash,
+            file_count=file_count,
+            dir_count=dir_count,
+            children=children,
+        )
     return None
 
 
@@ -122,11 +161,15 @@ def _replace_subtree(
     replacement: MirrorStateNode | None,
 ) -> MirrorStateNode:
     if root.path_type != "dir":
-        root = MirrorStateNode(path_type="dir", hash=_hash_directory([]), children=None)
+        root = MirrorStateNode(
+            path_type="dir", hash=_hash_directory([]), file_count=0, dir_count=1, children=None
+        )
 
     if not parts:
         if replacement is None:
-            return MirrorStateNode(path_type="dir", hash=_hash_directory([]), children=None)
+            return MirrorStateNode(
+                path_type="dir", hash=_hash_directory([]), file_count=0, dir_count=1, children=None
+            )
         return replacement
 
     children: dict[str, MirrorStateNode] = dict(root.children or {})
@@ -140,14 +183,23 @@ def _replace_subtree(
     else:
         current = children.get(head)
         if current is None or current.path_type != "dir":
-            current = MirrorStateNode(path_type="dir", hash=_hash_directory([]), children=None)
+            current = MirrorStateNode(
+                path_type="dir",
+                hash=_hash_directory([]),
+                file_count=0,
+                dir_count=1,
+                children=None,
+            )
         children[head] = _replace_subtree(current, parts=tail, replacement=replacement)
 
     ordered_entries = sorted(children.items(), key=operator.itemgetter(0))
     merged_children = dict(ordered_entries) if ordered_entries else None
+    file_count, dir_count = _node_counts(path_type="dir", children=merged_children)
     return MirrorStateNode(
         path_type="dir",
         hash=_hash_directory(ordered_entries),
+        file_count=file_count,
+        dir_count=dir_count,
         children=merged_children,
     )
 

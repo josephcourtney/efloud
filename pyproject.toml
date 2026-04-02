@@ -1,7 +1,7 @@
 # =================================== project ====================================
 [project]
   name = "efloud"
-  version = "0.0.3"
+version = "0.0.4"
   description = "mirror"
   readme = "README.md"
   authors = [

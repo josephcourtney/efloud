@@ -41,7 +41,13 @@ from efloud.transport.http_utils import (
     fetch_json_to_file,
     fetch_to_file,
 )
-from efloud.transport.rsync import RsyncCommandConfig, RsyncMirror, RsyncMirrorConfig, read_rsync_mirror_meta
+from efloud.transport.rsync import (
+    OpResult,
+    RsyncCommandConfig,
+    RsyncMirror,
+    RsyncMirrorConfig,
+    read_rsync_mirror_meta,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,6 +55,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _HASH_PROGRESS_MIN_SECONDS = 2.0
 _HASH_PROGRESS_MIN_FILES = 10_000
+_MMCIF_BUCKET_PARTS = 2
+_MMCIF_BUCKET_WIDTH = 2
+_RSYNC_FILE_OR_ATTR_ERROR_CODE = 23
 
 
 class ManifestRecorder:
@@ -252,6 +261,80 @@ def _rsync_failure_detail(results_payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _looks_like_mmcif_bucket_path(rel: str) -> bool:
+    rel_norm = rel.strip().strip("/")
+    parts = rel_norm.split("/")
+    if len(parts) != _MMCIF_BUCKET_PARTS:
+        return False
+    if parts[0] != "mmCIF":
+        return False
+    bucket = parts[1]
+    return len(bucket) == _MMCIF_BUCKET_WIDTH and bucket.isalnum()
+
+
+def _is_missing_remote_mmcif_bucket(
+    *,
+    source: SourceDefinition,
+    rel: str,
+    result: OpResult,
+) -> bool:
+    if source.id != "pdb_mmcif":
+        return False
+    if result.status not in {"failed", "timed_out"}:
+        return False
+    if not _looks_like_mmcif_bucket_path(rel):
+        return False
+    if result.returncode != _RSYNC_FILE_OR_ATTR_ERROR_CODE:
+        return False
+    text = " ".join(part for part in (result.stderr, result.stdout, result.detail) if part).lower()
+    return 'change_dir "' in text and "no such file or directory" in text
+
+
+def _normalize_rsync_path_result(
+    *,
+    source: SourceDefinition,
+    rel: str,
+    result: OpResult,
+) -> OpResult:
+    if not _is_missing_remote_mmcif_bucket(source=source, rel=rel, result=result):
+        return result
+    return OpResult(
+        status="success",
+        detail="Skipped: remote shard not present",
+        returncode=0,
+        timed_out=False,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        updated=result.updated,
+        phase=result.phase or "receiving file list",
+        attempt_count=result.attempt_count,
+        max_attempts=result.max_attempts,
+        attempt_errors=result.attempt_errors,
+    )
+
+
+def _rsync_command_for_source(source: SourceDefinition) -> RsyncCommandConfig:
+    if source.id == "pdb_mmcif":
+        return RsyncCommandConfig(
+            rsync_bin="rsync",
+            archive=True,
+            compress=False,
+            copy_links=False,
+            delay_updates=True,
+            itemize_changes=True,
+            prune_empty_dirs=bool(source.include or source.exclude),
+        )
+    return RsyncCommandConfig(
+        rsync_bin="rsync",
+        archive=True,
+        compress=True,
+        copy_links=True,
+        delay_updates=True,
+        itemize_changes=True,
+        prune_empty_dirs=bool(source.include or source.exclude),
+    )
+
+
 def should_refresh(source: SourceDefinition, cfg: EngineConfig) -> bool:
     return (cfg.sync_policy or DefaultSyncPolicy()).should_refresh(source, cfg)
 
@@ -433,20 +516,13 @@ async def run_rsync_phase(
             timeout_seconds=1200.0,
             port=source.port,
             include=source.include or (),
-            exclude=source.exclude or ("**/.DS_Store",),
+            exclude=source.exclude or ('"**/.DS_Store"',),
             rate_limit_storage=_sqlite_url(paths.rate / "mirror_rate_limits.sqlite"),
             rate_limit_scope=None,
             raise_on_rate_limit=False,
             progress=cfg.runtime_progress,
             dry_run=cfg.dry_run,
-            cmd=RsyncCommandConfig(
-                rsync_bin="rsync",
-                archive=True,
-                compress=True,
-                copy_links=True,
-                delay_updates=True,
-                itemize_changes=True,
-            ),
+            cmd=_rsync_command_for_source(source),
         )
         mirror = RsyncMirror(mirror_cfg)
 
@@ -505,7 +581,13 @@ async def run_rsync_phase(
                         "stderr": r.stderr,
                         "updated": list(r.updated or []),
                     }
-                    for rel, r in per_path.items()
+                    for rel, r in (
+                        (
+                            rel,
+                            _normalize_rsync_path_result(source=source, rel=rel, result=result),
+                        )
+                        for rel, result in per_path.items()
+                    )
                 }
             else:
                 res = await mirror.update(force=force)
@@ -652,6 +734,15 @@ def _update_canonical_manifest(
         )
 
 
+def _node_integrity_counts(node: MirrorStateNode | None) -> dict[str, int] | None:
+    if node is None:
+        return None
+    return {
+        "file_count": node.file_count,
+        "dir_count": node.dir_count,
+    }
+
+
 def _mirror_source_info(cfg: EngineConfig) -> list[tuple[str, str]]:
     return [
         (source.id, source.local_subpath or "") for source in cfg.sources if source.local_subpath is not None
@@ -670,6 +761,65 @@ def _manifest_request_paths(payload: object) -> list[str]:
     if not isinstance(request_paths, list):
         return []
     return [rel for rel in request_paths if isinstance(rel, str)]
+
+
+def _source_integrity_payload(
+    *,
+    source: SourceDefinition,
+    tree: MirrorStateNode,
+    entry: dict[str, Any],
+) -> dict[str, Any] | None:
+    local_subpath = _normalized_subdir(source.local_subpath or "")
+    source_root = node_at_path(tree, local_subpath) if local_subpath else tree
+    source_counts = _node_integrity_counts(source_root)
+    request_paths = _manifest_request_paths(entry)
+    subtrees: dict[str, dict[str, int]] = {}
+    for rel in request_paths:
+        rel_subpath = _normalized_subdir(rel)
+        if not rel_subpath:
+            continue
+        node = node_at_path(source_root, rel_subpath) if source_root is not None else None
+        counts = _node_integrity_counts(node)
+        if counts is not None:
+            subtrees[rel_subpath] = counts
+    payload: dict[str, Any] = {}
+    if source_counts is not None:
+        payload["source_root"] = source_counts
+    if subtrees:
+        payload["subtrees"] = subtrees
+    return payload or None
+
+
+def _record_manifest_hash_state(
+    *,
+    cfg: EngineConfig,
+    paths: SyncPaths,
+    recorder: ManifestRecorder,
+    state: MirrorState,
+) -> None:
+    root_counts = _node_integrity_counts(state.tree)
+    source_payloads: dict[str, dict[str, Any]] = {}
+    rsync_results = recorder.manifest["results"].get("rsync", {})
+    if isinstance(rsync_results, dict):
+        source_map = {source.id: source for source in cfg.sources if source.kind is SourceKind.RSYNC}
+        for source_id, entry in rsync_results.items():
+            if not isinstance(source_id, str) or not isinstance(entry, dict):
+                continue
+            source = source_map.get(source_id)
+            if source is None:
+                continue
+            integrity = _source_integrity_payload(source=source, tree=state.tree, entry=entry)
+            if integrity is not None:
+                entry["integrity"] = integrity
+                source_payloads[source_id] = integrity
+    recorder.manifest["mirror_state"] = {
+        "path": str(paths.root / cfg.state_filename),
+        "hash_algo": state.hash_algo,
+        "generated_at_unix": state.generated_at_unix,
+        "generated_at_iso": _iso_from_unix(state.generated_at_unix),
+        "root": root_counts,
+        "sources": source_payloads,
+    }
 
 
 def _incremental_rsync_subdirs(
@@ -754,9 +904,9 @@ def _build_incremental_state(
     )
 
 
-def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: Path) -> None:
+def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: Path) -> MirrorState | None:
     if cfg.dry_run:
-        return
+        return None
     state_path = paths.root / cfg.state_filename
     source_info = _mirror_source_info(cfg)
     try:
@@ -822,6 +972,9 @@ def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: 
         _emit_sync_runtime_message(cfg, f"mirror-state: wrote {state_path}")
     except (OSError, RuntimeError, TypeError, ValueError):
         logger.warning("failed to write mirror state file %s", state_path)
+        return None
+    else:
+        return state
 
 
 async def sync(cfg: EngineConfig) -> SyncResult:
@@ -859,7 +1012,14 @@ async def sync(cfg: EngineConfig) -> SyncResult:
         _update_canonical_manifest(cfg=cfg, paths=paths, recorder=recorder)
         if manifest_path is not None:
             _emit_sync_runtime_message(cfg, "mirror-state: updating manifest-backed hash state...")
-            _update_mirror_state(cfg=cfg, paths=paths, manifest_path=manifest_path)
+            state = _update_mirror_state(cfg=cfg, paths=paths, manifest_path=manifest_path)
+            if state is not None:
+                _record_manifest_hash_state(cfg=cfg, paths=paths, recorder=recorder, state=state)
+                atomic_write_text(manifest_path, safe_json_dump(recorder.manifest))
+                if cfg.manifest_path and Path(cfg.manifest_path) != manifest_path:
+                    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                        atomic_write_text(Path(cfg.manifest_path), safe_json_dump(recorder.manifest))
+                _update_canonical_manifest(cfg=cfg, paths=paths, recorder=recorder)
 
     ok = len(recorder.manifest["errors"]) == 0
     return SyncResult(

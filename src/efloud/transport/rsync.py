@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 import math
+import re
 import socket
 import subprocess  # noqa: S404
 import sys
@@ -32,6 +33,14 @@ _RETRY_COUNTDOWN_FINE_GRAIN_SECONDS = 10
 _RSYNC_DAEMON_PORT = 873
 _PREFLIGHT_TIMEOUT_SECONDS = 3.0
 _CONNECT_HEARTBEAT_SECONDS = 1.0
+_FILE_LIST_STALL_WARNING_SECONDS = 300.0
+_BYTES_PER_KIBIBYTE = 1024
+_FILE_LIST_COUNT_RE = re.compile(r"(?P<count>\d[\d,]*)\s+files\.\.\.", re.IGNORECASE)
+_TRANSFER_PROGRESS_RE = re.compile(
+    r"(?P<bytes>\d[\d,]*)\s+\d+%\s+(?P<rate>\S+/s)\s+\S+\s+\(xfr#(?P<xfr>\d+),\s+to-chk=(?P<remaining>\d+)/(?P<total>\d+)\)",
+    re.IGNORECASE,
+)
+_MAX_PROGRESS_TAIL_CHARS = 2048
 
 OpStatus = Literal["success", "skipped_fresh", "skipped_rate_limited", "failed", "timed_out"]
 
@@ -64,6 +73,7 @@ class RsyncCommandConfig:
     copy_links: bool = True
     delay_updates: bool = True
     itemize_changes: bool = True
+    prune_empty_dirs: bool = False
     extra_args: tuple[str, ...] = ()
 
 
@@ -176,7 +186,15 @@ def _emit_runtime_message(cfg: RsyncMirrorConfig, text: str) -> None:
 @dataclass
 class _ProgressBarState:
     current_phase: str = "connecting"
-    last_position: int = 0
+    last_position: int | None = None
+    file_list_count: int | None = None
+    transfer_total_files: int | None = None
+    transfer_remaining_files: int | None = None
+    transfer_transferred_files: int | None = None
+    transfer_handled_files: int | None = None
+    transfer_bytes: int | None = None
+    transfer_rate: str | None = None
+    idle_seconds: float | None = None
 
 
 class _ProgressBarLike(Protocol):
@@ -192,9 +210,17 @@ def _connect_progress_label(
     max_attempts: int,
     cfg: RsyncMirrorConfig,
     progress_bar: _ProgressBarState,
+    elapsed_seconds: float = 0.0,
 ) -> str:
     target = _remote_display_target(remote, configured_port=cfg.port)
-    return f"rsync attempt {attempt}/{max_attempts}: {progress_bar.current_phase} {target}"
+    progress_suffix = _progress_detail_suffix(progress_bar)
+    remaining_seconds = max(0.0, cfg.timeout_seconds - elapsed_seconds)
+    idle_suffix = _idle_suffix(progress_bar)
+    return (
+        f"rsync attempt {attempt}/{max_attempts}: {progress_bar.current_phase} {target}{progress_suffix} "
+        f"{_format_clock_duration(remaining_seconds)} remaining "
+        f"({_format_clock_duration(cfg.timeout_seconds)} timeout{idle_suffix})"
+    )
 
 
 def _connect_progress_context(
@@ -219,7 +245,7 @@ def _connect_progress_context(
         file=sys.stderr,
         show_eta=False,
         show_percent=False,
-        show_pos=True,
+        show_pos=False,
         update_min_steps=1,
     )
 
@@ -317,13 +343,14 @@ def _build_rsync_cmd(cfg: RsyncMirrorConfig, *, remote: str, local: Path) -> lis
     cmd.extend(_pattern_args("--exclude", cfg.exclude))
     cmd.extend(c.extra_args)
     cmd.extend([remote, str(local)])
+    rendered_cmd = _render_shell_command(cmd)
     logger.debug(
-        "Prepared rsync command remote=%s local=%s options=%s",
+        "Prepared rsync command remote=%s local=%s argv=%s shell=%s",
         remote,
         local,
         cmd,
+        rendered_cmd,
     )
-    logger.debug(" ".join(cmd))
     return cmd
 
 
@@ -334,6 +361,7 @@ def _base_rsync_args(cmd_cfg: RsyncCommandConfig) -> list[str]:
         (cmd_cfg.copy_links, "--copy-links"),
         (cmd_cfg.delay_updates, "--delay-updates"),
         (cmd_cfg.itemize_changes, "--itemize-changes"),
+        (cmd_cfg.prune_empty_dirs, "--prune-empty-dirs"),
     )
     return [flag for enabled, flag in option_flags if enabled]
 
@@ -373,6 +401,28 @@ def _pattern_args(flag: str, patterns: tuple[str, ...]) -> list[str]:
     return args
 
 
+def _render_shell_arg(arg: str) -> str:
+    if _should_quote_shell_arg(arg):
+        return _single_quote_shell_arg(arg)
+    return arg
+
+
+def _should_quote_shell_arg(arg: str) -> bool:
+    if not arg:
+        return True
+    if "://" in arg or "::" in arg:
+        return True
+    return "/" in arg
+
+
+def _render_shell_command(cmd: list[str]) -> str:
+    return " ".join(_render_shell_arg(part) for part in cmd)
+
+
+def _single_quote_shell_arg(arg: str) -> str:
+    return "'" + arg.replace("'", "'\"'\"'") + "'"
+
+
 def _parse_itemize_changes(stdout: str) -> list[str]:
     updated: list[str] = []
     for line in stdout.splitlines():
@@ -397,13 +447,13 @@ def _result_phase(result: OpResult) -> str:
         )
     ):
         return "connecting"
-    if "receiving file list" in text:
-        return "receiving file list"
     if any(
         marker in text
         for marker in ("to-check=", "xfr#", "speedup is", ">f", "<f", "cd", "created directory")
     ):
         return "transferring files"
+    if "receiving file list" in text:
+        return "receiving file list"
     if result.status == "success":
         return "completed"
     return "checking remote state"
@@ -411,6 +461,90 @@ def _result_phase(result: OpResult) -> str:
 
 def _format_seconds(seconds: float) -> str:
     return f"{max(0.0, seconds):.1f}s"
+
+
+def _format_clock_duration(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _parse_file_list_count(text: str) -> int | None:
+    matches = list(_FILE_LIST_COUNT_RE.finditer(text))
+    if not matches:
+        return None
+    count_text = matches[-1].group("count").replace(",", "")
+    return int(count_text)
+
+
+def _file_list_count_suffix(progress_bar: _ProgressBarState) -> str:
+    count = getattr(progress_bar, "file_list_count", None)
+    if progress_bar.current_phase != "receiving file list" or not isinstance(count, int):
+        return ""
+    return f" ({count:,} files)"
+
+
+def _idle_suffix(progress_bar: _ProgressBarState) -> str:
+    idle_seconds = getattr(progress_bar, "idle_seconds", None)
+    if not isinstance(idle_seconds, float | int):
+        return ""
+    return f"; last output {_format_clock_duration(float(idle_seconds))} ago"
+
+
+def _format_transfer_bytes(byte_count: int) -> str:
+    if byte_count < _BYTES_PER_KIBIBYTE:
+        return f"{byte_count} B"
+    units = ("KB", "MB", "GB", "TB")
+    value = float(byte_count)
+    unit = "B"
+    for unit in units:
+        value /= float(_BYTES_PER_KIBIBYTE)
+        if value < float(_BYTES_PER_KIBIBYTE) or unit == units[-1]:
+            break
+    return f"{value:.1f} {unit}"
+
+
+def _progress_detail_suffix(progress_bar: _ProgressBarState) -> str:
+    if progress_bar.current_phase == "receiving file list":
+        return _file_list_count_suffix(progress_bar)
+    total = progress_bar.transfer_total_files
+    handled = progress_bar.transfer_handled_files
+    transferred = progress_bar.transfer_transferred_files
+    byte_count = progress_bar.transfer_bytes
+    rate = progress_bar.transfer_rate
+    parts: list[str] = []
+    if isinstance(total, int) and isinstance(handled, int):
+        percent = (handled / total * 100.0) if total > 0 else 0.0
+        parts.append(f"{handled:,}/{total:,} files handled ({percent:.1f}%)")
+    if isinstance(transferred, int):
+        parts.append(f"{transferred:,} transferred")
+    if isinstance(byte_count, int):
+        parts.append(_format_transfer_bytes(byte_count))
+    if isinstance(rate, str) and rate:
+        parts.append(rate)
+    if not parts:
+        return ""
+    return " [" + "; ".join(parts) + "]"
+
+
+def _parse_transfer_progress(text: str) -> dict[str, int | str] | None:
+    matches = list(_TRANSFER_PROGRESS_RE.finditer(text))
+    if not matches:
+        return None
+    match = matches[-1]
+    remaining = int(match.group("remaining"))
+    total = int(match.group("total"))
+    return {
+        "transfer_total_files": total,
+        "transfer_remaining_files": remaining,
+        "transfer_transferred_files": int(match.group("xfr")),
+        "transfer_handled_files": max(0, total - remaining),
+        "transfer_bytes": int(match.group("bytes").replace(",", "")),
+        "transfer_rate": match.group("rate"),
+    }
 
 
 def _emit_retry_countdown(
@@ -431,7 +565,16 @@ def _emit_retry_countdown(
         time.sleep(1.0)
 
 
-def _observe_runtime_phase(text: str, phase_state: dict[str, str]) -> None:
+def _observe_runtime_phase(text: str, phase_state: dict[str, str | float | bool | int]) -> None:
+    phase_state["last_output_at"] = time.perf_counter()
+    tail = f"{phase_state.get('progress_tail', '')}{text}"
+    phase_state["progress_tail"] = tail[-_MAX_PROGRESS_TAIL_CHARS:]
+    file_list_count = _parse_file_list_count(text)
+    if file_list_count is not None:
+        phase_state["file_list_count"] = file_list_count
+    transfer_stats = _parse_transfer_progress(str(phase_state["progress_tail"]))
+    if transfer_stats is not None:
+        phase_state.update(transfer_stats)
     lowered = text.lower()
     if "receiving file list" in lowered:
         phase_state["phase"] = "receiving file list"
@@ -443,6 +586,42 @@ def _observe_runtime_phase(text: str, phase_state: dict[str, str]) -> None:
         phase_state["phase"] = "transferring files"
 
 
+def _maybe_emit_file_list_stall_warning(
+    cfg: RsyncMirrorConfig,
+    *,
+    attempt: int,
+    max_attempts: int,
+    elapsed_seconds: float,
+    phase_state: dict[str, str | float | bool | int],
+) -> None:
+    if phase_state.get("phase") != "receiving file list":
+        return
+    if bool(phase_state.get("file_list_warning_emitted")):
+        return
+    if elapsed_seconds < _FILE_LIST_STALL_WARNING_SECONDS:
+        return
+    idle_seconds = None
+    last_output_at = phase_state.get("last_output_at")
+    if isinstance(last_output_at, float):
+        idle_seconds = max(0.0, time.perf_counter() - last_output_at)
+    idle_suffix = (
+        f"; last rsync output {_format_clock_duration(idle_seconds)} ago" if idle_seconds is not None else ""
+    )
+    file_list_count = phase_state.get("file_list_count")
+    count_suffix = f"; discovered {file_list_count:,} files" if isinstance(file_list_count, int) else ""
+    _emit_runtime_message(
+        cfg,
+        (
+            f"rsync attempt {attempt}/{max_attempts}: still receiving file list after "
+            f"{_format_clock_duration(elapsed_seconds)} "
+            f"({_format_clock_duration(cfg.timeout_seconds)} timeout)"
+            f"{count_suffix}"
+            f"{idle_suffix}"
+        ),
+    )
+    phase_state["file_list_warning_emitted"] = True
+
+
 def _emit_connect_heartbeat(
     cfg: RsyncMirrorConfig,
     *,
@@ -450,18 +629,60 @@ def _emit_connect_heartbeat(
     attempt: int,
     max_attempts: int,
     started_at: float,
-    phase_state: dict[str, str],
+    phase_state: dict[str, str | float | bool | int],
     stop_event: threading.Event,
     progress_bar: _ProgressBarState,
     progress_update: Callable[[int, str], None] | None = None,
 ) -> None:
     while not stop_event.wait(_CONNECT_HEARTBEAT_SECONDS):
         elapsed = time.perf_counter() - started_at
-        phase = phase_state.get("phase", "connecting")
+        phase = str(phase_state.get("phase", "connecting"))
         progress_bar.current_phase = phase
-        position = min(max(0, math.floor(elapsed)), max(1, math.ceil(cfg.timeout_seconds)))
-        delta = max(0, position - progress_bar.last_position)
-        if progress_update is not None and delta > 0:
+        file_list_count = phase_state.get("file_list_count")
+        if isinstance(file_list_count, int):
+            progress_bar.file_list_count = file_list_count
+        for key in (
+            "transfer_total_files",
+            "transfer_remaining_files",
+            "transfer_transferred_files",
+            "transfer_handled_files",
+            "transfer_bytes",
+        ):
+            value = phase_state.get(key)
+            if isinstance(value, int):
+                setattr(progress_bar, key, value)
+        transfer_rate = phase_state.get("transfer_rate")
+        if isinstance(transfer_rate, str):
+            progress_bar.transfer_rate = transfer_rate
+        last_output_at = phase_state.get("last_output_at")
+        idle_seconds: float | None = None
+        if isinstance(last_output_at, float):
+            idle_seconds = max(0.0, time.perf_counter() - last_output_at)
+        progress_bar.idle_seconds = idle_seconds
+        _maybe_emit_file_list_stall_warning(
+            cfg,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            elapsed_seconds=elapsed,
+            phase_state=phase_state,
+        )
+        bar_length = max(1, math.ceil(cfg.timeout_seconds))
+        remaining_position = min(max(0, math.ceil(cfg.timeout_seconds - elapsed)), bar_length)
+        if progress_update is not None:
+            if progress_bar.last_position is None:
+                progress_update(
+                    bar_length,
+                    _connect_progress_label(
+                        remote=remote,
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        cfg=cfg,
+                        progress_bar=progress_bar,
+                        elapsed_seconds=0.0,
+                    ),
+                )
+                progress_bar.last_position = bar_length
+            delta = remaining_position - int(progress_bar.last_position)
             progress_update(
                 delta,
                 _connect_progress_label(
@@ -470,18 +691,20 @@ def _emit_connect_heartbeat(
                     max_attempts=max_attempts,
                     cfg=cfg,
                     progress_bar=progress_bar,
+                    elapsed_seconds=elapsed,
                 ),
             )
-            progress_bar.last_position = position
+            progress_bar.last_position = remaining_position
         elif progress_update is None:
+            progress_suffix = _progress_detail_suffix(progress_bar)
+            last_output_suffix = _idle_suffix(progress_bar)
             _emit_runtime_message(
                 cfg,
                 (
                     f"rsync attempt {attempt}/{max_attempts}: {phase} "
-                    f"{_remote_display_target(remote, configured_port=cfg.port)} "
-                    f"elapsed {_format_seconds(elapsed)} "
-                    f"(configured timeout {_format_seconds(cfg.timeout_seconds)}, "
-                    f"{_format_seconds(max(0.0, float(cfg.timeout_seconds) - elapsed))} remaining)"
+                    f"{_remote_display_target(remote, configured_port=cfg.port)}{progress_suffix} "
+                    f"{_format_clock_duration(elapsed)} "
+                    f"({_format_clock_duration(cfg.timeout_seconds)} timeout{last_output_suffix})"
                 ),
             )
 
@@ -505,7 +728,7 @@ def _run_rsync_process_once(
 
     stdout_buffer: list[str] = []
     stderr_buffer: list[str] = []
-    phase_state = {"phase": "connecting"}
+    phase_state: dict[str, str | float | bool | int] = {"phase": "connecting"}
     stop_event = threading.Event()
     progress_bar_state = _ProgressBarState()
 

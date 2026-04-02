@@ -30,9 +30,15 @@ def _write_tree(root: Path) -> None:
 
 
 def test_mirror_state_node_and_source_state_round_trip():
-    node = MirrorStateNode("file", "abc")
+    node = MirrorStateNode("file", "abc", 1, 0)
     assert MirrorStateNode.from_dict(node.to_dict()) == node
     assert MirrorStateNode.from_dict({"type": "bad", "hash": "x"}) is None
+    assert MirrorStateNode.from_dict({"type": "file", "hash": "legacy"}) == MirrorStateNode(
+        "file",
+        "legacy",
+        1,
+        0,
+    )
 
     source = MirrorSourceState("src", "group", "abc")
     assert MirrorSourceState.from_dict(source.to_dict()) == source
@@ -44,6 +50,8 @@ def test_build_hash_tree_node_lookup_and_diffing(tmp_path: Path):
     tree = build_hash_tree(tmp_path)
     assert tree is not None
     assert tree.path_type == "dir"
+    assert tree.file_count == 2
+    assert tree.dir_count >= 2
     assert node_at_path(tree, "group/a.txt") is not None
     assert node_at_path(tree, "") == tree
     assert node_at_path(tree, "missing") is None

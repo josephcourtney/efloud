@@ -132,6 +132,7 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
     assert "--include" in cmd
     assert "--exclude" in cmd
     assert "--dry-run" in cmd
+    assert "--prune-empty-dirs" not in cmd
     assert rsync_mod._timeout_args("host::module", timeout_seconds=30) == ["--contimeout=30", "--timeout=30"]
     assert rsync_mod._timeout_args("ssh://host/path", timeout_seconds=30) == ["--timeout=30"]
     assert rsync_mod._port_args("host::module", port=8873) == ["--port=8873"]
@@ -145,6 +146,194 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
     assert rsync_mod._updated_paths(["a", 1, "b"]) == ["a", "b"]
     assert rsync_mod._remote_host_and_port("host::module", configured_port=8873) == ("host", 8873)
     assert rsync_mod._remote_host_and_port("rsync://host:9900/module", configured_port=8873) == ("host", 9900)
+    assert rsync_mod._format_clock_duration(83.9) == "01:23"
+    assert rsync_mod._format_clock_duration(1200.0) == "20:00"
+    assert rsync_mod._format_clock_duration(3723.0) == "01:02:03"
+    assert rsync_mod._parse_file_list_count("receiving file list ...\n67200 files...\n") == 67_200
+    assert rsync_mod._parse_file_list_count("receiving file list ...\n67,200 files...\n") == 67_200
+    assert rsync_mod._parse_transfer_progress(
+        "169,440,614   0%   34.85MB/s    0:00:04 (xfr#634, to-chk=204090/251423)\n"
+    ) == {
+        "transfer_total_files": 251_423,
+        "transfer_remaining_files": 204_090,
+        "transfer_transferred_files": 634,
+        "transfer_handled_files": 47_333,
+        "transfer_bytes": 169_440_614,
+        "transfer_rate": "34.85MB/s",
+    }
+    assert rsync_mod._render_shell_arg("rsync://host/module") == "'rsync://host/module'"
+    assert rsync_mod._render_shell_arg("dir/file.txt") == "'dir/file.txt'"
+    assert rsync_mod._render_shell_arg("**/.DS_Store") == "'**/.DS_Store'"
+    assert rsync_mod._render_shell_arg("--archive") == "--archive"
+    assert (
+        rsync_mod._render_shell_command([
+            "rsync",
+            "--exclude",
+            "**/.DS_Store",
+            "rsync://host/module",
+            "dest",
+        ])
+        == "rsync --exclude '**/.DS_Store' 'rsync://host/module' dest"
+    )
+    progress_bar = rsync_mod._ProgressBarState(current_phase="receiving file list", file_list_count=67_200)
+    assert (
+        rsync_mod._connect_progress_label(
+            remote="rsync://host/module",
+            attempt=1,
+            max_attempts=3,
+            cfg=cfg,
+            progress_bar=progress_bar,
+            elapsed_seconds=83.0,
+        )
+        == "rsync attempt 1/3: receiving file list host:8873 (67,200 files) 18:37 remaining (20:00 timeout)"
+    )
+
+    transfer_progress_bar = rsync_mod._ProgressBarState(
+        current_phase="transferring files",
+        transfer_total_files=251_423,
+        transfer_handled_files=47_333,
+        transfer_transferred_files=634,
+        transfer_bytes=169_440_614,
+        transfer_rate="34.85MB/s",
+        idle_seconds=4.0,
+    )
+    assert rsync_mod._connect_progress_label(
+        remote="rsync://host/module",
+        attempt=1,
+        max_attempts=3,
+        cfg=cfg,
+        progress_bar=transfer_progress_bar,
+        elapsed_seconds=83.0,
+    ) == (
+        "rsync attempt 1/3: transferring files host:8873 "
+        "[47,333/251,423 files handled (18.8%); 634 transferred; 161.6 MB; 34.85MB/s] "
+        "18:37 remaining (20:00 timeout; last output 00:04 ago)"
+    )
+
+
+def test_build_rsync_cmd_logs_exact_argv_and_shell_rendering(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    cfg = RsyncMirrorConfig(
+        name="mirror",
+        remote="rsync://host/module",
+        local=tmp_path / "target dir",
+        exclude=("**/.DS_Store",),
+        cmd=rsync_mod.RsyncCommandConfig(prune_empty_dirs=True),
+    )
+
+    with caplog.at_level("DEBUG", logger="efloud.transport.rsync"):
+        cmd = rsync_mod._build_rsync_cmd(cfg, remote=cfg.remote, local=cfg.local)
+
+    prepared = next(message for message in caplog.messages if message.startswith("Prepared rsync command"))
+    assert cmd[-2:] == ["rsync://host/module", str(tmp_path / "target dir")]
+    assert "argv=['rsync'" in prepared
+    assert "rsync://host/module" in prepared
+    assert "'rsync://host/module'" in prepared
+    assert "shell=rsync" in prepared
+    assert "--prune-empty-dirs" in prepared
+    assert "'**/.DS_Store'" in prepared
+    assert f"'{tmp_path / 'target dir'}'" in prepared
+
+
+def test_build_rsync_cmd_includes_prune_empty_dirs_when_enabled(tmp_path: Path):
+    cfg = RsyncMirrorConfig(
+        name="mirror",
+        remote="rsync://host/module",
+        local=tmp_path,
+        cmd=rsync_mod.RsyncCommandConfig(prune_empty_dirs=True),
+    )
+
+    cmd = rsync_mod._build_rsync_cmd(cfg, remote=cfg.remote, local=cfg.local)
+
+    assert "--prune-empty-dirs" in cmd
+
+
+def test_file_list_stall_warning_emits_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cfg = RsyncMirrorConfig(
+        name="mirror",
+        remote="rsync://host/module",
+        local=tmp_path,
+        progress=True,
+    )
+    messages: list[str] = []
+    phase_state: dict[str, str | float | bool] = {
+        "phase": "receiving file list",
+        "last_output_at": 100.0,
+        "file_list_count": 67_200,
+    }
+
+    monkeypatch.setattr(rsync_mod.time, "perf_counter", lambda: 400.0)
+    monkeypatch.setattr(rsync_mod, "_emit_runtime_message", lambda _cfg, text: messages.append(text))
+
+    rsync_mod._maybe_emit_file_list_stall_warning(
+        cfg,
+        attempt=1,
+        max_attempts=3,
+        elapsed_seconds=301.0,
+        phase_state=phase_state,
+    )
+    rsync_mod._maybe_emit_file_list_stall_warning(
+        cfg,
+        attempt=1,
+        max_attempts=3,
+        elapsed_seconds=302.0,
+        phase_state=phase_state,
+    )
+
+    assert messages == [
+        (
+            "rsync attempt 1/3: still receiving file list after 05:01 "
+            "(20:00 timeout); discovered 67,200 files; last rsync output 05:00 ago"
+        )
+    ]
+    assert phase_state["file_list_warning_emitted"] is True
+
+
+def test_observe_runtime_phase_captures_file_list_count(monkeypatch: pytest.MonkeyPatch):
+    phase_state: dict[str, str | float | bool | int] = {"phase": "connecting"}
+    monkeypatch.setattr(rsync_mod.time, "perf_counter", lambda: 123.0)
+
+    rsync_mod._observe_runtime_phase("receiving file list ...\n67200 files...\n", phase_state)
+
+    assert phase_state["phase"] == "receiving file list"
+    assert phase_state["last_output_at"] == pytest.approx(123.0, rel=0.0, abs=1e-12)
+    assert phase_state["file_list_count"] == 67_200
+
+
+def test_observe_runtime_phase_captures_transfer_stats(monkeypatch: pytest.MonkeyPatch):
+    phase_state: dict[str, str | float | bool | int] = {"phase": "connecting"}
+    monkeypatch.setattr(rsync_mod.time, "perf_counter", lambda: 456.0)
+
+    rsync_mod._observe_runtime_phase(
+        "169,440,614   0%   34.85MB/s    0:00:04 (xfr#634, to-chk=204090/251423)\n",
+        phase_state,
+    )
+
+    assert phase_state["phase"] == "transferring files"
+    assert phase_state["transfer_total_files"] == 251_423
+    assert phase_state["transfer_remaining_files"] == 204_090
+    assert phase_state["transfer_handled_files"] == 47_333
+    assert phase_state["transfer_transferred_files"] == 634
+    assert phase_state["transfer_bytes"] == 169_440_614
+    assert phase_state["transfer_rate"] == "34.85MB/s"
+
+
+def test_result_phase_prefers_transfer_markers_over_file_list_text() -> None:
+    result = OpResult(
+        status="failed",
+        detail="rsync failed after 3 attempts",
+        returncode=10,
+        stdout=(
+            "receiving file list ...\n"
+            "251423 files to consider\n"
+            ">f.st....... 2ogr.cif.gz\n"
+            "169,440,614   0%   34.85MB/s    0:00:04 (xfr#634, to-chk=204090/251423)\n"
+        ),
+        stderr="rsync: [receiver] read error: Connection reset by peer (54)\n",
+    )
+
+    assert rsync_mod._result_phase(result) == "transferring files"
 
 
 @pytest.mark.asyncio

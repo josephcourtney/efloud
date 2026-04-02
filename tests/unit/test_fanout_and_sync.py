@@ -438,9 +438,10 @@ def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path)
     )
     attempts: list[int] = []
     sleeps: list[float] = []
+    messages: list[str] = []
 
-    def fake_once(_cfg, *, cmd):
-        del _cfg, cmd
+    def fake_once(_cfg, *, cmd, remote, local, attempt, max_attempts):
+        del _cfg, cmd, local, attempt, max_attempts
         attempts.append(len(attempts) + 1)
         if len(attempts) < 3:
             return OpResult(
@@ -452,9 +453,18 @@ def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path)
         return OpResult(status="success", detail="ok", returncode=0, updated=["file.txt"])
 
     monkeypatch.setattr(transport_mod, "_run_rsync_process_once", fake_once)
+    monkeypatch.setattr(
+        transport_mod, "_preflight_connectivity", lambda _cfg, *, remote: messages.append(remote)
+    )
+    monkeypatch.setattr(transport_mod, "_emit_runtime_message", lambda _cfg, text: messages.append(text))
     monkeypatch.setattr(transport_mod.time, "sleep", sleeps.append)
 
-    result = transport_mod._run_rsync_process(cfg, cmd=["rsync"])
+    result = transport_mod._run_rsync_process(
+        cfg,
+        cmd=["rsync"],
+        remote="rsync.example.test::module/path",
+        local=tmp_path / "mirror",
+    )
 
     assert result.status == "success"
     assert result.phase == "completed"
@@ -465,6 +475,8 @@ def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path)
         "failed to connect to rsync.example.test: Operation timed out (60)",
     ]
     assert sleeps == [1.0] * 17
+    assert any("rsync.example.test::module/path" in message for message in messages)
+    assert any("retry 2/3 starts in 5s" in message for message in messages)
 
 
 def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_path: Path):
@@ -476,8 +488,8 @@ def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_
     )
     attempts: list[int] = []
 
-    def fake_once(_cfg, *, cmd):
-        del _cfg, cmd
+    def fake_once(_cfg, *, cmd, remote, local, attempt, max_attempts):
+        del _cfg, cmd, remote, local, attempt, max_attempts
         attempts.append(1)
         return OpResult(
             status="failed",
@@ -487,12 +499,27 @@ def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_
         )
 
     monkeypatch.setattr(transport_mod, "_run_rsync_process_once", fake_once)
+    monkeypatch.setattr(transport_mod, "_preflight_connectivity", lambda _cfg, *, remote: None)
     monkeypatch.setattr(transport_mod.time, "sleep", lambda _seconds: None)
 
-    result = transport_mod._run_rsync_process(cfg, cmd=["rsync"])
+    result = transport_mod._run_rsync_process(
+        cfg,
+        cmd=["rsync"],
+        remote="rsync.example.test::module",
+        local=tmp_path / "mirror",
+    )
 
     assert result.status == "failed"
     assert result.phase == "checking remote state"
     assert result.attempt_count == 1
     assert result.max_attempts == 3
     assert len(attempts) == 1
+
+
+def test_remote_display_target_uses_rsync_daemon_module_syntax() -> None:
+    transport_mod = importlib.import_module("efloud.transport.rsync")
+
+    assert (
+        transport_mod._remote_display_target("rsync.rcsb.org::ftp_data/structures/all/")
+        == "rsync.rcsb.org:873"
+    )

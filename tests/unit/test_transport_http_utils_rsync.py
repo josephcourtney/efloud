@@ -170,7 +170,8 @@ async def test_rsync_mirror_skips_fresh_and_updates_paths(tmp_path: Path, monkey
         recorded_cmds.append([remote, str(local)])
         return ["rsync", remote, str(local)]
 
-    def fake_run(cfg, *, cmd):
+    def fake_run(cfg, *, cmd, remote, local):
+        del cfg, cmd, remote, local
         return OpResult(
             status="success", detail="ok", returncode=0, stdout=">f++++ file.txt", updated=["file.txt"]
         )

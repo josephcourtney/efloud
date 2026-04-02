@@ -5,6 +5,7 @@ import contextlib
 import json
 import logging
 import math
+import socket
 import subprocess  # noqa: S404
 import sys
 import threading
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _TRANSIENT_RSYNC_RETURN_CODES = frozenset({10, 30, 35})
 _RETRY_COUNTDOWN_FINE_GRAIN_SECONDS = 10
+_RSYNC_DAEMON_PORT = 873
+_PREFLIGHT_TIMEOUT_SECONDS = 3.0
+_CONNECT_HEARTBEAT_SECONDS = 1.0
 
 OpStatus = Literal["success", "skipped_fresh", "skipped_rate_limited", "failed", "timed_out"]
 
@@ -165,10 +169,54 @@ def _emit_runtime_message(cfg: RsyncMirrorConfig, text: str) -> None:
     _emit_stderr(f"{text}\n")
 
 
+def _remote_host_and_port(remote: str) -> tuple[str | None, int]:
+    if "::" in remote:
+        return remote.split("::", 1)[0] or None, _RSYNC_DAEMON_PORT
+    if remote.startswith("rsync://"):
+        host_part = remote.removeprefix("rsync://").split("/", 1)[0]
+        host = host_part.split(":", 1)[0] if ":" in host_part else host_part
+        return host or None, _RSYNC_DAEMON_PORT
+    return None, _RSYNC_DAEMON_PORT
+
+
+def _remote_display_target(remote: str) -> str:
+    host, port = _remote_host_and_port(remote)
+    if host is None:
+        return remote
+    return f"{host}:{port}"
+
+
+def _preflight_connectivity(cfg: RsyncMirrorConfig, *, remote: str) -> None:
+    host, port = _remote_host_and_port(remote)
+    if host is None:
+        return
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        _emit_runtime_message(cfg, f"preflight: could not resolve {host}:{port}: {exc}")
+        return
+    addresses = sorted({str(info[4][0]) for info in infos if info[4]})
+    if addresses:
+        _emit_runtime_message(cfg, f"preflight: resolved {host}:{port} -> {', '.join(addresses)}")
+    probe_timeout = min(float(cfg.timeout_seconds), _PREFLIGHT_TIMEOUT_SECONDS)
+    try:
+        with socket.create_connection((host, port), timeout=probe_timeout):
+            _emit_runtime_message(
+                cfg,
+                f"preflight: tcp connect to {host}:{port} succeeded within {_format_seconds(probe_timeout)}",
+            )
+    except OSError as exc:
+        _emit_runtime_message(
+            cfg,
+            f"preflight: tcp connect to {host}:{port} failed within {_format_seconds(probe_timeout)}: {exc}",
+        )
+
+
 def _stream_pipe(
     stream: io.BufferedReader,
     buffer: list[str],
     emitter: Callable[[str], None] | None = None,
+    observer: Callable[[str], None] | None = None,
 ) -> None:
     read_fn = getattr(stream, "read1", stream.read)
     try:
@@ -178,6 +226,8 @@ def _stream_pipe(
                 break
             text = chunk.decode("utf-8", "replace")
             buffer.append(text)
+            if observer is not None:
+                observer(text)
             if emitter is not None:
                 emitter(text)
     except OSError:
@@ -305,7 +355,53 @@ def _emit_retry_countdown(
         time.sleep(1.0)
 
 
-def _run_rsync_process_once(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
+def _observe_runtime_phase(text: str, phase_state: dict[str, str]) -> None:
+    lowered = text.lower()
+    if "receiving file list" in lowered:
+        phase_state["phase"] = "receiving file list"
+        return
+    if any(
+        marker in lowered
+        for marker in ("to-check=", "xfr#", "speedup is", ">f", "<f", "cd", "created directory")
+    ):
+        phase_state["phase"] = "transferring files"
+
+
+def _emit_connect_heartbeat(
+    cfg: RsyncMirrorConfig,
+    *,
+    remote: str,
+    attempt: int,
+    max_attempts: int,
+    started_at: float,
+    phase_state: dict[str, str],
+    stop_event: threading.Event,
+) -> None:
+    target = _remote_display_target(remote)
+    while not stop_event.wait(_CONNECT_HEARTBEAT_SECONDS):
+        elapsed = time.perf_counter() - started_at
+        phase = phase_state.get("phase", "connecting")
+        remaining = max(0.0, float(cfg.timeout_seconds) - elapsed)
+        _emit_runtime_message(
+            cfg,
+            (
+                f"rsync attempt {attempt}/{max_attempts}: {phase} {target} "
+                f"elapsed {_format_seconds(elapsed)} "
+                f"(configured timeout {_format_seconds(cfg.timeout_seconds)}, "
+                f"{_format_seconds(remaining)} remaining)"
+            ),
+        )
+
+
+def _run_rsync_process_once(
+    cfg: RsyncMirrorConfig,
+    *,
+    cmd: list[str],
+    remote: str,
+    local: Path,
+    attempt: int,
+    max_attempts: int,
+) -> OpResult:
     proc = subprocess.Popen(  # noqa: S603
         cmd,
         start_new_session=True,
@@ -316,28 +412,51 @@ def _run_rsync_process_once(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResu
 
     stdout_buffer: list[str] = []
     stderr_buffer: list[str] = []
+    phase_state = {"phase": "connecting"}
+    stop_event = threading.Event()
     stderr_emitter = _emit_stderr if cfg.progress or cfg.verbose else None
 
     stdout_thread = threading.Thread(
         target=_stream_pipe,
-        args=(proc.stdout, stdout_buffer, None),
+        args=(proc.stdout, stdout_buffer, None, lambda text: _observe_runtime_phase(text, phase_state)),
         daemon=True,
     )
     stderr_thread = threading.Thread(
         target=_stream_pipe,
-        args=(proc.stderr, stderr_buffer, stderr_emitter),
+        args=(
+            proc.stderr,
+            stderr_buffer,
+            stderr_emitter,
+            lambda text: _observe_runtime_phase(text, phase_state),
+        ),
+        daemon=True,
+    )
+    heartbeat_thread = threading.Thread(
+        target=_emit_connect_heartbeat,
+        args=(cfg,),
+        kwargs={
+            "remote": remote,
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "started_at": time.perf_counter(),
+            "phase_state": phase_state,
+            "stop_event": stop_event,
+        },
         daemon=True,
     )
     stdout_thread.start()
     stderr_thread.start()
+    heartbeat_thread.start()
 
     try:
         # Do not wrap rsync in a hard timeout that kills the process; rely on rsync's own
         # timeouts (e.g., --timeout/--contimeout) and user-initiated cancellation.
         proc.wait()
     finally:
+        stop_event.set()
         stdout_thread.join()
         stderr_thread.join()
+        heartbeat_thread.join()
 
     rc = proc.returncode if proc.returncode is not None else -1
     out = "".join(stdout_buffer)
@@ -347,8 +466,8 @@ def _run_rsync_process_once(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResu
     logger.info(
         "Completed rsync mirror %s remote=%s local=%s returncode=%s",
         cfg.name,
-        cfg.remote,
-        cfg.local,
+        remote,
+        local,
         rc,
     )
     return OpResult(
@@ -407,20 +526,34 @@ def _retry_wait_seconds(cfg: RsyncMirrorConfig, *, retry_index: int) -> float:
     return min(cfg.retry_wait_max_seconds, wait)
 
 
-def _run_rsync_process(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
+def _run_rsync_process(
+    cfg: RsyncMirrorConfig,
+    *,
+    cmd: list[str],
+    remote: str,
+    local: Path,
+) -> OpResult:
     max_attempts = max(1, int(cfg.retry_attempts))
     attempt_errors: list[str] = []
 
     for attempt in range(1, max_attempts + 1):
+        _preflight_connectivity(cfg, remote=remote)
         _emit_runtime_message(
             cfg,
             (
-                f"rsync attempt {attempt}/{max_attempts}: connecting to {cfg.remote} "
+                f"rsync attempt {attempt}/{max_attempts}: connecting to {remote} "
                 f"(timeout {_format_seconds(cfg.timeout_seconds)})"
             ),
         )
         attempt_started = time.perf_counter()
-        result = _run_rsync_process_once(cfg, cmd=cmd)
+        result = _run_rsync_process_once(
+            cfg,
+            cmd=cmd,
+            remote=remote,
+            local=local,
+            attempt=attempt,
+            max_attempts=max_attempts,
+        )
         elapsed_seconds = time.perf_counter() - attempt_started
         phase = result.phase or _result_phase(result)
         error_summary = _result_error_summary(result)
@@ -633,7 +766,13 @@ class RsyncMirror:
             self._cfg.timeout_seconds,
         )
         cmd = _build_rsync_cmd(self._cfg, remote=self._cfg.remote, local=self._cfg.local)
-        res = await asyncio.to_thread(_run_rsync_process, self._cfg, cmd=cmd)
+        res = await asyncio.to_thread(
+            _run_rsync_process,
+            self._cfg,
+            cmd=cmd,
+            remote=self._cfg.remote,
+            local=self._cfg.local,
+        )
         if res.status == "success":
             self._meta_set_path(".", res.updated or [])
         return res
@@ -681,7 +820,13 @@ class RsyncMirror:
                 self._cfg.timeout_seconds,
             )
             cmd = _build_rsync_cmd(self._cfg, remote=remote, local=local)
-            res = await asyncio.to_thread(_run_rsync_process, self._cfg, cmd=cmd)
+            res = await asyncio.to_thread(
+                _run_rsync_process,
+                self._cfg,
+                cmd=cmd,
+                remote=remote,
+                local=local,
+            )
 
             if res.status == "success":
                 self._meta_set_path(rel_norm, res.updated or [])

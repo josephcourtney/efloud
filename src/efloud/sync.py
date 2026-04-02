@@ -9,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from anyio import Path as AnyioPath
@@ -446,6 +446,74 @@ def _emit_sync_runtime_message(cfg: EngineConfig, text: str) -> None:
         sys.stderr.flush()
 
 
+def _emit_sync_runtime_inline(cfg: EngineConfig, text: str, *, final: bool = False) -> None:
+    if not cfg.runtime_progress:
+        return
+    with contextlib.suppress(OSError):
+        if final:
+            sys.stderr.write(f"\r{text}\n")
+        else:
+            sys.stderr.write(f"\r{text}")
+        sys.stderr.flush()
+
+
+def _use_compact_mmcif_progress(
+    cfg: EngineConfig,
+    source: SourceDefinition,
+    mirror_paths: tuple[str, ...],
+) -> bool:
+    return (
+        source.id == "pdb_mmcif"
+        and bool(mirror_paths)
+        and cfg.runtime_progress
+        and not logger.isEnabledFor(logging.DEBUG)
+    )
+
+
+async def _run_mmcif_shards_with_compact_progress(
+    *,
+    cfg: EngineConfig,
+    source: SourceDefinition,
+    mirror: RsyncMirror,
+    mirror_paths: tuple[str, ...],
+    force: bool,
+    synthetic_results: dict[str, dict[str, Any]],
+) -> dict[str, OpResult]:
+    total = len(mirror_paths) + len(synthetic_results)
+    done = 0
+    ok = len(synthetic_results)
+    failed = 0
+    last = "-"
+    results: dict[str, OpResult] = {}
+    if synthetic_results:
+        done += len(synthetic_results)
+    _emit_sync_runtime_inline(
+        cfg,
+        f"pdb_mmcif shards: {done}/{total} done; ok {ok}; failed {failed}; current {last}",
+    )
+    for rel in mirror_paths:
+        shard_result_map = await mirror.update_paths([rel], force=force)
+        raw_result = shard_result_map.get(rel, OpResult(status="failed", detail="missing shard result"))
+        result = _normalize_rsync_path_result(source=source, rel=rel, result=raw_result)
+        results[rel] = result
+        done += 1
+        last = rel
+        if result.status in {"failed", "timed_out"}:
+            failed += 1
+        else:
+            ok += 1
+        _emit_sync_runtime_inline(
+            cfg,
+            f"pdb_mmcif shards: {done}/{total} done; ok {ok}; failed {failed}; current {last}",
+        )
+    _emit_sync_runtime_inline(
+        cfg,
+        f"pdb_mmcif shards: {done}/{total} done; ok {ok}; failed {failed}; current {last}",
+        final=True,
+    )
+    return results
+
+
 @dataclass(frozen=True)
 class SyncPaths:
     root: Path
@@ -597,170 +665,204 @@ async def run_rsync_phase(
         if source.kind is not SourceKind.RSYNC:
             continue
 
-        manifest_key = _manifest_key_for_source(source)
-        local_subdir = source.local_subpath or source.id
-        local = paths.mirrors / local_subdir
+        local = paths.mirrors / (source.local_subpath or source.id)
         expected_mirror_dirs.add(local)
-
-        mirror = RsyncMirror(
-            RsyncMirrorConfig(
-                name=source.description,
-                remote=source.url,
-                local=local,
-                meta_path=(local / ".mirror_meta.json"),
-                delete=False,
-                timeout_seconds=1200.0,
-                port=source.port,
-                include=source.include or (),
-                exclude=source.exclude or ('"**/.DS_Store"',),
-                rate_limit_storage=_sqlite_url(paths.rate / "mirror_rate_limits.sqlite"),
-                rate_limit_scope=None,
-                raise_on_rate_limit=False,
-                progress=cfg.runtime_progress,
-                dry_run=cfg.dry_run,
-                cmd=_rsync_command_for_source(source),
-            )
-        )
-
-        policy = cfg.sync_policy or DefaultSyncPolicy()
-        force = policy.should_refresh(source, cfg)
-        mirror_paths = policy.rsync_paths_for_source(
-            source=source,
-            cache_root=paths.root,
-            manifest=recorder.manifest,
-        )
-        synthetic_results: dict[str, dict[str, Any]] = {}
-        mirror_paths, synthetic_results = await _prepare_rsync_paths_for_source(
-            source=source,
-            mirror_paths=mirror_paths,
+        await _run_rsync_source(
             cfg=cfg,
+            paths=paths,
+            recorder=recorder,
+            source=source,
+            local=local,
         )
-        mode = "update_paths" if mirror_paths else "update"
 
-        try:
-            if cfg.dry_run:
-                results_payload: dict[str, Any]
-                if mirror_paths:
-                    results_payload = {
-                        rel: {"status": "dry_run", "detail": "dry run (mirror skipped)", "returncode": 0}
-                        for rel in mirror_paths
-                    }
-                    results_payload.update(synthetic_results)
-                else:
-                    results_payload = {
-                        "update": {
-                            "status": "dry_run",
-                            "detail": "dry run (mirror skipped)",
-                            "returncode": 0,
-                            "mode": mode,
-                        },
-                    }
-                recorder.record_rsync(
-                    manifest_key=manifest_key,
-                    entry=_rsync_manifest_entry(
-                        source,
-                        local,
-                        mode,
-                        results_payload,
-                        force=force,
-                        paths=list(mirror_paths) if mirror_paths else None,
-                    ),
-                )
-                continue
+    return expected_mirror_dirs
 
-            if mirror_paths:
-                per_path = await mirror.update_paths(list(mirror_paths), force=force)
-                results_payload = {
-                    rel: {
-                        "status": r.status,
-                        "detail": r.detail,
-                        "phase": r.phase,
-                        "returncode": r.returncode,
-                        "timed_out": r.timed_out,
-                        "attempt_count": r.attempt_count,
-                        "max_attempts": r.max_attempts,
-                        "attempt_errors": list(r.attempt_errors or []),
-                        "stdout": r.stdout,
-                        "stderr": r.stderr,
-                        "updated": list(r.updated or []),
-                    }
-                    for rel, r in (
-                        (
-                            rel,
-                            _normalize_rsync_path_result(source=source, rel=rel, result=result),
-                        )
-                        for rel, result in per_path.items()
-                    )
-                }
-                results_payload.update(synthetic_results)
-            else:
-                res = await mirror.update(force=force)
-                results_payload = {
-                    "update": {
-                        "status": res.status,
-                        "detail": res.detail,
-                        "phase": res.phase,
-                        "returncode": res.returncode,
-                        "timed_out": res.timed_out,
-                        "attempt_count": res.attempt_count,
-                        "max_attempts": res.max_attempts,
-                        "attempt_errors": list(res.attempt_errors or []),
-                        "stdout": res.stdout,
-                        "stderr": res.stderr,
-                        "updated": list(res.updated or []),
-                    },
-                }
-            source_ok = _rsync_results_ok(results_payload)
-            failure_detail = _rsync_failure_detail(results_payload)
-            if not source_ok:
-                recorder.error(
-                    phase="rsync",
-                    name=source.description,
-                    source_id=source.id,
-                    error=failure_detail or "rsync failed",
-                )
 
-            recorder.record_rsync(
-                manifest_key=manifest_key,
-                entry=_rsync_manifest_entry(
-                    source,
-                    local,
-                    mode,
-                    results_payload,
-                    force=force,
-                    paths=list(mirror_paths) if mirror_paths else None,
-                    freshness=_rsync_freshness_record(local) or None,
-                    ok=source_ok,
-                    error=failure_detail,
-                ),
-            )
+async def _run_rsync_source(
+    *,
+    cfg: EngineConfig,
+    paths: SyncPaths,
+    recorder: ManifestRecorder,
+    source: SourceDefinition,
+    local: Path,
+) -> None:
+    manifest_key = _manifest_key_for_source(source)
+    policy = cfg.sync_policy or DefaultSyncPolicy()
+    force = policy.should_refresh(source, cfg)
+    mirror_paths = policy.rsync_paths_for_source(
+        source=source,
+        cache_root=paths.root,
+        manifest=recorder.manifest,
+    )
+    synthetic_results: dict[str, dict[str, Any]] = {}
+    mirror_paths, synthetic_results = await _prepare_rsync_paths_for_source(
+        source=source,
+        mirror_paths=mirror_paths,
+        cfg=cfg,
+    )
+    compact_mmcif_progress = _use_compact_mmcif_progress(cfg, source, mirror_paths or ())
+    mirror = RsyncMirror(
+        RsyncMirrorConfig(
+            name=source.description,
+            remote=source.url,
+            local=local,
+            meta_path=(local / ".mirror_meta.json"),
+            delete=False,
+            timeout_seconds=1200.0,
+            port=source.port,
+            include=source.include or (),
+            exclude=source.exclude or ('"**/.DS_Store"',),
+            rate_limit_storage=_sqlite_url(paths.rate / "mirror_rate_limits.sqlite"),
+            rate_limit_scope=None,
+            raise_on_rate_limit=False,
+            progress=cfg.runtime_progress and not compact_mmcif_progress,
+            dry_run=cfg.dry_run,
+            cmd=_rsync_command_for_source(source),
+        )
+    )
+    mode = "update_paths" if mirror_paths else "update"
 
-            if cfg.remove_empty_dirs_after_rsync:
-                with contextlib.suppress(OSError, RuntimeError):
-                    await mirror.prune_local_empty_dirs()
-
-        except (OSError, RuntimeError) as exc:
+    try:
+        results_payload = await _run_rsync_source_operation(
+            cfg=cfg,
+            source=source,
+            mirror=mirror,
+            mirror_paths=mirror_paths,
+            force=force,
+            mode=mode,
+            synthetic_results=synthetic_results,
+            compact_mmcif_progress=compact_mmcif_progress,
+        )
+        source_ok = _rsync_results_ok(results_payload)
+        failure_detail = _rsync_failure_detail(results_payload)
+        if not source_ok:
             recorder.error(
                 phase="rsync",
                 name=source.description,
                 source_id=source.id,
+                error=failure_detail or "rsync failed",
+            )
+        recorder.record_rsync(
+            manifest_key=manifest_key,
+            entry=_rsync_manifest_entry(
+                source,
+                local,
+                mode,
+                results_payload,
+                force=force,
+                paths=list(mirror_paths) if mirror_paths else None,
+                freshness=_rsync_freshness_record(local) or None,
+                ok=source_ok,
+                error=failure_detail,
+            ),
+        )
+        if cfg.remove_empty_dirs_after_rsync:
+            with contextlib.suppress(OSError, RuntimeError):
+                await mirror.prune_local_empty_dirs()
+    except (OSError, RuntimeError) as exc:
+        recorder.error(
+            phase="rsync",
+            name=source.description,
+            source_id=source.id,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        recorder.record_rsync(
+            manifest_key=manifest_key,
+            entry=_rsync_manifest_entry(
+                source,
+                local,
+                mode,
+                results=None,
+                force=force,
+                paths=list(mirror_paths) if mirror_paths else None,
+                ok=False,
                 error=f"{type(exc).__name__}: {exc}",
-            )
-            recorder.record_rsync(
-                manifest_key=manifest_key,
-                entry=_rsync_manifest_entry(
-                    source,
-                    local,
-                    mode,
-                    results=None,
-                    force=force,
-                    paths=list(mirror_paths) if mirror_paths else None,
-                    ok=False,
-                    error=f"{type(exc).__name__}: {exc}",
-                ),
-            )
+            ),
+        )
 
-    return expected_mirror_dirs
+
+async def _run_rsync_source_operation(
+    *,
+    cfg: EngineConfig,
+    source: SourceDefinition,
+    mirror: RsyncMirror,
+    mirror_paths: tuple[str, ...] | None,
+    force: bool,
+    mode: str,
+    synthetic_results: dict[str, dict[str, Any]],
+    compact_mmcif_progress: bool,
+) -> dict[str, Any]:
+    if cfg.dry_run:
+        if mirror_paths:
+            results_payload = {
+                rel: {"status": "dry_run", "detail": "dry run (mirror skipped)", "returncode": 0}
+                for rel in mirror_paths
+            }
+            results_payload.update(synthetic_results)
+            return results_payload
+        return {
+            "update": {
+                "status": "dry_run",
+                "detail": "dry run (mirror skipped)",
+                "returncode": 0,
+                "mode": mode,
+            },
+        }
+
+    if mirror_paths:
+        per_path = (
+            await _run_mmcif_shards_with_compact_progress(
+                cfg=cfg,
+                source=source,
+                mirror=mirror,
+                mirror_paths=mirror_paths,
+                force=force,
+                synthetic_results=synthetic_results,
+            )
+            if compact_mmcif_progress
+            else await mirror.update_paths(list(mirror_paths), force=force)
+        )
+        results_payload = {
+            rel: {
+                "status": r.status,
+                "detail": r.detail,
+                "phase": r.phase,
+                "returncode": r.returncode,
+                "timed_out": r.timed_out,
+                "attempt_count": r.attempt_count,
+                "max_attempts": r.max_attempts,
+                "attempt_errors": list(r.attempt_errors or []),
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+                "updated": list(r.updated or []),
+            }
+            for rel, r in (
+                (
+                    rel,
+                    _normalize_rsync_path_result(source=source, rel=rel, result=result),
+                )
+                for rel, result in per_path.items()
+            )
+        }
+        results_payload.update(synthetic_results)
+        return results_payload
+
+    res = await mirror.update(force=force)
+    return {
+        "update": {
+            "status": res.status,
+            "detail": res.detail,
+            "phase": res.phase,
+            "returncode": res.returncode,
+            "timed_out": res.timed_out,
+            "attempt_count": res.attempt_count,
+            "max_attempts": res.max_attempts,
+            "attempt_errors": list(res.attempt_errors or []),
+            "stdout": res.stdout,
+            "stderr": res.stderr,
+            "updated": list(res.updated or []),
+        },
+    }
 
 
 async def _run_derived_tasks(
@@ -858,10 +960,11 @@ def _normalized_subdir(path: str) -> str:
 
 
 def _manifest_request_paths(payload: object) -> list[str]:
-    if not isinstance(payload, dict):
+    payload_mapping = json_mapping_or_none(payload)
+    if payload_mapping is None:
         return []
-    request = payload.get("request")
-    request_paths = request.get("paths") if isinstance(request, dict) else None
+    request = json_mapping_or_none(payload_mapping.get("request"))
+    request_paths = request.get("paths") if request is not None else None
     if not isinstance(request_paths, list):
         return []
     return [rel for rel in request_paths if isinstance(rel, str)]
@@ -916,7 +1019,8 @@ def _record_manifest_hash_state(
             if integrity is not None:
                 entry["integrity"] = integrity
                 source_payloads[source_id] = integrity
-    recorder.manifest["mirror_state"] = {
+    manifest_payload = cast("dict[str, Any]", recorder.manifest)
+    manifest_payload["mirror_state"] = {
         "path": str(paths.root / cfg.state_filename),
         "hash_algo": state.hash_algo,
         "generated_at_unix": state.generated_at_unix,

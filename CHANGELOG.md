@@ -29,6 +29,23 @@ Items should be categorized under these headings:
 
 ### Security
 
+## [0.0.6] - 2026-04-02
+
+### Added
+- add compact shard-level runtime progress for `pdb_mmcif` path syncs so normal output reports one continuously updating overall shard status line instead of per-shard transport chatter
+
+### Changed
+- change `run_rsync_phase` orchestration structure by extracting per-source rsync execution helpers, keeping behavior stable while reducing inline branching complexity
+
+### Deprecated
+
+### Removed
+
+### Fixed
+- fix normal `pdb_mmcif` runtime output flooding by suppressing per-shard transport progress in non-debug mode while retaining detailed per-shard diagnostics in debug logging mode
+
+### Security
+
 ## [0.0.5] - 2026-04-02
 
 ### Added

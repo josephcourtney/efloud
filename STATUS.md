@@ -28,10 +28,12 @@ Recent:
 - mirror-state nodes now persist file/dir counts and manifests include source/subtree integrity counts
 - `pdb_mmcif` now uses path-sharded sync with remote bucket discovery (`--list-only`) and prefiltering of non-existent remote buckets
 - missing remote mmCIF bucket directories are normalized to skipped shard results instead of source-fatal errors
+- normal runtime output now uses a compact aggregate shard-status line for `pdb_mmcif`; detailed per-shard transport chatter remains available in debug logging mode
 
 Known gaps:
 - `sync.py` still combines orchestration, path-preparation policy, and manifest shaping in one module
 - remote bucket discovery currently runs per sync invocation and is not cached across runs
+- compact shard progress currently exists only for `pdb_mmcif`; no equivalent aggregation path exists yet for other high-cardinality rsync sources
 - `_kind_name` helper remains duplicated in `status.py` and `source_results.py`
 - `ManifestRecorder` in `sync.py` is not behind a formal interface
 - No protocol adapters; transport dispatch is inline branching in `sync.py`

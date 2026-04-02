@@ -39,3 +39,13 @@ Files: `src/efloud/sync.py`, `tests/unit/test_fanout_and_sync.py`
 - keep fallback behavior unchanged when discovery fails
 
 Acceptance: repeated `pdb_mmcif` sync runs avoid redundant list-only discovery within cache TTL; tests cover hit/miss/fallback paths
+
+### 4. Unify compact progress policy across rsync sources
+
+Files: `src/efloud/sync.py`, `src/efloud/transport/rsync.py`, `tests/unit/test_fanout_and_sync.py`
+
+- formalize a progress policy switch that maps runtime verbosity/debug state to compact-vs-detailed rsync progress modes
+- keep detailed per-shard diagnostics available in debug mode while defaulting to aggregate progress for high-cardinality path syncs
+- avoid duplicating source-specific branching in orchestration code by centralizing the policy decision
+
+Acceptance: compact progress behavior remains stable for `pdb_mmcif`, debug mode preserves detailed transport visibility, and policy logic is covered by targeted tests

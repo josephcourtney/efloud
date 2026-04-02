@@ -442,6 +442,74 @@ async def test_run_rsync_phase_uses_less_aggressive_flags_for_pdb_mmcif(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_run_rsync_phase_uses_compact_progress_for_pdb_mmcif_only(tmp_path: Path, monkeypatch):
+    sources = [
+        SourceDefinition(
+            "pdb_mmcif",
+            "PDB structures",
+            "rsync.rcsb.org::ftp/data/structures/divided/",
+            SourceKind.RSYNC,
+            local_subpath="pdb_structures_all",
+            mirror_mode=MirrorMode.PATHS,
+            mirror_paths=("mmCIF/ab/",),
+        ),
+        SourceDefinition(
+            "pdb_chemical_shifts",
+            "PDB Legacy Chemical Shifts",
+            "rsync.rcsb.org::ftp/data/structures/divided/",
+            SourceKind.RSYNC,
+            local_subpath="pdb_structures_all",
+            mirror_mode=MirrorMode.PATHS,
+            mirror_paths=("nmr_chemical_shifts/",),
+        ),
+    ]
+    cfg = EngineConfig(root=tmp_path, sources=sources, runtime_progress=True)
+    paths = prepare_paths(tmp_path, cfg)
+    recorder = ManifestRecorder(root=tmp_path, cfg=cfg)
+
+    captured_progress: dict[str, bool] = {}
+
+    class FakeMirror:
+        def __init__(self, cfg):
+            captured_progress[cfg.name] = cfg.progress
+            self.cfg = cfg
+
+        async def update(self, *, force=False):
+            del force
+            assert self.cfg.name in {"PDB structures", "PDB Legacy Chemical Shifts"}
+            await asyncio.sleep(0)
+            return OpResult(status="success", detail="ok", returncode=0, updated=["root.txt"])
+
+        async def update_paths(self, paths, *, force=False):
+            del force
+            assert self.cfg.name in {"PDB structures", "PDB Legacy Chemical Shifts"}
+            await asyncio.sleep(0)
+            return {
+                paths[0]: OpResult(
+                    status="success",
+                    detail="ok",
+                    returncode=0,
+                    updated=["subset/file.txt"],
+                )
+            }
+
+        async def prune_local_empty_dirs(self):
+            assert self.cfg.name in {"PDB structures", "PDB Legacy Chemical Shifts"}
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(sync_mod, "RsyncMirror", FakeMirror)
+    monkeypatch.setattr(sync_mod, "_discover_existing_pdb_mmcif_buckets", lambda _source: {"mmCIF/ab/"})
+    monkeypatch.setattr(sync_mod, "_emit_sync_runtime_inline", lambda _cfg, _text, *, final=False: None)
+
+    await run_rsync_phase(cfg=cfg, paths=paths, recorder=recorder)
+
+    assert captured_progress == {
+        "PDB structures": False,
+        "PDB Legacy Chemical Shifts": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_sync_orchestration_with_stubbed_phases(tmp_path: Path, monkeypatch):
     sources = [
         SourceDefinition("http-id", "HTTP", "https://example.test/data.bin", SourceKind.HTTP),
@@ -585,10 +653,10 @@ async def test_run_rsync_phase_skips_missing_pdb_mmcif_bucket_dirs(tmp_path: Pat
 
     await run_rsync_phase(cfg=cfg, paths=paths, recorder=recorder)
 
-    entry = recorder.manifest["results"]["rsync"]["pdb_mmcif"]
+    entry = cast("dict[str, Any]", recorder.manifest["results"]["rsync"]["pdb_mmcif"])
     assert entry["ok"] is True
     assert recorder.manifest["errors"] == []
-    per_path = entry["results"]["mmCIF/0r/"]
+    per_path = cast("dict[str, Any]", entry["results"])["mmCIF/0r/"]
     assert per_path["status"] == "success"
     assert per_path["detail"] == "Skipped: remote shard not present"
 
@@ -631,11 +699,14 @@ async def test_run_rsync_phase_prefilters_missing_pdb_mmcif_buckets(tmp_path: Pa
 
     await run_rsync_phase(cfg=cfg, paths=paths, recorder=recorder)
 
-    entry = recorder.manifest["results"]["rsync"]["pdb_mmcif"]
+    entry = cast("dict[str, Any]", recorder.manifest["results"]["rsync"]["pdb_mmcif"])
+    per_path_results = cast("dict[str, Any]", entry["results"])
     assert entry["ok"] is True
-    assert entry["results"]["mmCIF/0s/"]["status"] == "success"
-    assert entry["results"]["mmCIF/0r/"]["status"] == "success"
-    assert entry["results"]["mmCIF/0r/"]["detail"] == "Skipped: remote shard not present"
+    assert cast("dict[str, Any]", per_path_results["mmCIF/0s/"])["status"] == "success"
+    assert cast("dict[str, Any]", per_path_results["mmCIF/0r/"])["status"] == "success"
+    assert (
+        cast("dict[str, Any]", per_path_results["mmCIF/0r/"])["detail"] == "Skipped: remote shard not present"
+    )
     assert any("skipping 1 missing remote buckets" in message for message in seen_messages)
 
 
@@ -733,7 +804,7 @@ def test_incremental_rsync_subdirs_uses_manifest_paths_for_shared_root(tmp_path:
         }
     }
 
-    assert sync_mod._incremental_rsync_subdirs(cfg=cfg, manifest=manifest) == [
+    assert sync_mod._incremental_rsync_subdirs(cfg=cfg, manifest=cast("Any", manifest)) == [
         "pdb_structures_all/mmcif",
         "pdb_structures_all/nmr_chemical_shifts",
     ]
@@ -830,9 +901,12 @@ def test_record_manifest_hash_state_persists_source_counts(tmp_path: Path):
 
     sync_mod._record_manifest_hash_state(cfg=cfg, paths=paths, recorder=recorder, state=state)
 
-    mirror_state = recorder.manifest["mirror_state"]
+    manifest_payload = cast("dict[str, Any]", recorder.manifest)
+    mirror_state = cast("dict[str, Any]", manifest_payload["mirror_state"])
     assert mirror_state["root"]["file_count"] == 1
-    source_payload = recorder.manifest["results"]["rsync"]["pdb_unified_nmr"]["integrity"]
+    source_payload = cast(
+        "dict[str, Any]", recorder.manifest["results"]["rsync"]["pdb_unified_nmr"]["integrity"]
+    )
     assert source_payload["source_root"]["file_count"] == 1
     assert source_payload["subtrees"]["nmr_data"]["file_count"] == 1
 

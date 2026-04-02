@@ -80,7 +80,13 @@ def _write_manifest(root: Path, cfg: EngineConfig) -> Path:
                     "ok": False,
                     "local": str(root / cfg.mirrors_dir / "mirror/source"),
                     "mode": "update",
-                    "results": {"update": {"status": "failed"}},
+                    "results": {
+                        "update": {
+                            "status": "failed",
+                            "attempt_count": 2,
+                            "attempt_errors": ["failed to connect", "failed to connect"],
+                        }
+                    },
                 }
             },
             "derived": {
@@ -117,6 +123,10 @@ def test_build_summary_and_status_helpers(cfg: EngineConfig, tmp_path: Path):
     assert summary["ok"] is False
     assert summary["http"]["core"]["ok_count"] == 1
     assert summary["rsync"]["core"]["error_count"] == 1
+    assert summary["rsync"]["entries"][0]["status"] == "failed"
+    assert summary["rsync"]["entries"][0]["updated_count"] == 0
+    assert summary["rsync"]["entries"][0]["retry_count"] == 1
+    assert summary["rsync"]["entries"][0]["request_count"] == 2
 
     http_status = describe_source_status(cfg.sources[0], result.manifest["results"]["http"]["http-id"])
     rsync_status = describe_source_status(cfg.sources[1], result.manifest["results"]["rsync"]["rsync-id"])

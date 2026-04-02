@@ -20,7 +20,7 @@ from efloud.sync import (
     sync,
 )
 from efloud.transport.http_utils import HttpFetchResult
-from efloud.transport.rsync import OpResult
+from efloud.transport.rsync import OpResult, RsyncMirror, RsyncMirrorConfig
 
 fanout_mod = importlib.import_module("efloud.fanout")
 sync_mod = importlib.import_module("efloud.sync")
@@ -377,3 +377,118 @@ async def test_sync_orchestration_with_stubbed_phases(tmp_path: Path, monkeypatc
     result = await sync(cfg)
     assert result.ok is True
     assert result.manifest["results"]["derived"]["derived"] == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_sync_marks_rsync_transport_failures_as_errors(tmp_path: Path, monkeypatch):
+    cfg = EngineConfig(
+        root=tmp_path,
+        sources=[
+            SourceDefinition(
+                "rsync-id",
+                "Mirror",
+                "rsync.example.test::module",
+                SourceKind.RSYNC,
+                local_subpath="mirror/source",
+                mirror_mode=MirrorMode.PATHS,
+                mirror_paths=("subset",),
+            )
+        ],
+    )
+
+    async def _fake_update_paths(
+        self: object, paths: list[str], *, force: bool = False
+    ) -> dict[str, OpResult]:
+        del self, force
+        await asyncio.sleep(0)
+        return {
+            paths[0]: OpResult(
+                status="failed",
+                detail="rsync failed",
+                returncode=10,
+                stderr="socket IO error",
+                updated=[],
+            )
+        }
+
+    monkeypatch.setattr(RsyncMirror, "update_paths", _fake_update_paths)
+
+    result = await sync(cfg)
+
+    assert result.ok is False
+    entry = result.manifest["results"]["rsync"]["rsync-id"]
+    assert entry["ok"] is False
+    assert entry["error"] == "subset: rsync failed"
+    assert result.manifest["errors"] == [
+        {
+            "phase": "rsync",
+            "name": "Mirror",
+            "source_id": "rsync-id",
+            "error": "subset: rsync failed",
+        }
+    ]
+
+
+def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path):
+    transport_mod = importlib.import_module("efloud.transport.rsync")
+    cfg = RsyncMirrorConfig(
+        name="Retry Test",
+        remote="rsync.example.test::module",
+        local=tmp_path / "mirror",
+    )
+    attempts: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_once(_cfg, *, cmd):
+        del _cfg, cmd
+        attempts.append(len(attempts) + 1)
+        if len(attempts) < 3:
+            return OpResult(
+                status="failed",
+                detail="rsync failed",
+                returncode=10,
+                stderr="failed to connect to rsync.example.test: Operation timed out (60)",
+            )
+        return OpResult(status="success", detail="ok", returncode=0, updated=["file.txt"])
+
+    monkeypatch.setattr(transport_mod, "_run_rsync_process_once", fake_once)
+    monkeypatch.setattr(transport_mod.time, "sleep", sleeps.append)
+
+    result = transport_mod._run_rsync_process(cfg, cmd=["rsync"])
+
+    assert result.status == "success"
+    assert result.attempt_count == 3
+    assert result.attempt_errors == [
+        "failed to connect to rsync.example.test: Operation timed out (60)",
+        "failed to connect to rsync.example.test: Operation timed out (60)",
+    ]
+    assert sleeps == [5.0, 20.0]
+
+
+def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_path: Path):
+    transport_mod = importlib.import_module("efloud.transport.rsync")
+    cfg = RsyncMirrorConfig(
+        name="Retry Test",
+        remote="rsync.example.test::module",
+        local=tmp_path / "mirror",
+    )
+    attempts: list[int] = []
+
+    def fake_once(_cfg, *, cmd):
+        del _cfg, cmd
+        attempts.append(1)
+        return OpResult(
+            status="failed",
+            detail="rsync failed",
+            returncode=5,
+            stderr="@ERROR: Unknown module 'badpath'",
+        )
+
+    monkeypatch.setattr(transport_mod, "_run_rsync_process_once", fake_once)
+    monkeypatch.setattr(transport_mod.time, "sleep", lambda _seconds: None)
+
+    result = transport_mod._run_rsync_process(cfg, cmd=["rsync"])
+
+    assert result.status == "failed"
+    assert result.attempt_count == 1
+    assert len(attempts) == 1

@@ -32,6 +32,23 @@ Items should be categorized under these headings:
 
 ### Security
 
+## [0.0.1] - 2026-04-01
+
+### Added
+
+### Changed
+- add bounded retries for transient rsync transport failures and persist retry metadata in sync manifests and summaries
+- expose rsync retry counts and request counts through the normalized summary payload so callers can report successful retries distinctly from first-attempt success
+
+### Deprecated
+
+### Removed
+
+### Fixed
+- fix intermittent rsync daemon connect timeouts by retrying transient socket and connect failures before marking the mirror operation as failed
+
+### Security
+
 ## [0.0.0] - 2026-02-23
 
 ### Added

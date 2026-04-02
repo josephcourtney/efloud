@@ -17,25 +17,7 @@ def _normalize_transport_section(raw: JsonValue | dict[str, Any] | None) -> dict
             value_mapping = json_mapping_or_none(value)
             if value_mapping is None:
                 continue
-            status_val = value_mapping.get("status")
-            status = str(status_val) if isinstance(status_val, str) else None
-            ok_val = value_mapping.get("ok")
-            ok = bool(ok_val) if isinstance(ok_val, int | bool) else None
-            updated = value_mapping.get("updated")
-            updated_count = len(updated) if isinstance(updated, list) and _is_string_list(updated) else None
-            row: dict[str, Any] = {
-                "source_id": str(source_id),
-                "status": status,
-                "ok": ok,
-                "updated_count": updated_count,
-                "status_code": value_mapping.get("status_code"),
-                "extensions": {
-                    key: val
-                    for key, val in value_mapping.items()
-                    if key not in {"status", "ok", "updated", "status_code"}
-                },
-            }
-            rows.append(row)
+            rows.append(_normalize_transport_row(str(source_id), value_mapping))
 
     source_count = len(rows)
     ok_count = sum(1 for row in rows if row.get("ok") is True)
@@ -54,6 +36,143 @@ def _normalize_transport_section(raw: JsonValue | dict[str, Any] | None) -> dict
 
 def _is_string_list(value: JsonValue | None) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _normalize_transport_row(source_id: str, value_mapping: JsonObject) -> JsonObject:
+    results_mapping = json_mapping_or_none(value_mapping.get("results"))
+    normalized = {
+        "source_id": source_id,
+        "status": _transport_status(value_mapping, results_mapping),
+        "ok": _transport_ok(value_mapping),
+        "updated_count": _transport_updated(value_mapping, results_mapping),
+        "status_code": value_mapping.get("status_code"),
+        "retry_count": _transport_retry_count(results_mapping),
+        "request_count": _transport_request_count(results_mapping),
+        "detail": _transport_detail(results_mapping),
+        "exit_code": _transport_exit_code(results_mapping),
+    }
+    normalized["extensions"] = {
+        key: val
+        for key, val in value_mapping.items()
+        if key
+        not in {
+            "status",
+            "ok",
+            "updated",
+            "status_code",
+            "retry_count",
+            "request_count",
+            "detail",
+            "exit_code",
+        }
+    }
+    return normalized
+
+
+def _transport_result_rows(results: JsonObject) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    for value in results.values():
+        value_mapping = json_mapping_or_none(value)
+        if value_mapping is not None:
+            rows.append(value_mapping)
+    return rows
+
+
+def _transport_status(value_mapping: JsonObject, results_mapping: JsonObject | None) -> str | None:
+    status_val = value_mapping.get("status")
+    fallback = str(status_val) if isinstance(status_val, str) else None
+    if results_mapping is None:
+        return fallback
+    return _transport_result_status(results_mapping) or fallback
+
+
+def _transport_ok(value_mapping: JsonObject) -> bool | None:
+    ok_val = value_mapping.get("ok")
+    return bool(ok_val) if isinstance(ok_val, int | bool) else None
+
+
+def _transport_updated(value_mapping: JsonObject, results_mapping: JsonObject | None) -> int | None:
+    if results_mapping is not None:
+        return _transport_updated_count(results_mapping)
+    updated = value_mapping.get("updated")
+    if _is_string_list(updated):
+        return len(updated)
+    return None
+
+
+def _transport_retry_count(results_mapping: JsonObject | None) -> int | None:
+    request_count = _transport_request_count(results_mapping)
+    if request_count is None:
+        return None
+    return max(0, request_count - 1)
+
+
+def _transport_detail(results_mapping: JsonObject | None) -> str | None:
+    if results_mapping is None:
+        return None
+    return _transport_result_detail(results_mapping)
+
+
+def _transport_exit_code(results_mapping: JsonObject | None) -> int | None:
+    if results_mapping is None:
+        return None
+    return _transport_result_exit_code(results_mapping)
+
+
+def _transport_result_status(results: JsonObject) -> str | None:
+    rows = _transport_result_rows(results)
+    statuses = [str(status) for row in rows if isinstance((status := row.get("status")), str)]
+    if not statuses:
+        return None
+    for candidate, aliases in (
+        ("failed", {"failed", "timed_out"}),
+        ("skipped_rate_limited", {"skipped_rate_limited"}),
+        ("skipped_fresh", {"skipped_fresh"}),
+        ("dry_run", {"dry_run"}),
+        ("success", {"success"}),
+    ):
+        if any(status in aliases for status in statuses):
+            return candidate
+    return statuses[0]
+
+
+def _transport_updated_count(results: JsonObject) -> int:
+    total = 0
+    for row in _transport_result_rows(results):
+        updated = row.get("updated")
+        if _is_string_list(updated):
+            total += len(updated)
+    return total
+
+
+def _transport_result_detail(results: JsonObject) -> str | None:
+    for row in _transport_result_rows(results):
+        detail = row.get("detail")
+        if isinstance(detail, str) and detail:
+            return detail
+    return None
+
+
+def _transport_result_exit_code(results: JsonObject) -> int | None:
+    for row in _transport_result_rows(results):
+        exit_code = row.get("returncode")
+        if isinstance(exit_code, int):
+            return exit_code
+    return None
+
+
+def _transport_request_count(results: JsonObject | None) -> int | None:
+    if results is None:
+        return None
+    counts = [
+        int(attempt_count)
+        for row in _transport_result_rows(results)
+        for attempt_count in [row.get("attempt_count")]
+        if isinstance(attempt_count, int | float)
+    ]
+    if not counts:
+        return None
+    return max(counts)
 
 
 def build_summary(result: SyncResult) -> dict[str, Any]:

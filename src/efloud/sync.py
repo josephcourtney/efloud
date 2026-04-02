@@ -223,6 +223,29 @@ def _rsync_freshness_record(root: Path) -> dict[str, Any]:
     return freshness
 
 
+def _rsync_results_ok(results_payload: dict[str, Any]) -> bool:
+    for result in results_payload.values():
+        if not isinstance(result, dict):
+            continue
+        if result.get("status") in {"failed", "timed_out"}:
+            return False
+    return True
+
+
+def _rsync_failure_detail(results_payload: dict[str, Any]) -> str | None:
+    for name, result in results_payload.items():
+        if not isinstance(result, dict):
+            continue
+        status = result.get("status")
+        if status not in {"failed", "timed_out"}:
+            continue
+        detail = result.get("detail")
+        if isinstance(detail, str) and detail:
+            return f"{name}: {detail}"
+        return f"{name}: {status}"
+    return None
+
+
 def should_refresh(source: SourceDefinition, cfg: EngineConfig) -> bool:
     return (cfg.sync_policy or DefaultSyncPolicy()).should_refresh(source, cfg)
 
@@ -459,6 +482,8 @@ async def run_rsync_phase(
                         "detail": r.detail,
                         "returncode": r.returncode,
                         "timed_out": r.timed_out,
+                        "attempt_count": r.attempt_count,
+                        "attempt_errors": list(r.attempt_errors or []),
                         "stdout": r.stdout,
                         "stderr": r.stderr,
                         "updated": list(r.updated or []),
@@ -473,11 +498,22 @@ async def run_rsync_phase(
                         "detail": res.detail,
                         "returncode": res.returncode,
                         "timed_out": res.timed_out,
+                        "attempt_count": res.attempt_count,
+                        "attempt_errors": list(res.attempt_errors or []),
                         "stdout": res.stdout,
                         "stderr": res.stderr,
                         "updated": list(res.updated or []),
                     },
                 }
+            source_ok = _rsync_results_ok(results_payload)
+            failure_detail = _rsync_failure_detail(results_payload)
+            if not source_ok:
+                recorder.error(
+                    phase="rsync",
+                    name=source.description,
+                    source_id=source.id,
+                    error=failure_detail or "rsync failed",
+                )
 
             recorder.record_rsync(
                 manifest_key=manifest_key,
@@ -489,6 +525,8 @@ async def run_rsync_phase(
                     force=force,
                     paths=list(mirror_paths) if mirror_paths else None,
                     freshness=_rsync_freshness_record(local) or None,
+                    ok=source_ok,
+                    error=failure_detail,
                 ),
             )
 

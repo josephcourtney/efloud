@@ -36,6 +36,8 @@ class OpResult:
     stdout: str = ""
     stderr: str = ""
     updated: list[str] | None = None
+    attempt_count: int = 1
+    attempt_errors: list[str] | None = None
 
     @property
     def ok(self) -> bool:
@@ -76,6 +78,10 @@ class RsyncMirrorConfig:
     rate_limit_storage: str = "sqlite:///mirror_rate_limits.sqlite"
     rate_limit_scope: str | None = None
     raise_on_rate_limit: bool = False
+    retry_attempts: int = 3
+    retry_wait_min_seconds: float = 5.0
+    retry_wait_max_seconds: float = 30.0
+    retry_backoff_multiplier: float = 4.0
 
     cmd: RsyncCommandConfig = RsyncCommandConfig()
 
@@ -241,7 +247,7 @@ def _parse_itemize_changes(stdout: str) -> list[str]:
     return updated
 
 
-def _run_rsync_process(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
+def _run_rsync_process_once(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
     proc = subprocess.Popen(  # noqa: S603
         cmd,
         start_new_session=True,
@@ -296,6 +302,90 @@ def _run_rsync_process(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
         updated=updated,
         detail="ok" if rc == 0 else "rsync failed",
     )
+
+
+def _result_error_summary(result: OpResult) -> str:
+    for value in (result.stderr, result.detail):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return result.status
+
+
+def _is_transient_rsync_failure(result: OpResult) -> bool:
+    if result.status not in {"failed", "timed_out"}:
+        return False
+    if result.returncode in {10, 30, 35}:
+        return True
+    text = " ".join(part for part in (result.detail, result.stderr) if part).lower()
+    transient_markers = (
+        "failed to connect",
+        "operation timed out",
+        "connection timed out",
+        "connection reset",
+        "socket io",
+        "no route to host",
+        "network is unreachable",
+        "temporary failure",
+        "temporarily unavailable",
+        "name or service not known",
+        "connection refused",
+    )
+    return any(marker in text for marker in transient_markers)
+
+
+def _retry_wait_seconds(cfg: RsyncMirrorConfig, *, retry_index: int) -> float:
+    wait = cfg.retry_wait_min_seconds * (cfg.retry_backoff_multiplier ** max(0, retry_index - 1))
+    return min(cfg.retry_wait_max_seconds, wait)
+
+
+def _run_rsync_process(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
+    max_attempts = max(1, int(cfg.retry_attempts))
+    attempt_errors: list[str] = []
+
+    for attempt in range(1, max_attempts + 1):
+        result = _run_rsync_process_once(cfg, cmd=cmd)
+        if attempt == 1 and result.status == "success":
+            return result
+        if result.status == "success":
+            return OpResult(
+                status=result.status,
+                detail=result.detail,
+                returncode=result.returncode,
+                timed_out=result.timed_out,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                updated=result.updated,
+                attempt_count=attempt,
+                attempt_errors=list(attempt_errors),
+            )
+        attempt_errors.append(_result_error_summary(result))
+        if attempt >= max_attempts or not _is_transient_rsync_failure(result):
+            detail = result.detail
+            if attempt > 1:
+                detail = f"{detail} after {attempt} attempts"
+            return OpResult(
+                status=result.status,
+                detail=detail,
+                returncode=result.returncode,
+                timed_out=result.timed_out,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                updated=result.updated,
+                attempt_count=attempt,
+                attempt_errors=list(attempt_errors),
+            )
+        wait_seconds = _retry_wait_seconds(cfg, retry_index=attempt)
+        logger.warning(
+            "Retrying rsync mirror %s after transient failure (attempt %s/%s, wait %.1fs): %s",
+            cfg.name,
+            attempt + 1,
+            max_attempts,
+            wait_seconds,
+            _result_error_summary(result),
+        )
+        time.sleep(wait_seconds)
+
+    return OpResult(status="failed", detail="rsync failed", attempt_count=max_attempts)
 
 
 def _join_remote_path(remote_base: str, relative_path: str) -> str:

@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import json
 import logging
-import subprocess  # noqa: S404
+import subprocess  # noqa: S404 - this module intentionally executes the local rsync binary for mirror probes.
 import sys
 import time
 from dataclasses import dataclass
@@ -345,7 +345,7 @@ def _discover_existing_pdb_mmcif_buckets(source: SourceDefinition) -> set[str] |
         cmd.append(f"--port={source.port}")
     cmd.append(remote)
     try:
-        proc = subprocess.run(  # noqa: S603
+        proc = subprocess.run(  # noqa: S603 - command argv is programmatic and uses validated source settings.
             cmd,
             check=False,
             capture_output=True,

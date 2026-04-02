@@ -29,6 +29,23 @@ Items should be categorized under these headings:
 
 ### Security
 
+## [0.0.8] - 2026-04-02
+
+### Added
+
+### Changed
+- clarify subprocess-security suppression rationale in sync and rsync transport
+  modules so retained `noqa` directives document why argv construction remains
+  bounded and shell-free
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
 ## [0.0.7] - 2026-04-02
 
 ### Added

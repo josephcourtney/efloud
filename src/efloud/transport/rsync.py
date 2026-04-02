@@ -7,7 +7,7 @@ import logging
 import math
 import re
 import socket
-import subprocess  # noqa: S404
+import subprocess  # noqa: S404 - rsync transport intentionally shells out to the local rsync executable.
 import sys
 import threading
 import time
@@ -718,7 +718,7 @@ def _run_rsync_process_once(
     attempt: int,
     max_attempts: int,
 ) -> OpResult:
-    proc = subprocess.Popen(  # noqa: S603
+    proc = subprocess.Popen(  # noqa: S603 - argv is assembled from structured config fields, not raw shell text.
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

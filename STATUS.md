@@ -12,7 +12,8 @@ Rules:
 Rsync transport hardening for large PDB mirrors is complete. The immediate
 follow-up is to continue decomposing `sync.py` orchestration seams (manifest
 writer/runtime split) and to reduce repeated remote-discovery overhead for
-high-cardinality path syncs.
+high-cardinality path syncs, with suppression directives now normalized and
+documented for security/type-check clarity.
 
 ## Current State Summary
 
@@ -23,6 +24,8 @@ PDB mmCIF syncs via shard-prefiltered path updates. `sync(cfg)` remains
 monolithic; no Runtime, Planner, Executor, or adapter abstractions exist yet.
 
 Recent:
+- subprocess-related lint suppressions now include explicit rationale comments
+  at each callsite where rsync argv is assembled programmatically
 - rsync now reports transfer-phase counters (handled/total files, transferred files, bytes, rate) plus idle-since-last-output timing
 - rsync heartbeat progress bars now reflect timeout countdown semantics
 - mirror-state nodes now persist file/dir counts and manifests include source/subtree integrity counts

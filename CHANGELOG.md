@@ -29,6 +29,28 @@ Items should be categorized under these headings:
 
 ### Security
 
+## [0.0.5] - 2026-04-02
+
+### Added
+- add rsync transfer-progress enrichment with handled-file fractions, transferred-file counts, cumulative bytes, throughput, and idle-since-last-output timing in runtime progress output
+- add mirror-state subtree file and directory counts plus manifest integrity count payloads so downstream integrity scans can report percentage completion
+- add an rsync prefilter for `pdb_mmcif` bucket paths that discovers existing remote `mmCIF` buckets via one `--list-only` request and skips non-existent shards before transfer
+
+### Changed
+- change `pdb_mmcif` runtime command profile to disable `--compress` and `--copy-links` while keeping archive/itemize semantics
+- change rsync heartbeat timeout bars to countdown semantics (remaining time) instead of elapsed-fill semantics
+
+### Deprecated
+
+### Removed
+
+### Fixed
+- fix rsync phase reporting so transfer markers (`xfr#`, `to-check`) take precedence over earlier file-list text when classifying failure phase
+- fix `pdb_mmcif` shard handling so missing remote bucket directories (`code 23` `change_dir` no-such-file) are normalized to skipped shards instead of source-fatal errors
+- fix default PDB rsync roots and source defaults to use `.../data/structures/divided/` consistently, including legacy-config canonicalization from `.../all/`
+
+### Security
+
 ## [0.0.3] - 2026-04-01
 
 ### Added

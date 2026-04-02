@@ -9,33 +9,36 @@ Rules:
 
 ## Current Focus
 
-Rsync transport hardening is complete. The immediate follow-up is to thread
-first-class rsync port configuration through `SourceDefinition` and `sync.py`,
-then resume Phase 1 runtime-seam work.
+Rsync transport hardening for large PDB mirrors is complete. The immediate
+follow-up is to continue decomposing `sync.py` orchestration seams (manifest
+writer/runtime split) and to reduce repeated remote-discovery overhead for
+high-cardinality path syncs.
 
 ## Current State Summary
 
 Alpha transport behavior is materially stronger than the previous baseline.
 Rsync now retries transient connect failures, emits live diagnostics during
-connect stalls, and supports explicit daemon ports at the transport-config
-layer. `sync(cfg)` is still monolithic; no Runtime, Planner, Executor, or
-adapter abstractions exist yet.
+connect stalls, supports explicit daemon ports end-to-end, and handles large
+PDB mmCIF syncs via shard-prefiltered path updates. `sync(cfg)` remains
+monolithic; no Runtime, Planner, Executor, or adapter abstractions exist yet.
 
 Recent:
-- rsync transport now retries transient connect/socket failures with bounded backoff
-- rsync diagnostics now include preflight connectivity checks, retry countdowns, and active connect heartbeat output
-- `RsyncMirrorConfig` now supports explicit `port`, but `SourceDefinition` and `run_rsync_phase` do not yet thread that field through the higher-level runtime path
-- `status.py` and `source_results.py` already use value-based `SourceKind` comparisons; `sync.py` still has remaining identity checks
+- rsync now reports transfer-phase counters (handled/total files, transferred files, bytes, rate) plus idle-since-last-output timing
+- rsync heartbeat progress bars now reflect timeout countdown semantics
+- mirror-state nodes now persist file/dir counts and manifests include source/subtree integrity counts
+- `pdb_mmcif` now uses path-sharded sync with remote bucket discovery (`--list-only`) and prefiltering of non-existent remote buckets
+- missing remote mmCIF bucket directories are normalized to skipped shard results instead of source-fatal errors
 
 Known gaps:
-- `SourceDefinition` does not yet expose `port`, so higher-level callers cannot use the new rsync port support end to end
-- `sync.py` still relies on `SourceKind` identity comparisons in a few paths
-- `_kind_name` helper duplicated in `status.py` and `source_results.py`
+- `sync.py` still combines orchestration, path-preparation policy, and manifest shaping in one module
+- remote bucket discovery currently runs per sync invocation and is not cached across runs
+- `_kind_name` helper remains duplicated in `status.py` and `source_results.py`
 - `ManifestRecorder` in `sync.py` is not behind a formal interface
 - No protocol adapters; transport dispatch is inline branching in `sync.py`
 
 ## Continuity Notes
 
-Complete the source-definition-to-runtime rsync port handoff first; it is the
-smallest remaining gap in the recent transport work. After that, finish the
-`sync.py` value-comparison cleanup and continue with the `Runtime` seam.
+Next pass should extract manifest payload building from `sync.py`, then isolate
+source/path preparation policy behind a small helper boundary. If remote bucket
+listing remains a measurable cost, introduce a short-TTL local cache for
+`pdb_mmcif` bucket discovery keyed by remote root and port.

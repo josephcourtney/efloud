@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
+import subprocess  # noqa: S404
 import sys
 import time
 from dataclasses import dataclass
@@ -313,6 +315,99 @@ def _normalize_rsync_path_result(
     )
 
 
+def _parse_rsync_list_only_dir_names(stdout: str) -> set[str]:
+    names: set[str] = set()
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("total size is "):
+            continue
+        if stripped[0] != "d":
+            continue
+        parts = stripped.split()
+        if not parts:
+            continue
+        name = parts[-1].strip().strip("/")
+        if name and name not in {".", ".."}:
+            names.add(name)
+    return names
+
+
+def _discover_existing_pdb_mmcif_buckets(source: SourceDefinition) -> set[str] | None:
+    remote = f"{source.url.rstrip('/')}/mmCIF/"
+    timeout_seconds = 1200
+    cmd: list[str] = [
+        "rsync",
+        "--list-only",
+        f"--timeout={timeout_seconds}",
+        f"--contimeout={timeout_seconds}",
+    ]
+    if source.port is not None and source.port > 0:
+        cmd.append(f"--port={source.port}")
+    cmd.append(remote)
+    try:
+        proc = subprocess.run(  # noqa: S603
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        logger.debug(
+            "Could not list remote pdb_mmcif buckets for %s (exit %s): %s",
+            remote,
+            proc.returncode,
+            (proc.stderr or proc.stdout or "").strip(),
+        )
+        return None
+    discovered = _parse_rsync_list_only_dir_names(proc.stdout)
+    return {
+        f"mmCIF/{name.lower()}/" for name in discovered if len(name) == _MMCIF_BUCKET_WIDTH and name.isalnum()
+    }
+
+
+async def _prepare_rsync_paths_for_source(
+    *,
+    source: SourceDefinition,
+    mirror_paths: tuple[str, ...] | None,
+    cfg: EngineConfig,
+) -> tuple[tuple[str, ...] | None, dict[str, dict[str, Any]]]:
+    if not mirror_paths:
+        return mirror_paths, {}
+    if source.id != "pdb_mmcif":
+        return mirror_paths, {}
+
+    existing = await asyncio.to_thread(_discover_existing_pdb_mmcif_buckets, source)
+    if existing is None:
+        return mirror_paths, {}
+
+    filtered = tuple(rel for rel in mirror_paths if rel in existing)
+    skipped = tuple(rel for rel in mirror_paths if rel not in existing)
+    if skipped:
+        _emit_sync_runtime_message(
+            cfg,
+            f"pdb_mmcif: skipping {len(skipped)} missing remote buckets discovered by rsync --list-only",
+        )
+    synthetic = {
+        rel: {
+            "status": "success",
+            "detail": "Skipped: remote shard not present",
+            "phase": "receiving file list",
+            "returncode": 0,
+            "timed_out": False,
+            "attempt_count": 1,
+            "max_attempts": 1,
+            "attempt_errors": [],
+            "stdout": "",
+            "stderr": "",
+            "updated": [],
+        }
+        for rel in skipped
+    }
+    return filtered, synthetic
+
+
 def _rsync_command_for_source(source: SourceDefinition) -> RsyncCommandConfig:
     if source.id == "pdb_mmcif":
         return RsyncCommandConfig(
@@ -507,24 +602,25 @@ async def run_rsync_phase(
         local = paths.mirrors / local_subdir
         expected_mirror_dirs.add(local)
 
-        mirror_cfg = RsyncMirrorConfig(
-            name=source.description,
-            remote=source.url,
-            local=local,
-            meta_path=(local / ".mirror_meta.json"),
-            delete=False,
-            timeout_seconds=1200.0,
-            port=source.port,
-            include=source.include or (),
-            exclude=source.exclude or ('"**/.DS_Store"',),
-            rate_limit_storage=_sqlite_url(paths.rate / "mirror_rate_limits.sqlite"),
-            rate_limit_scope=None,
-            raise_on_rate_limit=False,
-            progress=cfg.runtime_progress,
-            dry_run=cfg.dry_run,
-            cmd=_rsync_command_for_source(source),
+        mirror = RsyncMirror(
+            RsyncMirrorConfig(
+                name=source.description,
+                remote=source.url,
+                local=local,
+                meta_path=(local / ".mirror_meta.json"),
+                delete=False,
+                timeout_seconds=1200.0,
+                port=source.port,
+                include=source.include or (),
+                exclude=source.exclude or ('"**/.DS_Store"',),
+                rate_limit_storage=_sqlite_url(paths.rate / "mirror_rate_limits.sqlite"),
+                rate_limit_scope=None,
+                raise_on_rate_limit=False,
+                progress=cfg.runtime_progress,
+                dry_run=cfg.dry_run,
+                cmd=_rsync_command_for_source(source),
+            )
         )
-        mirror = RsyncMirror(mirror_cfg)
 
         policy = cfg.sync_policy or DefaultSyncPolicy()
         force = policy.should_refresh(source, cfg)
@@ -532,6 +628,12 @@ async def run_rsync_phase(
             source=source,
             cache_root=paths.root,
             manifest=recorder.manifest,
+        )
+        synthetic_results: dict[str, dict[str, Any]] = {}
+        mirror_paths, synthetic_results = await _prepare_rsync_paths_for_source(
+            source=source,
+            mirror_paths=mirror_paths,
+            cfg=cfg,
         )
         mode = "update_paths" if mirror_paths else "update"
 
@@ -543,6 +645,7 @@ async def run_rsync_phase(
                         rel: {"status": "dry_run", "detail": "dry run (mirror skipped)", "returncode": 0}
                         for rel in mirror_paths
                     }
+                    results_payload.update(synthetic_results)
                 else:
                     results_payload = {
                         "update": {
@@ -589,6 +692,7 @@ async def run_rsync_phase(
                         for rel, result in per_path.items()
                     )
                 }
+                results_payload.update(synthetic_results)
             else:
                 res = await mirror.update(force=force)
                 results_payload = {

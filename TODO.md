@@ -8,43 +8,34 @@ Rules:
 - Remove completed items before committing.
 - Prefer concrete references (files/classes/tests) and explicit acceptance criteria.
 
-## Phase 1: Close the Rsync Handoff Gap, Then Resume Runtime Seams
+## Phase 1: Continue Runtime-Seam Decomposition After Rsync Stabilization
 
-### 1. Thread first-class rsync port configuration through runtime planning
+### 1. Extract manifest payload shaping from `sync.py`
 
-Files: `src/efloud/registry.py`, `src/efloud/sync.py`, `tests/unit/test_fanout_and_sync.py`
+Files: `src/efloud/sync.py` → `src/efloud/manifest_recorder.py`, `tests/unit/test_fanout_and_sync.py`
 
-- add `port: int | None` to `SourceDefinition`
-- pass `source.port` into `RsyncMirrorConfig` in `run_rsync_phase`
-- add a sync-phase regression test that proves a configured port survives from source definition to rsync command construction
+- move `ManifestRecorder`, `_http_freshness_record`, `_http_manifest_entry`, `_rsync_manifest_entry`, and `_rsync_freshness_record` to a dedicated module
+- keep call sites in `sync.py` thin and orchestration-focused
+- preserve existing manifest schema and compatibility behavior
 
-Acceptance: a `SourceDefinition(port=...)` reaches the constructed rsync command; existing tests pass
+Acceptance: `sync.py` no longer defines manifest-entry builders; current manifest-related tests pass unchanged
 
-### 2. Complete SourceKind value-comparison migration in `sync.py`
+### 2. Introduce a lightweight runtime seam
+
+Files: `src/efloud/runtime.py` (new), `src/efloud/sync.py`, `tests/unit/test_fanout_and_sync.py`
+
+- add a minimal `Runtime` coordinator (dataclass or small class) that owns phase sequencing
+- make `sync()` delegate to the runtime coordinator while preserving `SyncResult` semantics
+- keep current transport behavior and manifest outputs identical
+
+Acceptance: `sync(cfg)` behavior is unchanged from caller perspective; at least one test asserts runtime delegation
+
+### 3. Cache discovered rsync shard inventories
 
 Files: `src/efloud/sync.py`, `tests/unit/test_fanout_and_sync.py`
 
-- replace the remaining identity comparisons in `build_http_caches`, `run_http_phase`, and `run_rsync_phase` with value-based checks
-- consider consolidating `_kind_name` from `status.py` / `source_results.py` into a shared utility once the comparisons are aligned
-- add a dry-run regression using a foreign-but-value-compatible `SourceKind` through the `sync()` path
+- add a short-TTL local cache for `pdb_mmcif` remote bucket discovery (`rsync --list-only`)
+- key cache entries by remote root + port so discovery is reused across repeated sync invocations
+- keep fallback behavior unchanged when discovery fails
 
-Acceptance: `sync.py` no longer relies on enum identity; existing tests pass
-
-### 3. Extract `ManifestRecorder` to its own module
-
-Files: `src/efloud/sync.py` → `src/efloud/manifest_recorder.py`
-
-- move `ManifestRecorder`, `_http_freshness_record`, `_http_manifest_entry`, `_rsync_manifest_entry`, `_rsync_freshness_record` out of `sync.py`
-- keep `sync.py` focused on orchestration rather than manifest payload construction
-
-Acceptance: `sync.py` no longer defines manifest-entry construction; all existing tests pass
-
-### 4. Introduce internal `Runtime` skeleton
-
-Files: `src/efloud/runtime.py` (new)
-
-- define a `Runtime` dataclass with placeholder fields for planner and executor
-- `sync()` instantiates a `Runtime` and delegates the main orchestration call to it
-- `sync()` continues to expose the same `SyncResult` and manifest/state outputs
-
-Acceptance: `sync(cfg)` behavior unchanged; `runtime.py` exists and is reachable; at least one test exercises the delegation path
+Acceptance: repeated `pdb_mmcif` sync runs avoid redundant list-only discovery within cache TTL; tests cover hit/miss/fallback paths

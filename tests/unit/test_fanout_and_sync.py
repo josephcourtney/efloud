@@ -593,6 +593,52 @@ async def test_run_rsync_phase_skips_missing_pdb_mmcif_bucket_dirs(tmp_path: Pat
     assert per_path["detail"] == "Skipped: remote shard not present"
 
 
+@pytest.mark.asyncio
+async def test_run_rsync_phase_prefilters_missing_pdb_mmcif_buckets(tmp_path: Path, monkeypatch):
+    source = SourceDefinition(
+        "pdb_mmcif",
+        "PDB structures",
+        "rsync.rcsb.org::ftp/data/structures/divided/",
+        SourceKind.RSYNC,
+        local_subpath="pdb_structures_all",
+        mirror_mode=MirrorMode.PATHS,
+        mirror_paths=("mmCIF/0r/", "mmCIF/0s/"),
+    )
+    cfg = EngineConfig(root=tmp_path, sources=[source], runtime_progress=True)
+    paths = prepare_paths(tmp_path, cfg)
+    recorder = ManifestRecorder(root=tmp_path, cfg=cfg)
+
+    monkeypatch.setattr(sync_mod, "_discover_existing_pdb_mmcif_buckets", lambda _source: {"mmCIF/0s/"})
+    seen_messages: list[str] = []
+    monkeypatch.setattr(sync_mod, "_emit_sync_runtime_message", lambda _cfg, text: seen_messages.append(text))
+
+    async def _fake_update_paths(
+        self: object, paths: list[str], *, force: bool = False
+    ) -> dict[str, OpResult]:
+        del self, force
+        await asyncio.sleep(0)
+        assert paths == ["mmCIF/0s/"]
+        return {
+            paths[0]: OpResult(
+                status="success",
+                detail="ok",
+                returncode=0,
+                updated=["0s/example.cif.gz"],
+            )
+        }
+
+    monkeypatch.setattr(RsyncMirror, "update_paths", _fake_update_paths)
+
+    await run_rsync_phase(cfg=cfg, paths=paths, recorder=recorder)
+
+    entry = recorder.manifest["results"]["rsync"]["pdb_mmcif"]
+    assert entry["ok"] is True
+    assert entry["results"]["mmCIF/0s/"]["status"] == "success"
+    assert entry["results"]["mmCIF/0r/"]["status"] == "success"
+    assert entry["results"]["mmCIF/0r/"]["detail"] == "Skipped: remote shard not present"
+    assert any("skipping 1 missing remote buckets" in message for message in seen_messages)
+
+
 def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path):
     transport_mod = importlib.import_module("efloud.transport.rsync")
     cfg = RsyncMirrorConfig(

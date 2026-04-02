@@ -69,6 +69,7 @@ class RsyncMirrorConfig:
     name: str
     remote: str
     local: Path
+    port: int | None = None
     # If multiple mirrors share the same local root (e.g. pdb_structures_all with per-path specs),
     # they must not share the same meta file or freshness tracking will be corrupted.
     meta_path: Path | None = None
@@ -169,25 +170,29 @@ def _emit_runtime_message(cfg: RsyncMirrorConfig, text: str) -> None:
     _emit_stderr(f"{text}\n")
 
 
-def _remote_host_and_port(remote: str) -> tuple[str | None, int]:
+def _remote_host_and_port(remote: str, *, configured_port: int | None = None) -> tuple[str | None, int]:
     if "::" in remote:
-        return remote.split("::", 1)[0] or None, _RSYNC_DAEMON_PORT
+        return remote.split("::", 1)[0] or None, configured_port or _RSYNC_DAEMON_PORT
     if remote.startswith("rsync://"):
         host_part = remote.removeprefix("rsync://").split("/", 1)[0]
-        host = host_part.split(":", 1)[0] if ":" in host_part else host_part
-        return host or None, _RSYNC_DAEMON_PORT
+        if ":" in host_part:
+            host, port_text = host_part.rsplit(":", 1)
+            if port_text.isdigit():
+                return host or None, int(port_text)
+            return host_part or None, configured_port or _RSYNC_DAEMON_PORT
+        return host_part or None, configured_port or _RSYNC_DAEMON_PORT
     return None, _RSYNC_DAEMON_PORT
 
 
-def _remote_display_target(remote: str) -> str:
-    host, port = _remote_host_and_port(remote)
+def _remote_display_target(remote: str, *, configured_port: int | None = None) -> str:
+    host, port = _remote_host_and_port(remote, configured_port=configured_port)
     if host is None:
         return remote
     return f"{host}:{port}"
 
 
 def _preflight_connectivity(cfg: RsyncMirrorConfig, *, remote: str) -> None:
-    host, port = _remote_host_and_port(remote)
+    host, port = _remote_host_and_port(remote, configured_port=cfg.port)
     if host is None:
         return
     try:
@@ -244,6 +249,7 @@ def _build_rsync_cmd(cfg: RsyncMirrorConfig, *, remote: str, local: Path) -> lis
     cmd: list[str] = [c.rsync_bin]
     cmd.extend(_base_rsync_args(c))
     cmd.extend(_timeout_args(remote, timeout_seconds=t))
+    cmd.extend(_port_args(remote, port=cfg.port))
     cmd.extend(_runtime_rsync_args(cfg))
     cmd.extend(_pattern_args("--include", cfg.include))
     cmd.extend(_pattern_args("--exclude", cfg.exclude))
@@ -275,6 +281,14 @@ def _timeout_args(remote: str, *, timeout_seconds: int) -> list[str]:
     if _uses_daemon_protocol(remote):
         args.insert(0, f"--contimeout={timeout_seconds}")
     return args
+
+
+def _port_args(remote: str, *, port: int | None) -> list[str]:
+    if port is None or port <= 0:
+        return []
+    if _uses_daemon_protocol(remote) or remote.startswith("rsync://"):
+        return [f"--port={port}"]
+    return []
 
 
 def _runtime_rsync_args(cfg: RsyncMirrorConfig) -> list[str]:
@@ -377,7 +391,7 @@ def _emit_connect_heartbeat(
     phase_state: dict[str, str],
     stop_event: threading.Event,
 ) -> None:
-    target = _remote_display_target(remote)
+    target = _remote_display_target(remote, configured_port=cfg.port)
     while not stop_event.wait(_CONNECT_HEARTBEAT_SECONDS):
         elapsed = time.perf_counter() - started_at
         phase = phase_state.get("phase", "connecting")

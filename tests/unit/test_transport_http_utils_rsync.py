@@ -115,6 +115,7 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
         name="mirror",
         remote="host::module",
         local=tmp_path,
+        port=8873,
         include=("*.json",),
         exclude=("*.tmp",),
         delete=True,
@@ -125,6 +126,7 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
 
     cmd = rsync_mod._build_rsync_cmd(cfg, remote=cfg.remote, local=cfg.local)
     assert cmd[0] == "rsync"
+    assert "--port=8873" in cmd
     assert "--contimeout=1200" in cmd
     assert "--timeout=1200" in cmd
     assert "--include" in cmd
@@ -132,12 +134,17 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
     assert "--dry-run" in cmd
     assert rsync_mod._timeout_args("host::module", timeout_seconds=30) == ["--contimeout=30", "--timeout=30"]
     assert rsync_mod._timeout_args("ssh://host/path", timeout_seconds=30) == ["--timeout=30"]
+    assert rsync_mod._port_args("host::module", port=8873) == ["--port=8873"]
+    assert rsync_mod._port_args("rsync://host/module", port=8873) == ["--port=8873"]
+    assert rsync_mod._port_args("ssh://host/path", port=8873) == []
     assert rsync_mod._pattern_args("--include", ("a", "b")) == ["--include", "a", "--include", "b"]
     assert rsync_mod._parse_itemize_changes(">f+++++++++ foo.txt\ncd+++++++++ dir") == ["foo.txt", "dir"]
     assert rsync_mod._join_remote_path("rsync://host/base/", "/child") == "rsync://host/base/child"
     assert rsync_mod._looks_like_file_path("dir/file.txt") is True
     assert rsync_mod._looks_like_file_path("dir/subdir") is False
     assert rsync_mod._updated_paths(["a", 1, "b"]) == ["a", "b"]
+    assert rsync_mod._remote_host_and_port("host::module", configured_port=8873) == ("host", 8873)
+    assert rsync_mod._remote_host_and_port("rsync://host:9900/module", configured_port=8873) == ("host", 9900)
 
 
 @pytest.mark.asyncio

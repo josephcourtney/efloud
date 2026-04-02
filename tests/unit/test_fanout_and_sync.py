@@ -523,3 +523,14 @@ def test_remote_display_target_uses_rsync_daemon_module_syntax() -> None:
         transport_mod._remote_display_target("rsync.rcsb.org::ftp_data/structures/all/")
         == "rsync.rcsb.org:873"
     )
+    assert (
+        transport_mod._remote_display_target(
+            "rsync.rcsb.org::ftp_data/structures/all/",
+            configured_port=8873,
+        )
+        == "rsync.rcsb.org:8873"
+    )
+    assert (
+        transport_mod._remote_display_target("rsync://rsync.rcsb.org:9900/ftp_data/structures/all/")
+        == "rsync.rcsb.org:9900"
+    )

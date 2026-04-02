@@ -18,6 +18,7 @@ Items should be categorized under these headings:
 ## Unreleased
 
 ### Added
+- add first-class rsync port support so callers can target non-default rsync daemon ports without encoding transport details into remote strings
 
 ### Changed
 

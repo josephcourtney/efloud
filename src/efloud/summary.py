@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import operator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
-from efloud.json_types import JsonObject, JsonValue, json_mapping_or_none
+from efloud.json_types import JsonMapping, JsonValue, json_mapping_or_none
 
 if TYPE_CHECKING:
     from efloud.models import SyncResult
 
 
 def _normalize_transport_section(raw: JsonValue | dict[str, Any] | None) -> dict[str, Any]:
-    rows: list[JsonObject] = []
+    rows: list[dict[str, Any]] = []
     raw_mapping = json_mapping_or_none(raw)
     if raw_mapping is not None:
         for source_id, value in sorted(raw_mapping.items(), key=operator.itemgetter(0)):
@@ -34,13 +34,13 @@ def _normalize_transport_section(raw: JsonValue | dict[str, Any] | None) -> dict
     }
 
 
-def _is_string_list(value: JsonValue | None) -> bool:
+def _is_string_list(value: object) -> TypeGuard[list[str]]:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
-def _normalize_transport_row(source_id: str, value_mapping: JsonObject) -> JsonObject:
+def _normalize_transport_row(source_id: str, value_mapping: JsonMapping) -> dict[str, Any]:
     results_mapping = json_mapping_or_none(value_mapping.get("results"))
-    normalized = {
+    normalized: dict[str, Any] = {
         "source_id": source_id,
         "status": _transport_status(value_mapping, results_mapping),
         "ok": _transport_ok(value_mapping),
@@ -77,8 +77,8 @@ def _normalize_transport_row(source_id: str, value_mapping: JsonObject) -> JsonO
     return normalized
 
 
-def _transport_result_rows(results: JsonObject) -> list[JsonObject]:
-    rows: list[JsonObject] = []
+def _transport_result_rows(results: JsonMapping) -> list[JsonMapping]:
+    rows: list[JsonMapping] = []
     for value in results.values():
         value_mapping = json_mapping_or_none(value)
         if value_mapping is not None:
@@ -86,7 +86,7 @@ def _transport_result_rows(results: JsonObject) -> list[JsonObject]:
     return rows
 
 
-def _transport_status(value_mapping: JsonObject, results_mapping: JsonObject | None) -> str | None:
+def _transport_status(value_mapping: JsonMapping, results_mapping: JsonMapping | None) -> str | None:
     status_val = value_mapping.get("status")
     fallback = str(status_val) if isinstance(status_val, str) else None
     if results_mapping is None:
@@ -94,12 +94,12 @@ def _transport_status(value_mapping: JsonObject, results_mapping: JsonObject | N
     return _transport_result_status(results_mapping) or fallback
 
 
-def _transport_ok(value_mapping: JsonObject) -> bool | None:
+def _transport_ok(value_mapping: JsonMapping) -> bool | None:
     ok_val = value_mapping.get("ok")
     return bool(ok_val) if isinstance(ok_val, int | bool) else None
 
 
-def _transport_updated(value_mapping: JsonObject, results_mapping: JsonObject | None) -> int | None:
+def _transport_updated(value_mapping: JsonMapping, results_mapping: JsonMapping | None) -> int | None:
     if results_mapping is not None:
         return _transport_updated_count(results_mapping)
     updated = value_mapping.get("updated")
@@ -108,14 +108,14 @@ def _transport_updated(value_mapping: JsonObject, results_mapping: JsonObject | 
     return None
 
 
-def _transport_retry_count(results_mapping: JsonObject | None) -> int | None:
+def _transport_retry_count(results_mapping: JsonMapping | None) -> int | None:
     request_count = _transport_request_count(results_mapping)
     if request_count is None:
         return None
     return max(0, request_count - 1)
 
 
-def _transport_phase(results_mapping: JsonObject | None) -> str | None:
+def _transport_phase(results_mapping: JsonMapping | None) -> str | None:
     if results_mapping is None:
         return None
     for row in _transport_result_rows(results_mapping):
@@ -125,19 +125,19 @@ def _transport_phase(results_mapping: JsonObject | None) -> str | None:
     return None
 
 
-def _transport_detail(results_mapping: JsonObject | None) -> str | None:
+def _transport_detail(results_mapping: JsonMapping | None) -> str | None:
     if results_mapping is None:
         return None
     return _transport_result_detail(results_mapping)
 
 
-def _transport_exit_code(results_mapping: JsonObject | None) -> int | None:
+def _transport_exit_code(results_mapping: JsonMapping | None) -> int | None:
     if results_mapping is None:
         return None
     return _transport_result_exit_code(results_mapping)
 
 
-def _transport_result_status(results: JsonObject) -> str | None:
+def _transport_result_status(results: JsonMapping) -> str | None:
     rows = _transport_result_rows(results)
     statuses = [str(status) for row in rows if isinstance((status := row.get("status")), str)]
     if not statuses:
@@ -154,7 +154,7 @@ def _transport_result_status(results: JsonObject) -> str | None:
     return statuses[0]
 
 
-def _transport_updated_count(results: JsonObject) -> int:
+def _transport_updated_count(results: JsonMapping) -> int:
     total = 0
     for row in _transport_result_rows(results):
         updated = row.get("updated")
@@ -163,7 +163,7 @@ def _transport_updated_count(results: JsonObject) -> int:
     return total
 
 
-def _transport_result_detail(results: JsonObject) -> str | None:
+def _transport_result_detail(results: JsonMapping) -> str | None:
     for row in _transport_result_rows(results):
         detail = row.get("detail")
         if isinstance(detail, str) and detail:
@@ -171,7 +171,7 @@ def _transport_result_detail(results: JsonObject) -> str | None:
     return None
 
 
-def _transport_result_exit_code(results: JsonObject) -> int | None:
+def _transport_result_exit_code(results: JsonMapping) -> int | None:
     for row in _transport_result_rows(results):
         exit_code = row.get("returncode")
         if isinstance(exit_code, int):
@@ -179,7 +179,7 @@ def _transport_result_exit_code(results: JsonObject) -> int | None:
     return None
 
 
-def _transport_request_count(results: JsonObject | None) -> int | None:
+def _transport_request_count(results: JsonMapping | None) -> int | None:
     if results is None:
         return None
     counts = [
@@ -193,7 +193,7 @@ def _transport_request_count(results: JsonObject | None) -> int | None:
     return max(counts)
 
 
-def _transport_max_attempts(results: JsonObject | None) -> int | None:
+def _transport_max_attempts(results: JsonMapping | None) -> int | None:
     if results is None:
         return None
     counts = [
@@ -207,7 +207,7 @@ def _transport_max_attempts(results: JsonObject | None) -> int | None:
     return max(counts)
 
 
-def _transport_last_error(results: JsonObject | None) -> str | None:
+def _transport_last_error(results: JsonMapping | None) -> str | None:
     if results is None:
         return None
     for row in _transport_result_rows(results):
@@ -220,7 +220,7 @@ def _transport_last_error(results: JsonObject | None) -> str | None:
     return None
 
 
-def _transport_attempt_errors(results: JsonObject | None) -> list[str]:
+def _transport_attempt_errors(results: JsonMapping | None) -> list[str]:
     if results is None:
         return []
     errors: list[str] = []

@@ -18,9 +18,25 @@ Items should be categorized under these headings:
 ## Unreleased
 
 ### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [0.0.3] - 2026-04-01
+
+### Added
 - add first-class rsync port support so callers can target non-default rsync daemon ports without encoding transport details into remote strings
 
 ### Changed
+- add rsync connect preflight diagnostics, retry countdowns, and active-phase heartbeat output so connect stalls remain visible while a sync is running
+- record rsync retry metadata and attempt history in manifests and normalized summaries so callers can explain retry behavior in higher-level status output
 
 ### Deprecated
 
@@ -28,6 +44,8 @@ Items should be categorized under these headings:
 - remove obsolete check-command tests that still targeted the retired `efloud.app` and `efloud.cli.root` package layout
 
 ### Fixed
+- fix intermittent rsync daemon connect failures by retrying transient socket and connect errors before marking mirror operations as failed
+- fix path-scoped rsync diagnostics so the displayed target matches the actual remote subtree being synced
 - fix lint violations across sync, locator, query, status, and transport helpers by extracting smaller helper routines and cleaning import/docstring issues
 - fix pytest warning noise by installing `pytest-test-categories`, adding explicit size markers to the unit suite, and aligning pytest category enforcement settings with the current medium-sized test mix
 

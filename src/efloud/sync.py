@@ -480,9 +480,11 @@ async def run_rsync_phase(
                     rel: {
                         "status": r.status,
                         "detail": r.detail,
+                        "phase": r.phase,
                         "returncode": r.returncode,
                         "timed_out": r.timed_out,
                         "attempt_count": r.attempt_count,
+                        "max_attempts": r.max_attempts,
                         "attempt_errors": list(r.attempt_errors or []),
                         "stdout": r.stdout,
                         "stderr": r.stderr,
@@ -496,9 +498,11 @@ async def run_rsync_phase(
                     "update": {
                         "status": res.status,
                         "detail": res.detail,
+                        "phase": res.phase,
                         "returncode": res.returncode,
                         "timed_out": res.timed_out,
                         "attempt_count": res.attempt_count,
+                        "max_attempts": res.max_attempts,
                         "attempt_errors": list(res.attempt_errors or []),
                         "stdout": res.stdout,
                         "stderr": res.stderr,

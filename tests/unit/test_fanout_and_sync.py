@@ -457,12 +457,14 @@ def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path)
     result = transport_mod._run_rsync_process(cfg, cmd=["rsync"])
 
     assert result.status == "success"
+    assert result.phase == "completed"
     assert result.attempt_count == 3
+    assert result.max_attempts == 3
     assert result.attempt_errors == [
         "failed to connect to rsync.example.test: Operation timed out (60)",
         "failed to connect to rsync.example.test: Operation timed out (60)",
     ]
-    assert sleeps == [5.0, 20.0]
+    assert sleeps == [1.0] * 17
 
 
 def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_path: Path):
@@ -490,5 +492,7 @@ def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_
     result = transport_mod._run_rsync_process(cfg, cmd=["rsync"])
 
     assert result.status == "failed"
+    assert result.phase == "checking remote state"
     assert result.attempt_count == 1
+    assert result.max_attempts == 3
     assert len(attempts) == 1

@@ -83,8 +83,11 @@ def _write_manifest(root: Path, cfg: EngineConfig) -> Path:
                     "results": {
                         "update": {
                             "status": "failed",
+                            "phase": "connecting",
                             "attempt_count": 2,
+                            "max_attempts": 3,
                             "attempt_errors": ["failed to connect", "failed to connect"],
+                            "stderr": "failed to connect",
                         }
                     },
                 }
@@ -124,9 +127,13 @@ def test_build_summary_and_status_helpers(cfg: EngineConfig, tmp_path: Path):
     assert summary["http"]["core"]["ok_count"] == 1
     assert summary["rsync"]["core"]["error_count"] == 1
     assert summary["rsync"]["entries"][0]["status"] == "failed"
+    assert summary["rsync"]["entries"][0]["phase"] == "connecting"
     assert summary["rsync"]["entries"][0]["updated_count"] == 0
     assert summary["rsync"]["entries"][0]["retry_count"] == 1
     assert summary["rsync"]["entries"][0]["request_count"] == 2
+    assert summary["rsync"]["entries"][0]["max_attempts"] == 3
+    assert summary["rsync"]["entries"][0]["last_error"] == "failed to connect"
+    assert summary["rsync"]["entries"][0]["attempt_errors"] == ["failed to connect", "failed to connect"]
 
     http_status = describe_source_status(cfg.sources[0], result.manifest["results"]["http"]["http-id"])
     rsync_status = describe_source_status(cfg.sources[1], result.manifest["results"]["rsync"]["rsync-id"])

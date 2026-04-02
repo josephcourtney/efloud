@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+_TRANSIENT_RSYNC_RETURN_CODES = frozenset({10, 30, 35})
+_RETRY_COUNTDOWN_FINE_GRAIN_SECONDS = 10
 
 OpStatus = Literal["success", "skipped_fresh", "skipped_rate_limited", "failed", "timed_out"]
 
@@ -36,7 +38,9 @@ class OpResult:
     stdout: str = ""
     stderr: str = ""
     updated: list[str] | None = None
+    phase: str | None = None
     attempt_count: int = 1
+    max_attempts: int = 1
     attempt_errors: list[str] | None = None
 
     @property
@@ -155,6 +159,12 @@ def _emit_stderr(text: str) -> None:
         pass
 
 
+def _emit_runtime_message(cfg: RsyncMirrorConfig, text: str) -> None:
+    if not (cfg.progress or cfg.verbose):
+        return
+    _emit_stderr(f"{text}\n")
+
+
 def _stream_pipe(
     stream: io.BufferedReader,
     buffer: list[str],
@@ -247,6 +257,54 @@ def _parse_itemize_changes(stdout: str) -> list[str]:
     return updated
 
 
+def _result_phase(result: OpResult) -> str:
+    text = " ".join(part for part in (result.stdout, result.stderr, result.detail) if part).lower()
+    if any(
+        marker in text
+        for marker in (
+            "failed to connect",
+            "operation timed out",
+            "connection timed out",
+            "connection refused",
+            "no route to host",
+            "name or service not known",
+        )
+    ):
+        return "connecting"
+    if "receiving file list" in text:
+        return "receiving file list"
+    if any(
+        marker in text
+        for marker in ("to-check=", "xfr#", "speedup is", ">f", "<f", "cd", "created directory")
+    ):
+        return "transferring files"
+    if result.status == "success":
+        return "completed"
+    return "checking remote state"
+
+
+def _format_seconds(seconds: float) -> str:
+    return f"{max(0.0, seconds):.1f}s"
+
+
+def _emit_retry_countdown(
+    cfg: RsyncMirrorConfig,
+    *,
+    next_attempt: int,
+    max_attempts: int,
+    wait_seconds: float,
+) -> None:
+    remaining = max(1, math.ceil(wait_seconds))
+    for seconds_left in range(remaining, 0, -1):
+        if seconds_left > _RETRY_COUNTDOWN_FINE_GRAIN_SECONDS and seconds_left % 5 != 0:
+            continue
+        _emit_runtime_message(
+            cfg,
+            f"retry {next_attempt}/{max_attempts} starts in {seconds_left}s",
+        )
+        time.sleep(1.0)
+
+
 def _run_rsync_process_once(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
     proc = subprocess.Popen(  # noqa: S603
         cmd,
@@ -300,6 +358,17 @@ def _run_rsync_process_once(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResu
         stdout=out,
         stderr=err,
         updated=updated,
+        phase=_result_phase(
+            OpResult(
+                status="success" if rc == 0 else "failed",
+                returncode=rc,
+                timed_out=False,
+                stdout=out,
+                stderr=err,
+                updated=updated,
+                detail="ok" if rc == 0 else "rsync failed",
+            )
+        ),
         detail="ok" if rc == 0 else "rsync failed",
     )
 
@@ -314,7 +383,7 @@ def _result_error_summary(result: OpResult) -> str:
 def _is_transient_rsync_failure(result: OpResult) -> bool:
     if result.status not in {"failed", "timed_out"}:
         return False
-    if result.returncode in {10, 30, 35}:
+    if result.returncode in _TRANSIENT_RSYNC_RETURN_CODES:
         return True
     text = " ".join(part for part in (result.detail, result.stderr) if part).lower()
     transient_markers = (
@@ -343,10 +412,23 @@ def _run_rsync_process(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
     attempt_errors: list[str] = []
 
     for attempt in range(1, max_attempts + 1):
+        _emit_runtime_message(
+            cfg,
+            (
+                f"rsync attempt {attempt}/{max_attempts}: connecting to {cfg.remote} "
+                f"(timeout {_format_seconds(cfg.timeout_seconds)})"
+            ),
+        )
+        attempt_started = time.perf_counter()
         result = _run_rsync_process_once(cfg, cmd=cmd)
+        elapsed_seconds = time.perf_counter() - attempt_started
+        phase = result.phase or _result_phase(result)
+        error_summary = _result_error_summary(result)
         if attempt == 1 and result.status == "success":
-            return result
-        if result.status == "success":
+            _emit_runtime_message(
+                cfg,
+                f"rsync attempt {attempt}/{max_attempts}: completed in {_format_seconds(elapsed_seconds)}",
+            )
             return OpResult(
                 status=result.status,
                 detail=result.detail,
@@ -355,10 +437,40 @@ def _run_rsync_process(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
                 stdout=result.stdout,
                 stderr=result.stderr,
                 updated=result.updated,
+                phase=phase,
                 attempt_count=attempt,
+                max_attempts=max_attempts,
                 attempt_errors=list(attempt_errors),
             )
-        attempt_errors.append(_result_error_summary(result))
+        if result.status == "success":
+            _emit_runtime_message(
+                cfg,
+                (
+                    f"rsync attempt {attempt}/{max_attempts}: completed in "
+                    f"{_format_seconds(elapsed_seconds)} after retry"
+                ),
+            )
+            return OpResult(
+                status=result.status,
+                detail=result.detail,
+                returncode=result.returncode,
+                timed_out=result.timed_out,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                updated=result.updated,
+                phase=phase,
+                attempt_count=attempt,
+                max_attempts=max_attempts,
+                attempt_errors=list(attempt_errors),
+            )
+        _emit_runtime_message(
+            cfg,
+            (
+                f"rsync attempt {attempt}/{max_attempts}: failed while {phase} after "
+                f"{_format_seconds(elapsed_seconds)}: {error_summary}"
+            ),
+        )
+        attempt_errors.append(error_summary)
         if attempt >= max_attempts or not _is_transient_rsync_failure(result):
             detail = result.detail
             if attempt > 1:
@@ -371,7 +483,9 @@ def _run_rsync_process(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
                 stdout=result.stdout,
                 stderr=result.stderr,
                 updated=result.updated,
+                phase=phase,
                 attempt_count=attempt,
+                max_attempts=max_attempts,
                 attempt_errors=list(attempt_errors),
             )
         wait_seconds = _retry_wait_seconds(cfg, retry_index=attempt)
@@ -381,11 +495,22 @@ def _run_rsync_process(cfg: RsyncMirrorConfig, *, cmd: list[str]) -> OpResult:
             attempt + 1,
             max_attempts,
             wait_seconds,
-            _result_error_summary(result),
+            error_summary,
         )
-        time.sleep(wait_seconds)
+        _emit_retry_countdown(
+            cfg,
+            next_attempt=attempt + 1,
+            max_attempts=max_attempts,
+            wait_seconds=wait_seconds,
+        )
 
-    return OpResult(status="failed", detail="rsync failed", attempt_count=max_attempts)
+    return OpResult(
+        status="failed",
+        detail="rsync failed",
+        phase="checking remote state",
+        attempt_count=max_attempts,
+        max_attempts=max_attempts,
+    )
 
 
 def _join_remote_path(remote_base: str, relative_path: str) -> str:

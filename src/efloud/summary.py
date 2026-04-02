@@ -46,8 +46,12 @@ def _normalize_transport_row(source_id: str, value_mapping: JsonObject) -> JsonO
         "ok": _transport_ok(value_mapping),
         "updated_count": _transport_updated(value_mapping, results_mapping),
         "status_code": value_mapping.get("status_code"),
+        "phase": _transport_phase(results_mapping),
         "retry_count": _transport_retry_count(results_mapping),
         "request_count": _transport_request_count(results_mapping),
+        "max_attempts": _transport_max_attempts(results_mapping),
+        "last_error": _transport_last_error(results_mapping),
+        "attempt_errors": _transport_attempt_errors(results_mapping),
         "detail": _transport_detail(results_mapping),
         "exit_code": _transport_exit_code(results_mapping),
     }
@@ -60,8 +64,12 @@ def _normalize_transport_row(source_id: str, value_mapping: JsonObject) -> JsonO
             "ok",
             "updated",
             "status_code",
+            "phase",
             "retry_count",
             "request_count",
+            "max_attempts",
+            "last_error",
+            "attempt_errors",
             "detail",
             "exit_code",
         }
@@ -105,6 +113,16 @@ def _transport_retry_count(results_mapping: JsonObject | None) -> int | None:
     if request_count is None:
         return None
     return max(0, request_count - 1)
+
+
+def _transport_phase(results_mapping: JsonObject | None) -> str | None:
+    if results_mapping is None:
+        return None
+    for row in _transport_result_rows(results_mapping):
+        phase = row.get("phase")
+        if isinstance(phase, str) and phase:
+            return phase
+    return None
 
 
 def _transport_detail(results_mapping: JsonObject | None) -> str | None:
@@ -173,6 +191,44 @@ def _transport_request_count(results: JsonObject | None) -> int | None:
     if not counts:
         return None
     return max(counts)
+
+
+def _transport_max_attempts(results: JsonObject | None) -> int | None:
+    if results is None:
+        return None
+    counts = [
+        int(max_attempts)
+        for row in _transport_result_rows(results)
+        for max_attempts in [row.get("max_attempts")]
+        if isinstance(max_attempts, int | float)
+    ]
+    if not counts:
+        return None
+    return max(counts)
+
+
+def _transport_last_error(results: JsonObject | None) -> str | None:
+    if results is None:
+        return None
+    for row in _transport_result_rows(results):
+        stderr = row.get("stderr")
+        if isinstance(stderr, str) and stderr.strip():
+            return stderr.strip()
+        detail = row.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    return None
+
+
+def _transport_attempt_errors(results: JsonObject | None) -> list[str]:
+    if results is None:
+        return []
+    errors: list[str] = []
+    for row in _transport_result_rows(results):
+        attempt_errors = row.get("attempt_errors")
+        if _is_string_list(attempt_errors):
+            errors.extend(attempt_errors)
+    return errors
 
 
 def build_summary(result: SyncResult) -> dict[str, Any]:

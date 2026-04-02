@@ -532,6 +532,111 @@ def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path)
     assert any("retry 2/3 starts in 5s" in message for message in messages)
 
 
+def test_incremental_rsync_subdirs_uses_manifest_paths_for_shared_root(tmp_path: Path):
+    cfg = EngineConfig(
+        root=tmp_path,
+        sources=[
+            SourceDefinition(
+                "pdb_chemical_shifts",
+                "PDB Legacy Chemical Shifts",
+                "rsync.rcsb.org::ftp/data/structures/all/",
+                SourceKind.RSYNC,
+                local_subpath="pdb_structures_all",
+                mirror_mode=MirrorMode.PATHS,
+                mirror_paths=("nmr_chemical_shifts/",),
+            ),
+            SourceDefinition(
+                "pdb_mmcif",
+                "PDB structures",
+                "rsync.rcsb.org::ftp/data/structures/all/",
+                SourceKind.RSYNC,
+                local_subpath="pdb_structures_all",
+                mirror_mode=MirrorMode.PATHS,
+                mirror_paths=("mmcif/",),
+            ),
+        ],
+    )
+
+    manifest: dict[str, Any] = {
+        "results": {
+            "rsync": {
+                "pdb_chemical_shifts": {
+                    "ok": True,
+                    "request": {
+                        "paths": ["nmr_chemical_shifts/"],
+                    },
+                },
+                "pdb_mmcif": {
+                    "ok": True,
+                    "request": {
+                        "paths": ["mmcif/"],
+                    },
+                },
+            }
+        }
+    }
+
+    assert sync_mod._incremental_rsync_subdirs(cfg=cfg, manifest=manifest) == [
+        "pdb_structures_all/mmcif",
+        "pdb_structures_all/nmr_chemical_shifts",
+    ]
+
+
+def test_build_incremental_state_uses_touched_subdirs(monkeypatch, tmp_path: Path):
+    cfg = EngineConfig(
+        root=tmp_path,
+        sources=[
+            SourceDefinition(
+                "pdb_chemical_shifts",
+                "PDB Legacy Chemical Shifts",
+                "rsync.rcsb.org::ftp/data/structures/all/",
+                SourceKind.RSYNC,
+                local_subpath="pdb_structures_all",
+                mirror_mode=MirrorMode.PATHS,
+                mirror_paths=("nmr_chemical_shifts/",),
+            )
+        ],
+    )
+    paths = prepare_paths(tmp_path, cfg)
+    previous_state_path = tmp_path / cfg.state_filename
+    previous_state_path.write_text(
+        json.dumps({
+            "version": 1,
+            "generated_at_unix": 50.0,
+            "cache_root": str(tmp_path),
+            "mirrors_root": str(paths.mirrors.resolve()),
+            "hash_algo": "sha256",
+            "manifest_path": None,
+            "tree": {"type": "dir", "hash": "root"},
+            "sources": [],
+        }),
+        encoding="utf-8",
+    )
+    from efloud.state import MirrorState, MirrorStateNode
+
+    previous_state = MirrorState.from_dict(json.loads(previous_state_path.read_text(encoding="utf-8")))
+    assert previous_state is not None
+    captured_subdirs: list[str] = []
+
+    def fake_update_hash_tree_for_subdirs(base_tree, mirrors_root, subdirs, *, on_progress=None):
+        del mirrors_root, on_progress
+        captured_subdirs.extend(subdirs)
+        return cast("MirrorStateNode", base_tree)
+
+    monkeypatch.setattr(sync_mod, "update_hash_tree_for_subdirs", fake_update_hash_tree_for_subdirs)
+
+    state = sync_mod._build_incremental_state(
+        cfg=cfg,
+        paths=paths,
+        manifest_path=tmp_path / "log" / "x.json",
+        previous_state=previous_state,
+        touched_subdirs=["pdb_structures_all/nmr_chemical_shifts"],
+    )
+
+    assert state.sources[0].source_id == "pdb_chemical_shifts"
+    assert captured_subdirs == ["pdb_structures_all/nmr_chemical_shifts"]
+
+
 def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_path: Path):
     transport_mod = importlib.import_module("efloud.transport.rsync")
     cfg = RsyncMirrorConfig(

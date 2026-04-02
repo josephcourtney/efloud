@@ -658,6 +658,54 @@ def _mirror_source_info(cfg: EngineConfig) -> list[tuple[str, str]]:
     ]
 
 
+def _normalized_subdir(path: str) -> str:
+    return path.strip().strip("/").replace("\\", "/")
+
+
+def _manifest_request_paths(payload: object) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    request = payload.get("request")
+    request_paths = request.get("paths") if isinstance(request, dict) else None
+    if not isinstance(request_paths, list):
+        return []
+    return [rel for rel in request_paths if isinstance(rel, str)]
+
+
+def _incremental_rsync_subdirs(
+    *,
+    cfg: EngineConfig,
+    manifest: NormalizedManifest,
+) -> list[str]:
+    rsync_results = manifest.get("results", {}).get("rsync", {})
+    if not isinstance(rsync_results, dict):
+        return []
+
+    source_by_id = {source.id: source for source in cfg.sources if source.kind is SourceKind.RSYNC}
+    touched: set[str] = set()
+
+    for source_id, payload in rsync_results.items():
+        if not isinstance(source_id, str) or not isinstance(payload, dict):
+            continue
+        if payload.get("ok") is False:
+            continue
+        source = source_by_id.get(source_id)
+        if source is None or source.local_subpath is None:
+            continue
+        local_subpath = _normalized_subdir(source.local_subpath)
+        request_paths = _manifest_request_paths(payload)
+        if request_paths:
+            for rel in request_paths:
+                rel_subpath = _normalized_subdir(rel)
+                if rel_subpath:
+                    touched.add(f"{local_subpath}/{rel_subpath}")
+            continue
+        if local_subpath:
+            touched.add(local_subpath)
+
+    return sorted(touched)
+
+
 def _build_source_states(
     previous_state: MirrorState,
     tree: MirrorStateNode,
@@ -682,10 +730,15 @@ def _build_incremental_state(
     paths: SyncPaths,
     manifest_path: Path,
     previous_state: MirrorState,
+    touched_subdirs: list[str] | None = None,
     progress: Callable[[str, int, int, Path], None] | None = None,
 ) -> MirrorState:
     source_info = _mirror_source_info(cfg)
-    source_subdirs = sorted({subdir for _, subdir in source_info if subdir})
+    source_subdirs = (
+        touched_subdirs
+        if touched_subdirs is not None
+        else sorted({subdir for _, subdir in source_info if subdir})
+    )
     tree = previous_state.tree
     if source_subdirs:
         tree = update_hash_tree_for_subdirs(tree, paths.mirrors, source_subdirs, on_progress=progress)
@@ -708,6 +761,7 @@ def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: 
     source_info = _mirror_source_info(cfg)
     try:
         previous_state = load_mirror_state(state_path)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         can_reuse_tree = (
             previous_state is not None
             and Path(previous_state.mirrors_root) == paths.mirrors.resolve()
@@ -734,7 +788,7 @@ def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: 
             )
 
         if can_reuse_tree and previous_state is not None:
-            source_subdirs = sorted({subdir for _, subdir in _mirror_source_info(cfg) if subdir})
+            source_subdirs = _incremental_rsync_subdirs(cfg=cfg, manifest=manifest)
             _emit_sync_runtime_message(
                 cfg,
                 (
@@ -747,6 +801,7 @@ def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: 
                 paths=paths,
                 manifest_path=manifest_path,
                 previous_state=previous_state,
+                touched_subdirs=source_subdirs,
                 progress=emit_hash_progress,
             )
         else:

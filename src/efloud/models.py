@@ -77,6 +77,7 @@ class EngineConfig:
     prune_orphan_mirrors: bool = False
     remove_empty_dirs_after_rsync: bool = True
     dry_run: bool = False
+    runtime_progress: bool = False
 
     manifest_path: Path | None = None
 

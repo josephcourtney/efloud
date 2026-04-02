@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 from efloud.json_types import JsonMapping, JsonObject, JsonValue, json_mapping_or_none
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -82,23 +82,35 @@ def _hash_directory(children: list[tuple[str, MirrorStateNode]]) -> str:
     return hasher.hexdigest()
 
 
-def build_hash_tree(path: Path) -> MirrorStateNode | None:
+def build_hash_tree(
+    path: Path,
+    *,
+    on_progress: Callable[[int, int, Path], None] | None = None,
+    _progress_state: dict[str, int] | None = None,
+) -> MirrorStateNode | None:
+    progress_state = _progress_state if _progress_state is not None else {"files": 0, "dirs": 0}
     if not path.exists():
         return None
     if path.is_file():
         file_hash = _hash_file(path)
         if file_hash is None:
             return None
+        progress_state["files"] = int(progress_state["files"]) + 1
+        if on_progress is not None:
+            on_progress(int(progress_state["files"]), int(progress_state["dirs"]), path)
         return MirrorStateNode(path_type="file", hash=file_hash)
     if path.is_dir():
         entries: list[tuple[str, MirrorStateNode]] = []
         sorted_paths = sorted(path.iterdir(), key=lambda child: child.name)
         for child in sorted_paths:
-            node = build_hash_tree(child)
+            node = build_hash_tree(child, on_progress=on_progress, _progress_state=progress_state)
             if node is not None:
                 entries.append((child.name, node))
         directory_hash = _hash_directory(entries)
         children = dict(entries) if entries else None
+        progress_state["dirs"] = int(progress_state["dirs"]) + 1
+        if on_progress is not None:
+            on_progress(int(progress_state["files"]), int(progress_state["dirs"]), path)
         return MirrorStateNode(path_type="dir", hash=directory_hash, children=children)
     return None
 
@@ -144,6 +156,8 @@ def update_hash_tree_for_subdirs(
     base_tree: MirrorStateNode,
     mirrors_root: Path,
     subdirs: Sequence[str],
+    *,
+    on_progress: Callable[[str, int, int, Path], None] | None = None,
 ) -> MirrorStateNode:
     """
     Re-hash only the requested mirror subdirectories and splice them into an existing tree.
@@ -153,7 +167,20 @@ def update_hash_tree_for_subdirs(
     normalized = sorted({subdir.strip("/").replace("\\", "/") for subdir in subdirs if subdir.strip("/")})
     updated = base_tree
     for rel in normalized:
-        replacement = build_hash_tree(mirrors_root / rel)
+        progress_state = {"files": 0, "dirs": 0}
+        replacement = build_hash_tree(
+            mirrors_root / rel,
+            on_progress=(
+                (
+                    lambda files, dirs, current_path, rel_path=rel: on_progress(
+                        rel_path, files, dirs, current_path
+                    )
+                )
+                if on_progress is not None
+                else None
+            ),
+            _progress_state=progress_state,
+        )
         updated = _replace_subtree(updated, parts=tuple(rel.split("/")), replacement=replacement)
     return updated
 
@@ -327,8 +354,10 @@ class MirrorState:
         mirrors_root: Path,
         manifest_path: Path | None,
         sources_info: Sequence[tuple[str | None, str]] | None = None,
+        *,
+        on_progress: Callable[[int, int, Path], None] | None = None,
     ) -> MirrorState:
-        tree = build_hash_tree(mirrors_root)
+        tree = build_hash_tree(mirrors_root, on_progress=on_progress)
         if tree is None:
             msg = f"failed to build hash tree for mirror root {mirrors_root}"
             raise RuntimeError(msg)

@@ -71,6 +71,23 @@ def test_update_hash_tree_for_subdirs_replaces_only_requested_subtrees(tmp_path:
     assert node_at_path(updated, "b.txt") == node_at_path(base, "b.txt")
 
 
+def test_build_hash_tree_reports_progress(tmp_path: Path):
+    _write_tree(tmp_path)
+    events: list[tuple[int, int, str]] = []
+
+    def on_progress(files: int, dirs: int, current_path: Path) -> None:
+        events.append((files, dirs, current_path.name))
+
+    tree = build_hash_tree(tmp_path, on_progress=on_progress)
+
+    assert tree is not None
+    assert events
+    assert any(name == "a.txt" for _, _, name in events)
+    assert any(name == "group" for _, _, name in events)
+    assert events[-1][0] == 2
+    assert events[-1][1] >= 2
+
+
 def test_mirror_state_build_to_from_dict_and_load(tmp_path: Path, monkeypatch):
     mirrors = tmp_path / "mirrors"
     _write_tree(mirrors)

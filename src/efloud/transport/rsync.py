@@ -11,8 +11,9 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+import click
 from smartratelimit import RateLimiter
 
 from efloud.fs import atomic_write_text
@@ -21,9 +22,11 @@ from efloud.json_types import JsonObject, JsonValue, json_object_or_none
 if TYPE_CHECKING:
     import io
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
 _TRANSIENT_RSYNC_RETURN_CODES = frozenset({10, 30, 35})
 _RETRY_COUNTDOWN_FINE_GRAIN_SECONDS = 10
 _RSYNC_DAEMON_PORT = 873
@@ -168,6 +171,65 @@ def _emit_runtime_message(cfg: RsyncMirrorConfig, text: str) -> None:
     if not (cfg.progress or cfg.verbose):
         return
     _emit_stderr(f"{text}\n")
+
+
+@dataclass
+class _ProgressBarState:
+    current_phase: str = "connecting"
+    last_position: int = 0
+
+
+class _ProgressBarLike(Protocol):
+    label: str
+
+    def update(self, n_steps: int) -> None: ...
+
+
+def _connect_progress_label(
+    *,
+    remote: str,
+    attempt: int,
+    max_attempts: int,
+    cfg: RsyncMirrorConfig,
+    progress_bar: _ProgressBarState,
+) -> str:
+    target = _remote_display_target(remote, configured_port=cfg.port)
+    return f"rsync attempt {attempt}/{max_attempts}: {progress_bar.current_phase} {target}"
+
+
+def _connect_progress_context(
+    cfg: RsyncMirrorConfig,
+    *,
+    remote: str,
+    attempt: int,
+    max_attempts: int,
+    progress_bar: _ProgressBarState,
+) -> AbstractContextManager[_ProgressBarLike | None]:
+    if not (cfg.progress or cfg.verbose):
+        return contextlib.nullcontext(None)
+    return click.progressbar(
+        length=max(1, math.ceil(cfg.timeout_seconds)),
+        label=_connect_progress_label(
+            remote=remote,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            cfg=cfg,
+            progress_bar=progress_bar,
+        ),
+        file=sys.stderr,
+        show_eta=False,
+        show_percent=False,
+        show_pos=True,
+        update_min_steps=1,
+    )
+
+
+def _progress_updater(progress_bar: _ProgressBarLike) -> Callable[[int, str], None]:
+    def _update_progress(delta: int, label: str) -> None:
+        progress_bar.label = label
+        progress_bar.update(delta)
+
+    return _update_progress
 
 
 def _remote_host_and_port(remote: str, *, configured_port: int | None = None) -> tuple[str | None, int]:
@@ -390,21 +452,38 @@ def _emit_connect_heartbeat(
     started_at: float,
     phase_state: dict[str, str],
     stop_event: threading.Event,
+    progress_bar: _ProgressBarState,
+    progress_update: Callable[[int, str], None] | None = None,
 ) -> None:
-    target = _remote_display_target(remote, configured_port=cfg.port)
     while not stop_event.wait(_CONNECT_HEARTBEAT_SECONDS):
         elapsed = time.perf_counter() - started_at
         phase = phase_state.get("phase", "connecting")
-        remaining = max(0.0, float(cfg.timeout_seconds) - elapsed)
-        _emit_runtime_message(
-            cfg,
-            (
-                f"rsync attempt {attempt}/{max_attempts}: {phase} {target} "
-                f"elapsed {_format_seconds(elapsed)} "
-                f"(configured timeout {_format_seconds(cfg.timeout_seconds)}, "
-                f"{_format_seconds(remaining)} remaining)"
-            ),
-        )
+        progress_bar.current_phase = phase
+        position = min(max(0, math.floor(elapsed)), max(1, math.ceil(cfg.timeout_seconds)))
+        delta = max(0, position - progress_bar.last_position)
+        if progress_update is not None and delta > 0:
+            progress_update(
+                delta,
+                _connect_progress_label(
+                    remote=remote,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    cfg=cfg,
+                    progress_bar=progress_bar,
+                ),
+            )
+            progress_bar.last_position = position
+        elif progress_update is None:
+            _emit_runtime_message(
+                cfg,
+                (
+                    f"rsync attempt {attempt}/{max_attempts}: {phase} "
+                    f"{_remote_display_target(remote, configured_port=cfg.port)} "
+                    f"elapsed {_format_seconds(elapsed)} "
+                    f"(configured timeout {_format_seconds(cfg.timeout_seconds)}, "
+                    f"{_format_seconds(max(0.0, float(cfg.timeout_seconds) - elapsed))} remaining)"
+                ),
+            )
 
 
 def _run_rsync_process_once(
@@ -428,7 +507,7 @@ def _run_rsync_process_once(
     stderr_buffer: list[str] = []
     phase_state = {"phase": "connecting"}
     stop_event = threading.Event()
-    stderr_emitter = _emit_stderr if cfg.progress or cfg.verbose else None
+    progress_bar_state = _ProgressBarState()
 
     stdout_thread = threading.Thread(
         target=_stream_pipe,
@@ -440,37 +519,50 @@ def _run_rsync_process_once(
         args=(
             proc.stderr,
             stderr_buffer,
-            stderr_emitter,
+            _emit_stderr if cfg.progress or cfg.verbose else None,
             lambda text: _observe_runtime_phase(text, phase_state),
         ),
         daemon=True,
     )
-    heartbeat_thread = threading.Thread(
-        target=_emit_connect_heartbeat,
-        args=(cfg,),
-        kwargs={
-            "remote": remote,
-            "attempt": attempt,
-            "max_attempts": max_attempts,
-            "started_at": time.perf_counter(),
-            "phase_state": phase_state,
-            "stop_event": stop_event,
-        },
-        daemon=True,
-    )
-    stdout_thread.start()
-    stderr_thread.start()
-    heartbeat_thread.start()
+    started_at = time.perf_counter()
+    progress_update: Callable[[int, str], None] | None = None
+    with _connect_progress_context(
+        cfg,
+        remote=remote,
+        attempt=attempt,
+        max_attempts=max_attempts,
+        progress_bar=progress_bar_state,
+    ) as progress_bar:
+        if progress_bar is not None:
+            progress_update = _progress_updater(progress_bar)
+        heartbeat_thread = threading.Thread(
+            target=_emit_connect_heartbeat,
+            args=(cfg,),
+            kwargs={
+                "remote": remote,
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "started_at": started_at,
+                "phase_state": phase_state,
+                "stop_event": stop_event,
+                "progress_bar": progress_bar_state,
+                "progress_update": progress_update,
+            },
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+        heartbeat_thread.start()
 
-    try:
-        # Do not wrap rsync in a hard timeout that kills the process; rely on rsync's own
-        # timeouts (e.g., --timeout/--contimeout) and user-initiated cancellation.
-        proc.wait()
-    finally:
-        stop_event.set()
-        stdout_thread.join()
-        stderr_thread.join()
-        heartbeat_thread.join()
+        try:
+            # Do not wrap rsync in a hard timeout that kills the process; rely on rsync's own
+            # timeouts (e.g., --timeout/--contimeout) and user-initiated cancellation.
+            proc.wait()
+        finally:
+            stop_event.set()
+            stdout_thread.join()
+            stderr_thread.join()
+            heartbeat_thread.join()
 
     rc = proc.returncode if proc.returncode is not None else -1
     out = "".join(stdout_buffer)

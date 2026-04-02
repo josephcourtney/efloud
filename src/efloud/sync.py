@@ -3,10 +3,11 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from anyio import Path as AnyioPath
@@ -42,7 +43,12 @@ from efloud.transport.http_utils import (
 )
 from efloud.transport.rsync import RsyncCommandConfig, RsyncMirror, RsyncMirrorConfig, read_rsync_mirror_meta
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 logger = logging.getLogger(__name__)
+_HASH_PROGRESS_MIN_SECONDS = 2.0
+_HASH_PROGRESS_MIN_FILES = 10_000
 
 
 class ManifestRecorder:
@@ -254,6 +260,14 @@ def _sqlite_url(path: Path) -> str:
     return f"sqlite:///{path.resolve().as_posix()}"
 
 
+def _emit_sync_runtime_message(cfg: EngineConfig, text: str) -> None:
+    if not cfg.runtime_progress:
+        return
+    with contextlib.suppress(OSError):
+        sys.stderr.write(f"{text}\n")
+        sys.stderr.flush()
+
+
 @dataclass(frozen=True)
 class SyncPaths:
     root: Path
@@ -423,7 +437,7 @@ async def run_rsync_phase(
             rate_limit_storage=_sqlite_url(paths.rate / "mirror_rate_limits.sqlite"),
             rate_limit_scope=None,
             raise_on_rate_limit=False,
-            progress=True,
+            progress=cfg.runtime_progress,
             dry_run=cfg.dry_run,
             cmd=RsyncCommandConfig(
                 rsync_bin="rsync",
@@ -668,12 +682,13 @@ def _build_incremental_state(
     paths: SyncPaths,
     manifest_path: Path,
     previous_state: MirrorState,
+    progress: Callable[[str, int, int, Path], None] | None = None,
 ) -> MirrorState:
     source_info = _mirror_source_info(cfg)
     source_subdirs = sorted({subdir for _, subdir in source_info if subdir})
     tree = previous_state.tree
     if source_subdirs:
-        tree = update_hash_tree_for_subdirs(tree, paths.mirrors, source_subdirs)
+        tree = update_hash_tree_for_subdirs(tree, paths.mirrors, source_subdirs, on_progress=progress)
     return MirrorState(
         version=1,
         generated_at_unix=time.time(),
@@ -698,21 +713,58 @@ def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: 
             and Path(previous_state.mirrors_root) == paths.mirrors.resolve()
             and previous_state.hash_algo == HASH_ALGORITHM
         )
+        progress_state: dict[str, float | int | str] = {
+            "last_emit_at": 0.0,
+            "last_emit_files": 0,
+        }
+
+        def emit_hash_progress(rel: str, files: int, dirs: int, current_path: Path) -> None:
+            if not cfg.runtime_progress:
+                return
+            now = time.perf_counter()
+            if (now - float(progress_state["last_emit_at"])) < _HASH_PROGRESS_MIN_SECONDS and (
+                files - int(progress_state["last_emit_files"])
+            ) < _HASH_PROGRESS_MIN_FILES:
+                return
+            progress_state["last_emit_at"] = now
+            progress_state["last_emit_files"] = files
+            _emit_sync_runtime_message(
+                cfg,
+                (f"mirror-state: hashing {rel} scanned {files} files ({dirs} dirs); latest {current_path}"),
+            )
+
         if can_reuse_tree and previous_state is not None:
+            source_subdirs = sorted({subdir for _, subdir in _mirror_source_info(cfg) if subdir})
+            _emit_sync_runtime_message(
+                cfg,
+                (
+                    f"mirror-state: updating {len(source_subdirs)} touched "
+                    f"subtree{'s' if len(source_subdirs) != 1 else ''}..."
+                ),
+            )
             state = _build_incremental_state(
                 cfg=cfg,
                 paths=paths,
                 manifest_path=manifest_path,
                 previous_state=previous_state,
+                progress=emit_hash_progress,
             )
         else:
+            _emit_sync_runtime_message(cfg, "mirror-state: rebuilding full mirror hash tree...")
             state = MirrorState.build(
                 cache_root=paths.root,
                 mirrors_root=paths.mirrors,
                 manifest_path=manifest_path,
                 sources_info=source_info,
+                on_progress=lambda files, dirs, current_path: emit_hash_progress(
+                    ".",
+                    files,
+                    dirs,
+                    current_path,
+                ),
             )
         atomic_write_text(state_path, safe_json_dump(state.to_dict()))
+        _emit_sync_runtime_message(cfg, f"mirror-state: wrote {state_path}")
     except (OSError, RuntimeError, TypeError, ValueError):
         logger.warning("failed to write mirror state file %s", state_path)
 
@@ -751,6 +803,7 @@ async def sync(cfg: EngineConfig) -> SyncResult:
         manifest_path = await _write_manifest_outputs(cfg=cfg, paths=paths, recorder=recorder)
         _update_canonical_manifest(cfg=cfg, paths=paths, recorder=recorder)
         if manifest_path is not None:
+            _emit_sync_runtime_message(cfg, "mirror-state: updating manifest-backed hash state...")
             _update_mirror_state(cfg=cfg, paths=paths, manifest_path=manifest_path)
 
     ok = len(recorder.manifest["errors"]) == 0

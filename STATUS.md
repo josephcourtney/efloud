@@ -29,6 +29,7 @@ Recent:
 - `pdb_mmcif` now uses path-sharded sync with remote bucket discovery (`--list-only`) and prefiltering of non-existent remote buckets
 - missing remote mmCIF bucket directories are normalized to skipped shard results instead of source-fatal errors
 - normal runtime output now uses a compact aggregate shard-status line for `pdb_mmcif`; detailed per-shard transport chatter remains available in debug logging mode
+- rsync subprocess creation now keeps the default process session so Ctrl-C in the parent terminal can interrupt active transfers cleanly
 
 Known gaps:
 - `sync.py` still combines orchestration, path-preparation policy, and manifest shaping in one module
@@ -37,6 +38,7 @@ Known gaps:
 - `_kind_name` helper remains duplicated in `status.py` and `source_results.py`
 - `ManifestRecorder` in `sync.py` is not behind a formal interface
 - No protocol adapters; transport dispatch is inline branching in `sync.py`
+- interruption handling is now signal-propagation based and does not yet classify partial-shard cancellation outcomes in manifest summaries
 
 ## Continuity Notes
 

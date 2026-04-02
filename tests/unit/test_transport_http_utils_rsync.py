@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 from typing import TYPE_CHECKING, Any, cast
 
@@ -400,3 +401,40 @@ def test_rsync_meta_round_trip_and_invalid_read(tmp_path: Path):
 
     meta_path.write_text("{", encoding="utf-8")
     assert read_rsync_mirror_meta(tmp_path) is None
+
+
+def test_rsync_process_once_does_not_set_start_new_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    captured_kwargs: dict[str, object] = {}
+
+    class FakeProc:
+        def __init__(self, _cmd: list[str], **kwargs: object):
+            captured_kwargs.update(kwargs)
+            self.stdout = io.BytesIO(b"")
+            self.stderr = io.BytesIO(b"")
+            self.returncode = 0
+
+        def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+    monkeypatch.setattr(rsync_mod.subprocess, "Popen", FakeProc)
+
+    cfg = RsyncMirrorConfig(
+        name="mirror",
+        remote="host::module",
+        local=tmp_path / "mirror",
+        progress=False,
+        verbose=False,
+    )
+
+    result = rsync_mod._run_rsync_process_once(
+        cfg,
+        cmd=["rsync", "host::module", str(tmp_path / "mirror")],
+        remote="host::module",
+        local=tmp_path / "mirror",
+        attempt=1,
+        max_attempts=3,
+    )
+
+    assert result.status == "success"
+    assert "start_new_session" not in captured_kwargs

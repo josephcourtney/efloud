@@ -720,7 +720,6 @@ def _run_rsync_process_once(
 ) -> OpResult:
     proc = subprocess.Popen(  # noqa: S603
         cmd,
-        start_new_session=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=0,

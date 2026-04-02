@@ -29,6 +29,23 @@ Items should be categorized under these headings:
 
 ### Security
 
+## [0.0.7] - 2026-04-02
+
+### Added
+
+### Changed
+- change rsync subprocess spawning to avoid `start_new_session=True` so terminal interrupts can propagate to the active transfer process
+
+### Deprecated
+
+### Removed
+
+### Fixed
+- fix `bvp sync` Ctrl-C interruption behavior by allowing SIGINT delivery to child rsync processes instead of isolating them in a separate session
+- add regression coverage that asserts rsync process launch arguments do not enable `start_new_session`
+
+### Security
+
 ## [0.0.6] - 2026-04-02
 
 ### Added

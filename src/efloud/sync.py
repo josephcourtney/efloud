@@ -417,6 +417,7 @@ async def run_rsync_phase(
             meta_path=(local / ".mirror_meta.json"),
             delete=False,
             timeout_seconds=1200.0,
+            port=source.port,
             include=source.include or (),
             exclude=source.exclude or ("**/.DS_Store",),
             rate_limit_storage=_sqlite_url(paths.rate / "mirror_rate_limits.sqlite"),

@@ -325,6 +325,59 @@ async def test_run_phases_with_fake_transports(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_rsync_phase_passes_source_port_to_rsync_config(tmp_path: Path, monkeypatch):
+    source = SourceDefinition(
+        "rsync-id",
+        "Mirror",
+        "rsync.example.test::module",
+        SourceKind.RSYNC,
+        local_subpath="mirror/source",
+        mirror_mode=MirrorMode.PATHS,
+        mirror_paths=("subset",),
+        port=33444,
+    )
+    cfg = EngineConfig(root=tmp_path, sources=[source])
+    paths = prepare_paths(tmp_path, cfg)
+    recorder = ManifestRecorder(root=tmp_path, cfg=cfg)
+
+    captured_ports: list[int | None] = []
+
+    class FakeMirror:
+        def __init__(self, cfg):
+            captured_ports.append(cfg.port)
+            self.cfg = cfg
+
+        async def update(self, *, force=False):
+            del force
+            assert self.cfg.port == 33444
+            await asyncio.sleep(0)
+            return OpResult(status="success", detail="ok", returncode=0, updated=["root.txt"])
+
+        async def update_paths(self, paths, *, force=False):
+            del force
+            assert self.cfg.port == 33444
+            await asyncio.sleep(0)
+            return {
+                paths[0]: OpResult(
+                    status="success",
+                    detail="ok",
+                    returncode=0,
+                    updated=["subset/file.txt"],
+                )
+            }
+
+        async def prune_local_empty_dirs(self):
+            assert self.cfg.port == 33444
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(sync_mod, "RsyncMirror", FakeMirror)
+
+    await run_rsync_phase(cfg=cfg, paths=paths, recorder=recorder)
+
+    assert captured_ports == [33444]
+
+
+@pytest.mark.asyncio
 async def test_sync_orchestration_with_stubbed_phases(tmp_path: Path, monkeypatch):
     sources = [
         SourceDefinition("http-id", "HTTP", "https://example.test/data.bin", SourceKind.HTTP),

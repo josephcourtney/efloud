@@ -31,6 +31,7 @@ class SourceDefinition:
     local_subpath: str | None = None
     mirror_mode: MirrorMode | None = None
     mirror_paths: tuple[str, ...] | None = None
+    port: int | None = None
 
     include: tuple[str, ...] | None = None
     exclude: tuple[str, ...] | None = None

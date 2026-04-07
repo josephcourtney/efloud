@@ -45,6 +45,26 @@ DIFF_COVER          := ROOT_DIR + "/.venv/bin/diff-cover"
 IMPORTLINTER        := ROOT_DIR + "/.venv/bin/lint-imports"
 IMPORTLINTER_CONFIG := ROOT_DIR + "/import-linter.toml"
 
+
+
+# ======================================================================
+# pytest options
+# ======================================================================
+PYTEST_DEV_WORKERS := env("PYTEST_DEV_WORKERS", "auto")
+PYTEST_DEV_DIST    := env("PYTEST_DEV_DIST", "loadscope")
+
+# Shared option bundles
+PYTEST_QUIET_OPTS    := "-q --tb=short -r fE --show-capture=no -o log_cli=false"
+PYTEST_DEBUG_OPTS    := "-vv --tb=long -l --show-capture=all -o log_cli=true"
+PYTEST_LOG_OPTS      := "-q --tb=short -r fE --show-capture=no -o log_cli=true --log-cli-level=INFO"
+PYTEST_FAST_EXPR     := "-m 'not slow'"
+PYTEST_FAILING_OPTS  := "--lf"
+
+PYTEST_DEV_THRESHOLD := env("PYTEST_DEV_THRESHOLD", "80")
+PYTEST_DEV_BASE_OPTS := "--testmon --no-cov"
+PYTEST_DEV_XDIST_OPTS := "-n '" + PYTEST_DEV_WORKERS + "' --dist '" + PYTEST_DEV_DIST + "'"
+
+
 # ======================================================================
 # Meta / Defaults
 # ======================================================================
@@ -100,7 +120,7 @@ _cache_dirs:
   @mkdir -p {{REPO_CACHE_DIR}} {{UV_CACHE_DIR}} {{RUFF_CACHE_DIR}}
 
 # ----------------------------------------------------------------------
-# Quiet runners (brief on success, verbose on failure)
+# Runner (brief on success, verbose on failure)
 # ----------------------------------------------------------------------
 
 _run NAME CMD:
@@ -115,6 +135,7 @@ _run NAME CMD:
       exit $status; \
     fi' -- "{{NAME}}" {{quote(CMD)}}
 
+# "soft" runner: brief on success, verbose on failure, does not crash if a recipe returns non-zero
 _run_soft NAME CMD:
   @bash -euo pipefail -c '\
     name="$1"; cmd="$2"; \
@@ -134,58 +155,62 @@ _run_soft NAME CMD:
 # Bootstrap
 # ======================================================================
 
-# Bootstrap: refresh .venv via `uv sync`
+# refresh .venv via `uv sync`
 setup:
   @just _log_start setup
   @just _cache_dirs
-  {{UV}} sync
+  @bash -euo pipefail -c '\
+    {{UV}} sync; \
+  '
   @just _log_end setup
 
 
 # ======================================================================
-# Code quality: lint / format / type-check
+# lint / format / type-check
 # ======================================================================
 
-# Code Quality: Lint with `ruff check` and auto-fix where possible
+# Lint with `ruff check` and auto-fix where possible; use --no-fix to check only.
 [group('code quality')]
-lint:
+[arg("no_fix", long, value="true")]
+lint no_fix="false":
   @just _log_start lint
   @just _cache_dirs
-  {{RUFF}} check --cache-dir {{RUFF_CACHE_DIR}} --fix {{PY_SRC}} {{PY_TESTPATH}} 
+  @bash -euo pipefail -c '\
+    args=("{{RUFF}}" check --cache-dir "{{RUFF_CACHE_DIR}}"); \
+    if [ "{{no_fix}}" = "true" ]; then \
+      args+=(--no-fix); \
+    else \
+      args+=(--fix); \
+    fi; \
+    args+=({{PY_SRC}} {{PY_TESTPATH}}); \
+    "${args[@]}" \
+  '
   @just _log_end lint
 
-# Code Quality: Check for linting violations with `ruff check` without modifying files
-[group('code quality')]
-lint-no-fix:
-  @just _log_start lint-no-fix
-  @just _cache_dirs
-  {{RUFF}} check --cache-dir {{RUFF_CACHE_DIR}} --no-fix {{PY_SRC}} {{PY_TESTPATH}}
-  @just _log_end lint-no-fix
-
-# Code Quality: Lint import architecture (Import Linter)
+# Lint import architecture (Import Linter)
 [group('code quality')]
 lint-imports:
   @just _log_start lint-imports
   @bash -euo pipefail -c 'if [ ! -x {{IMPORTLINTER}} ]; then echo "[lint-imports] ERROR: lint-imports not found ({{IMPORTLINTER}}); install import-linter dev dep and run '\''just setup'\''"; exit 1; fi; set +e; output="$({{IMPORTLINTER}} --verbose --config {{IMPORTLINTER_CONFIG}} 2>&1)"; status=$?; set -e; if [ "$status" -ne 0 ]; then echo "[lint-imports] FAILED"; echo; echo "$output"; exit "$status"; else echo "[lint-imports] no import-linter contract violations detected."; fi'
   @just _log_end lint-imports
 
-# Code Quality: Format with `ruff format` and auto-fix where possible
+# Format with `ruff format` and auto-fix where possible; use --check to verify formatting only.
 [group('code quality')]
-format:
+[arg("check", long, value="true")]
+format check="false":
   @just _log_start format
   @just _cache_dirs
-  {{RUFF}} format --cache-dir {{RUFF_CACHE_DIR}} {{PY_SRC}} {{PY_TESTPATH}} 
+  @bash -euo pipefail -c '\
+    args=("{{RUFF}}" format --cache-dir "{{RUFF_CACHE_DIR}}"); \
+    if [ "{{check}}" = "true" ]; then \
+      args+=(--check); \
+    fi; \
+    args+=({{PY_SRC}} {{PY_TESTPATH}}); \
+    "${args[@]}" \
+  '
   @just _log_end format
 
-# Code Quality: Check for formatting violations with `ruff format` without modifying files
-[group('code quality')]
-format-no-fix:
-  @just _log_start format-no-fix
-  @just _cache_dirs
-  {{RUFF}} format --cache-dir {{RUFF_CACHE_DIR}} --check {{PY_SRC}} {{PY_TESTPATH}}
-  @just _log_end format-no-fix
-
-# Code Quality: Typecheck with `ty` (if available)
+# Typecheck with `ty`
 [group('code quality')]
 typecheck:
   @just _log_start typecheck
@@ -202,40 +227,42 @@ typecheck:
   '
   @just _log_end typecheck
 
-# Compatibility alias for callers that use `typechecking`
-[group('code quality')]
-typechecking:
-  @just typecheck
-
-# Code Quality: dead-code scan
+# dead-code scan
 [group('code quality')]
 dead-code:
   @just _log_start dead-code
-  {{VULTURE}} {{PY_SRC}} {{PY_TESTPATH}} 
+  {{VULTURE}} --min-confidence 61 {{PY_SRC}} {{PY_TESTPATH}} 
   @just _log_end dead-code
 
-# Code Quality: complexity report
+# Generate complexity report; use --raw for raw metrics or --strict to fail above threshold.
 [group('code quality')]
-complexity:
+[arg("raw", long, value="true")]
+[arg("strict", long, value="true")]
+complexity raw="false" strict="false" MIN_COMPLEXITY="11":
   @just _log_start complexity
-  {{RADON}} cc -s -a {{PY_SRC}}
+  @bash -euo pipefail -c '\
+    if [ "{{raw}}" = "true" ] && [ "{{strict}}" = "true" ]; then \
+      echo "[complexity] ERROR: choose at most one of --raw or --strict" >&2; \
+      exit 2; \
+    fi; \
+    if [ "{{raw}}" = "true" ]; then \
+      "{{RADON}}" raw {{PY_SRC}}; \
+    elif [ "{{strict}}" = "true" ]; then \
+      echo "[complexity] Failing if any block has cyclomatic complexity >= {{MIN_COMPLEXITY}}"; \
+      output="$("{{RADON}}" cc -s -n {{MIN_COMPLEXITY}} {{PY_SRC}} || true)"; \
+      if [ -n "$output" ]; then \
+        echo "[complexity] Found blocks with complexity >= {{MIN_COMPLEXITY}}:"; \
+        echo "$output"; \
+        exit 1; \
+      fi; \
+      echo "[complexity] All blocks are below complexity {{MIN_COMPLEXITY}}."; \
+    else \
+      "{{RADON}}" cc -s -a {{PY_SRC}}; \
+    fi \
+  '
   @just _log_end complexity
 
-# Code Quality: raw metrics (optional)
-[group('code quality')]
-complexity-raw:
-  @just _log_start complexity-raw
-  {{RADON}} raw {{PY_SRC}}
-  @just _log_end complexity-raw
-
-# Code Quality: strict complexity check (fail on high-complexity blocks)
-[group('code quality')]
-complexity-strict MIN_COMPLEXITY="11":
-  @just _log_start complexity-strict
-  @bash -euo pipefail -c 'echo "[complexity-strict] Failing if any block has cyclomatic complexity >= ${MIN_COMPLEXITY}"; output="$({{RADON}} cc -s -n {{MIN_COMPLEXITY}} {{PY_SRC}} || true)"; if [ -n "$output" ]; then echo "[complexity-strict] Found blocks with complexity >= ${MIN_COMPLEXITY}:"; echo "$output"; exit 1; fi; echo "[complexity-strict] All blocks are below complexity ${MIN_COMPLEXITY}."'
-  @just _log_end complexity-strict
-
-# Code Quality: duplication detection
+# duplication detection
 [group('code quality')]
 dup:
   @just _log_start dup
@@ -247,14 +274,14 @@ dup:
 # Security / supply chain
 # ======================================================================
 
-# Security: Secret scan with trufflehog (report-only; does not fail if tool missing)
+# Secret scan with trufflehog (report-only; does not fail if tool missing)
 [group('security')]
 sec-secrets:
   @just _log_start sec-secrets
   @bash -euo pipefail -c 'if command -v trufflehog >/dev/null 2>&1; then tmp_file=$(mktemp); printf ".venv\nbuild\ndist\n" > "$tmp_file"; trufflehog filesystem . --exclude-paths "$tmp_file"; rm -f "$tmp_file"; else echo "[sec-secrets] skipping: trufflehog not found on PATH"; fi'
   @just _log_end sec-secrets
 
-# Security: Dependency scan with pip-audit
+# Dependency scan with pip-audit
 [group('security')]
 sec-deps:
   @just _log_start sec-deps
@@ -266,61 +293,163 @@ sec-deps:
 # Testing
 # ======================================================================
 
-
-_test-strict:
-  {{PYTEST}} "{{ROOT_DIR}}/tests"
-
-# Testing: Run tests and fail if any test fails
+# Run tests
 [group('testing')]
-test-strict *parts:
-  @just _log_start test-strict
-  @just _test-strict {{parts}}
-  @just _log_end test-strict
+[arg("strict", long, value="true")]
+[arg("fast",   long, value="true")]
+[arg("failing",   long, value="true")]
+[arg("dev",    long, value="true")]
+[arg("quiet",  long, value="quiet")]
+[arg("logs",   long, value="logs")]
+[arg("debug",  long, value="debug")]
+[doc("""
+Run test suite
+  *selection  which tests to run. can be any of the package suffixes ('cli, cs, ...') or omitted to run all test suites.
+  --strict    stop just execution if there are test failures
+  --fast      skip tests marked slow
+  --failing   only run tests that failed last time it ran
+  --dev       enable xdist + testmon for faster iteration
+  --quiet     produce minimal output
+  --logs      show live logs with otherwise compact output
+  --debug     enable verbose output
 
-# Testing: Run tests but do not fail on test failure
-[group('testing')]
-test *parts:
-  @just _log_start test-strict
-  @just _test-strict {{parts}} || true
-  @just _log_end test-strict
+""")]
+test strict="true" fast="false" dev="false" quiet="" logs="" debug="" failing="false" *selection:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  mode_count=0
+  [ -n "{{quiet}}" ] && mode_count=$((mode_count + 1))
+  [ -n "{{logs}}" ]  && mode_count=$((mode_count + 1))
+  [ -n "{{debug}}" ] && mode_count=$((mode_count + 1))
+
+  if [ "$mode_count" -gt 1 ]; then
+    echo "[test] ERROR: choose at most one of --quiet, --logs, or --debug" >&2
+    exit 2
+  fi
+
+  mode="default"
+  if [ -n "{{quiet}}" ]; then mode="quiet"; fi
+  if [ -n "{{logs}}"  ]; then mode="logs"; fi
+  if [ -n "{{debug}}" ]; then mode="debug"; fi
+
+  case "$mode" in
+    default) mode_flags="" ;;
+    quiet)   mode_flags='{{PYTEST_QUIET_OPTS}}' ;;
+    logs)    mode_flags='{{PYTEST_LOG_OPTS}}' ;;
+    debug)   mode_flags='{{PYTEST_DEBUG_OPTS}}' ;;
+  esac
+
+  extra_flags=()
+  if [ "{{fast}}" = "true" ]; then
+    extra_flags+=({{PYTEST_FAST_EXPR}})
+  fi
+  if [ "{{failing}}" = "true" ]; then
+    extra_flags+=({{PYTEST_FAILING_OPTS}})
+  fi
+
+  args=("{{PYTEST}}")
+  if [ -n "$mode_flags" ]; then
+    eval "args+=($mode_flags)"
+  fi
+  args+=("${extra_flags[@]}")
+
+  test_paths=("{{ROOT_DIR}}/tests")
+
+  args=("{{PYTEST}}")
+  if [ -n "$mode_flags" ]; then
+    eval "args+=($mode_flags)"
+  fi
+  args+=("${extra_flags[@]}")
+
+  if [ "{{dev}}" = "true" ]; then
+    # Always use the non-xdist dev flags.
+    eval "args+=({{PYTEST_DEV_BASE_OPTS}})"
+
+    # Count the tests that this exact selection would collect.
+    collect_args=("{{PYTEST}}" "--collect-only" "-q")
+    collect_args+=("${extra_flags[@]}")
+    collect_args+=("${test_paths[@]}")
+
+    set +e
+    collect_out="$("${collect_args[@]}" 2>&1)"
+    collect_status=$?
+    set -e
+
+    # If collection itself failed, surface that failure and stop.
+    if [ "$collect_status" -ne 0 ] && [ "$collect_status" -ne 5 ]; then
+      echo "[test] collection failed while deciding whether to use xdist" >&2
+      echo "$collect_out" >&2
+      exit "$collect_status"
+    fi
+
+    # Count nodeids from -q --collect-only output.
+    test_count="$(printf '%s\n' "$collect_out" | grep -c '::' || true)"
+    threshold="{{PYTEST_DEV_THRESHOLD}}"
+
+    if [ "${test_count:-0}" -ge "$threshold" ]; then
+      eval "args+=({{PYTEST_DEV_XDIST_OPTS}})"
+    fi
+  fi
+
+  args+=("${test_paths[@]}")
+
+  set +e
+  echo "${args[@]}"
+  "${args[@]}"
+  status=$?
+  set -e
+
+  if [ "{{strict}}" = "true" ]; then
+    exit "$status"
+  fi
+
 
 
 # ======================================================================
 # Test Quality
 # ======================================================================
 
-# Test Quality: Summarize coverage results from last test execution
+# Show coverage results; use --lines for uncovered-line detail.
 [group('test quality')]
-cov:
+[arg("lines", long, value="true")]
+cov lines="false":
   @just _log_start cov
-  @bash -euo pipefail -c 'if [ -x {{SHOWCOV}} ]; then {{SHOWCOV}} report --summary --no-lines --no-branches; else echo "[cov-lines] skipping: showcov ({{SHOWCOV}}) not found"; fi'
+  @bash -euo pipefail -c '\
+    if [ -x {{SHOWCOV}} ]; then \
+      if [ "{{lines}}" = "true" ]; then \
+        {{SHOWCOV}} report --lines --code --context 2; \
+      else \
+        {{SHOWCOV}} report --summary --no-lines --no-branches; \
+      fi; \
+    else \
+      echo "[cov] skipping: showcov ({{SHOWCOV}}) not found"; \
+    fi \
+  '
   @just _log_end cov
-
-# Test Quality: List lines not covered by last test execution
-[group('test quality')]
-cov-lines:
-  @just _log_start cov-lines
-  @bash -euo pipefail -c 'if [ -x {{SHOWCOV}} ]; then {{SHOWCOV}} report --lines --code --context 2 ; else echo "[cov-lines] skipping: showcov ({{SHOWCOV}}) not found"; fi'
-  @just _log_end cov-lines
 
 
 # ======================================================================
 # Documentation
 # ======================================================================
 
-# Documentation: Build documentation using `mkdocs`
+# Build docs; use --serve to launch the local server.
 [group('documentation')]
-build-docs:
-  @just _log_start build-docs
-  @bash -euo pipefail -c 'if [ -x {{MKDOCS}} ]; then {{MKDOCS}} build; else echo "[build-docs] skipping: mkdocs not found ({{MKDOCS}} or on PATH)"; fi'
-  @just _log_end build-docs
-
-# Documentation: Serve the documentation site locally
-[group('documentation')]
-docs:
+[arg("serve", long, value="true")]
+docs serve="false":
   @just _log_start docs
-  @just build-docs
-  @bash -euo pipefail -c 'if [ -x {{MKDOCS}} ]; then python3 -m webbrowser http://127.0.0.1:8000; {{MKDOCS}} serve --livereload; else echo "[docs] skipping: mkdocs not found ({{MKDOCS}} or on PATH)"; fi'
+  @bash -euo pipefail -c '\
+    if [ -x {{MKDOCS}} ]; then \
+      if [ "{{serve}}" = "true" ]; then \
+        python3 -m webbrowser http://127.0.0.1:8000; \
+        {{MKDOCS}} serve --livereload; \
+      else \
+        {{MKDOCS}} build; \
+      fi; \
+    else \
+      echo "[docs] skipping: mkdocs not found ({{MKDOCS}} or on PATH)"; \
+    fi \
+  '
   @just _log_end docs
 
 
@@ -328,14 +457,14 @@ docs:
 # Build, packaging, publishing
 # ======================================================================
 
-# Production: Build Python artifacts with `uv build`
+# Build Python artifacts with `uv build`
 [group('production')]
 build:
   @just _log_start build
   {{UV}} build
   @just _log_end build
 
-# Production: Publish to PyPI using `uv publish`
+# Publish to PyPI using `uv publish`
 [group('production')]
 publish:
   @just _log_start publish
@@ -347,7 +476,7 @@ publish:
 # Cleaning / maintenance
 # ======================================================================
 
-# Cleaning: Remove caches/build artifacts and prune uv cache
+# Remove caches/build artifacts
 [group('cleaning')]
 clean:
   @just _log_start clean
@@ -360,20 +489,38 @@ clean:
   {{UV}} cache prune
   @just _log_end clean
 
-# Cleaning: Stash untracked (non-ignored) files (used by `scour`)
+# Stash untracked (non-ignored) files (used by `scour`)
 [group('cleaning')]
 stash-untracked:
   @just _log_start stash-untracked
-  @bash -euo pipefail -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then msg="scour:untracked:$(date -u +%Y%m%dT%H%M%SZ)"; if git ls-files --others --exclude-standard --directory --no-empty-directory | grep -q .; then git ls-files --others --exclude-standard -z | xargs -0 git stash push -m "$msg" -- >/dev/null; echo "Stashed untracked (non-ignored) files as: $msg"; else echo "No untracked (non-ignored) paths to stash."; fi; else echo "[stash-untracked] not a git repository; skipping"; fi'
+  @bash -euo pipefail -c '\
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+      msg="scour:untracked:$(date -u +%Y%m%dT%H%M%SZ)"; \
+      if git ls-files --others --exclude-standard --directory --no-empty-directory | grep -q .; then \
+        git ls-files --others --exclude-standard -z | xargs -0 git stash push -m "$msg" -- >/dev/null; \
+        echo "Stashed untracked (non-ignored) files as: $msg"; \
+      else \
+        echo "No untracked (non-ignored) paths to stash."; \
+      fi; \
+    else \
+      echo "[stash-untracked] not a git repository; skipping"; \
+    fi
+  '
   @just _log_end stash-untracked
 
-# Cleaning: Remove git-ignored files/dirs while keeping .venv
+# Remove git-ignored files/dirs while keeping .venv
 [group('cleaning')]
 scour:
   @just _log_start scour
   @just clean
   @just stash-untracked
-  @bash -euo pipefail -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git clean -fXd -e .venv; else echo "[scour] not a git repository; skipping git clean"; fi'
+  @bash -euo pipefail -c '\
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+      git clean -fXd -e .venv; \
+    else \
+      echo "[scour] not a git repository; skipping git clean"; \
+    fi
+  '
   @just _log_end scour
 
 
@@ -381,7 +528,7 @@ scour:
 # Composite flows
 # ======================================================================
 
-# Convenience: setup, lint, format, typecheck, build-docs, test, cov
+# Run setup, lint, format, typecheck, imports, fast tests, and coverage.
 [group('convenience')]
 fix:
   @just _log_start fix
@@ -390,16 +537,16 @@ fix:
   @just _run_soft format "just format"
   @just _run_soft typecheck 'just typecheck'
   @just _run_soft lint-imports 'just lint-imports'
-  # @just _run_soft build-docs "just build-docs"
-  @just test
+  # @just _run_soft docs "just docs"
+  @just test --fast
   @just cov
   @just _log_end fix
 
-# Convenience: lint-no-fx, format-no-fix, typecheck, lint-imports, test, cov
+# Run checks: lint, format, typecheck, imports, tests, and coverage.
 check:
   @just _log_start check
-  @just _run_soft lint-no-fix "just lint-no-fix"
-  @just _run_soft format-no-fix "just format-no-fix"
+  @just _run_soft lint "just lint --no-fix"
+  @just _run_soft format "just format --check"
   @just _run_soft typecheck 'just typecheck'
   @just _run_soft lint-imports 'just lint-imports'
   @just test

@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import click
@@ -33,7 +34,9 @@ _RETRY_COUNTDOWN_FINE_GRAIN_SECONDS = 10
 _RSYNC_DAEMON_PORT = 873
 _PREFLIGHT_TIMEOUT_SECONDS = 3.0
 _CONNECT_HEARTBEAT_SECONDS = 1.0
-_FILE_LIST_STALL_WARNING_SECONDS = 300.0
+_FILE_LIST_STALL_WARNING_SECONDS = 30.0
+_FILE_LIST_PROGRESS_MESSAGE_SECONDS = 15.0
+_FILE_LIST_PROGRESS_MIN_IDLE_SECONDS = 5.0
 _BYTES_PER_KIBIBYTE = 1024
 _FILE_LIST_COUNT_RE = re.compile(r"(?P<count>\d[\d,]*)\s+files\.\.\.", re.IGNORECASE)
 _TRANSFER_PROGRESS_RE = re.compile(
@@ -487,6 +490,34 @@ def _file_list_count_suffix(progress_bar: _ProgressBarState) -> str:
     return f" ({count:,} files)"
 
 
+def _file_list_progress_suffix(
+    *,
+    elapsed_seconds: float,
+    idle_seconds: float | None,
+    file_list_count: int | None,
+) -> str:
+    parts = [f"elapsed {_format_clock_duration(elapsed_seconds)}"]
+    if isinstance(file_list_count, int):
+        parts.append(f"discovered {file_list_count:,} files")
+    if isinstance(idle_seconds, float):
+        parts.append(f"last output {_format_clock_duration(idle_seconds)} ago")
+    return "; ".join(parts)
+
+
+def _should_emit_file_list_progress(
+    *,
+    elapsed_seconds: float,
+    idle_seconds: float | None,
+    phase_state: dict[str, str | float | bool | int],
+) -> bool:
+    if phase_state.get("phase") != "receiving file list":
+        return False
+    last_emit = phase_state.get("file_list_progress_emitted_at")
+    if isinstance(last_emit, float) and elapsed_seconds - last_emit < _FILE_LIST_PROGRESS_MESSAGE_SECONDS:
+        return False
+    return not isinstance(idle_seconds, float) or idle_seconds >= _FILE_LIST_PROGRESS_MIN_IDLE_SECONDS
+
+
 def _idle_suffix(progress_bar: _ProgressBarState) -> str:
     idle_seconds = getattr(progress_bar, "idle_seconds", None)
     if not isinstance(idle_seconds, float | int):
@@ -622,6 +653,45 @@ def _maybe_emit_file_list_stall_warning(
     phase_state["file_list_warning_emitted"] = True
 
 
+def _maybe_emit_file_list_progress(
+    cfg: RsyncMirrorConfig,
+    *,
+    remote: str,
+    attempt: int,
+    max_attempts: int,
+    elapsed_seconds: float,
+    phase_state: dict[str, str | float | bool | int],
+) -> None:
+    if phase_state.get("phase") != "receiving file list":
+        return
+
+    last_output_at = phase_state.get("last_output_at")
+    idle_seconds: float | None = None
+    if isinstance(last_output_at, float):
+        idle_seconds = max(0.0, time.perf_counter() - last_output_at)
+
+    if not _should_emit_file_list_progress(
+        elapsed_seconds=elapsed_seconds,
+        idle_seconds=idle_seconds,
+        phase_state=phase_state,
+    ):
+        return
+
+    file_list_count = phase_state.get("file_list_count")
+    count_value = file_list_count if isinstance(file_list_count, int) else None
+    target = _remote_display_target(remote, configured_port=cfg.port)
+    detail = _file_list_progress_suffix(
+        elapsed_seconds=elapsed_seconds,
+        idle_seconds=idle_seconds,
+        file_list_count=count_value,
+    )
+    _emit_runtime_message(
+        cfg,
+        f"rsync attempt {attempt}/{max_attempts}: indexing {target}; {detail}",
+    )
+    phase_state["file_list_progress_emitted_at"] = elapsed_seconds
+
+
 def _emit_connect_heartbeat(
     cfg: RsyncMirrorConfig,
     *,
@@ -661,6 +731,14 @@ def _emit_connect_heartbeat(
         progress_bar.idle_seconds = idle_seconds
         _maybe_emit_file_list_stall_warning(
             cfg,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            elapsed_seconds=elapsed,
+            phase_state=phase_state,
+        )
+        _maybe_emit_file_list_progress(
+            cfg,
+            remote=remote,
             attempt=attempt,
             max_attempts=max_attempts,
             elapsed_seconds=elapsed,

@@ -29,6 +29,21 @@ Items should be categorized under these headings:
 
 ### Security
 
+## [0.0.9] - 2026-04-07
+
+### Added
+- add macOS-specific rsync indexing telemetry that can report local temporary-file activity and active TCP connection state during long-running transfers
+- add more flexible `just` developer workflows for linting, formatting, testing, docs, complexity, and coverage via flag-driven recipes instead of parallel command aliases
+
+### Changed
+- change rsync runtime progress to emit periodic indexing heartbeats during `receiving file list` and reduce the file-list stall warning threshold from 300s to 30s
+- change `just fix` to run the fast test subset by default and consolidate several recipe variants into parameterized commands
+- change `canonical_path()` normalization to use `resolve()` plus `normpath()` consistently
+
+### Fixed
+- fix low-visibility rsync indexing behavior by surfacing elapsed-time, idle-time, and optional file-list-count progress while the remote file list is still being built
+- fix path canonicalization edge cases by normalizing resolved artifact paths before indexing
+
 ## [0.0.8] - 2026-04-02
 
 ### Added

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+from os.path import normpath
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -31,10 +32,7 @@ def verify_gzip(path: Path) -> bool:
 
 
 def canonical_path(path: str) -> str:
-    try:
-        return str(Path(path).resolve(strict=False))
-    except OSError:
-        return str(Path(path))
+    return normpath(Path(path).resolve())
 
 
 def build_path_index[TArtifact: SupportsArtifactPath](

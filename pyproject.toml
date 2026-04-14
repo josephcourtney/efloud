@@ -48,7 +48,7 @@
     "pytest-testmon>=2.2.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
-    "pytest>=9.0.2",
+    "pytest>=9.0.3",
     "radon>=6.0.1",
     "rope>=1.14.0",
     "ruff>=0.15.2",

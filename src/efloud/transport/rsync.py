@@ -18,7 +18,7 @@ import click
 from smartratelimit import RateLimiter
 
 from efloud.fs import atomic_write_text
-from efloud.json_types import JsonObject, JsonValue, json_object_or_none
+from efloud.json_types import JsonArray, JsonObject, JsonValue, json_object_or_none
 
 if TYPE_CHECKING:
     import io
@@ -307,6 +307,20 @@ def _preflight_connectivity(cfg: RsyncMirrorConfig, *, remote: str) -> None:
         )
 
 
+def _consume_pipe_chunk(
+    chunk: bytes,
+    buffer: list[str],
+    emitter: Callable[[str], None] | None,
+    observer: Callable[[str], None] | None,
+) -> None:
+    text = chunk.decode("utf-8", "replace")
+    buffer.append(text)
+    if observer is not None:
+        observer(text)
+    if emitter is not None:
+        emitter(text)
+
+
 def _stream_pipe(
     stream: io.BufferedReader,
     buffer: list[str],
@@ -319,12 +333,7 @@ def _stream_pipe(
             chunk = read_fn(4096)
             if not chunk:
                 break
-            text = chunk.decode("utf-8", "replace")
-            buffer.append(text)
-            if observer is not None:
-                observer(text)
-            if emitter is not None:
-                emitter(text)
+            _consume_pipe_chunk(chunk, buffer, emitter, observer)
     except OSError:
         pass
     finally:
@@ -1126,7 +1135,9 @@ class RsyncMirror:
         meta = self._meta_load()
         if meta.paths is None:
             meta.paths = {}
-        meta.paths[rel] = {"updated_at_unix": int(time.time()), "updated": updated}
+        updated_values: JsonArray = list(updated)
+        record: JsonObject = {"updated_at_unix": int(time.time()), "updated": updated_values}
+        meta.paths[rel] = record
         self._meta_write(meta)
 
     def _is_fresh(self, rel: str) -> bool:

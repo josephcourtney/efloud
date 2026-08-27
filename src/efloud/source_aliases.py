@@ -7,7 +7,8 @@ AliasMap = Mapping[str, tuple[str, ...] | list[str]]
 
 
 class SupportsSourceId(Protocol):
-    id: str
+    @property
+    def id(self) -> str: ...
 
 
 class SourceAliasResolver:

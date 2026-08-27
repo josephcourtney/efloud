@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_none
+from efloud.json_types import JsonMapping, JsonObject, copy_json_mapping, json_mapping_or_none
 
 if TYPE_CHECKING:
     from efloud.models import NormalizedManifest
@@ -27,7 +26,7 @@ def normalize_manifest(raw: Any) -> NormalizedManifest:  # ruff: ignore[any-type
     # --- normalize results container
     results = json_mapping_or_none(m.get("results"))
     if results is None:
-        results = {"rsync": {}, "http": {}, "derived": {}}
+        results: JsonObject = {"rsync": {}, "http": {}, "derived": {}}
         m["results"] = results
     else:
         results = copy_json_mapping(results)
@@ -63,6 +62,24 @@ def normalize_manifest(raw: Any) -> NormalizedManifest:  # ruff: ignore[any-type
     # You can add more migrations here if needed.
 
     return cast("NormalizedManifest", m)
+
+
+def _merge_result_entries(
+    destination: dict[str, JsonObject],
+    previous: JsonMapping | None,
+    current: JsonMapping | None,
+) -> None:
+    if previous is not None:
+        for key, value in previous.items():
+            value_mapping = json_mapping_or_none(value)
+            if value_mapping is not None:
+                destination.setdefault(str(key), copy_json_mapping(value_mapping))
+
+    if current is not None:
+        for key, value in current.items():
+            value_mapping = json_mapping_or_none(value)
+            if value_mapping is not None:
+                destination[str(key)] = copy_json_mapping(value_mapping)
 
 
 def merge_manifests(previous: Any | None, new: Any) -> NormalizedManifest:  # ruff: ignore[any-type]
@@ -107,21 +124,21 @@ def merge_manifests(previous: Any | None, new: Any) -> NormalizedManifest:  # ru
     prev_results = prev.get("results", {})
     nxt_results = nxt.get("results", {})
 
-    # Merge per-section results.
-    for section in ("rsync", "http", "derived"):
-        prev_sec = prev_results.get(section, {}) if isinstance(prev_results, Mapping) else {}
-        nxt_sec = nxt_results.get(section, {}) if isinstance(nxt_results, Mapping) else {}
-        dst = merged_results.get(section)
-        if not isinstance(dst, dict):
-            dst = {}
-            merged_results[section] = dst
-
-        if isinstance(prev_sec, Mapping):
-            for k, v in prev_sec.items():
-                dst.setdefault(str(k), v)
-        if isinstance(nxt_sec, Mapping):
-            for k, v in nxt_sec.items():
-                dst[str(k)] = v
+    _merge_result_entries(
+        merged_results["rsync"],
+        json_mapping_or_none(prev_results.get("rsync")),
+        json_mapping_or_none(nxt_results.get("rsync")),
+    )
+    _merge_result_entries(
+        merged_results["http"],
+        json_mapping_or_none(prev_results.get("http")),
+        json_mapping_or_none(nxt_results.get("http")),
+    )
+    _merge_result_entries(
+        merged_results["derived"],
+        json_mapping_or_none(prev_results.get("derived")),
+        json_mapping_or_none(nxt_results.get("derived")),
+    )
 
     return merged
 

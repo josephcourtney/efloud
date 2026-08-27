@@ -140,6 +140,111 @@ class RestBaseFanoutTask(DerivedTask):
         }
 
 
+async def _fetch_and_write_fanout_item(
+    *,
+    cache: HttpCache,
+    url: str,
+    dest: Path,
+    response_mode: ResponseMode,
+    refresh: bool,
+) -> int:
+    resp = await cache.get(url, refresh=refresh)
+    if resp.status_code == HTTP_NOT_FOUND:
+        return HTTP_NOT_FOUND
+
+    resp.raise_for_status()
+    if response_mode == "json":
+        atomic_write_text(dest, safe_json_dump(resp.json()))
+    else:
+        atomic_write_bytes(dest, resp.content)
+
+    return resp.status_code
+
+
+async def _materialize_fanout_item(
+    *,
+    cache: HttpCache,
+    base_url: str,
+    item: FanoutItem,
+    dest_root: Path,
+    response_mode: ResponseMode,
+    bucket: BucketStrategy,
+    refresh: bool,
+) -> dict[str, object]:
+    request_path = item.request_path or item.item_id
+    url = f"{base_url.rstrip('/')}/{request_path.lstrip('/')}"
+    dest = dest_root / bucket(item.item_id)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    request = {
+        "url": url,
+        "base_url": base_url,
+        "item_id": item.item_id,
+        "request_path": request_path,
+        "fanout_path": str(dest.relative_to(dest_root)),
+    }
+
+    try:
+        status_code = await _fetch_and_write_fanout_item(
+            cache=cache,
+            url=url,
+            dest=dest,
+            response_mode=response_mode,
+            refresh=refresh,
+        )
+        if status_code == HTTP_NOT_FOUND:
+            return {
+                "status": "error",
+                "error": str(HTTP_NOT_FOUND),
+                "request": request,
+                "dest": str(dest),
+                "item_id": item.item_id,
+            }
+    except (httpx.HTTPError, OSError, TypeError, ValueError) as exc:
+        return {
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "request": request,
+            "dest": str(dest),
+            "item_id": item.item_id,
+            "metadata": dict(item.metadata or {}),
+        }
+
+    return {
+        "status": "ok",
+        "request": request,
+        "dest": str(dest),
+        "item_id": item.item_id,
+        "metadata": dict(item.metadata or {}),
+    }
+
+
+async def _run_fanout_item(
+    *,
+    cache: HttpCache,
+    base_url: str,
+    item: FanoutItem,
+    dest_root: Path,
+    response_mode: ResponseMode,
+    bucket: BucketStrategy,
+    refresh: bool,
+) -> dict[str, object]:
+    try:
+        return await _materialize_fanout_item(
+            cache=cache,
+            base_url=base_url,
+            item=item,
+            dest_root=dest_root,
+            response_mode=response_mode,
+            bucket=bucket,
+            refresh=refresh,
+        )
+    except Exception as exc:  # ruff: ignore[blind-except] - fanout items are isolated failure domains; one extension/bucket failure must not terminate sibling work.
+        return {
+            "status": "error",
+            "error": f"UNCAUGHT {type(exc).__name__}: {exc}",
+        }
+
+
 async def _materialize_fanout(
     *,
     cache: HttpCache,
@@ -160,55 +265,15 @@ async def _materialize_fanout(
             try:
                 if item is None:
                     return
-                request_path = item.request_path or item.item_id
-                url = f"{base_url.rstrip('/')}/{request_path.lstrip('/')}"
-                dest = dest_root / bucket(item.item_id)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                request = {
-                    "url": url,
-                    "base_url": base_url,
-                    "item_id": item.item_id,
-                    "request_path": request_path,
-                    "fanout_path": str(dest.relative_to(dest_root)),
-                }
-                try:
-                    resp = await cache.get(url, refresh=refresh)
-                    if resp.status_code == HTTP_NOT_FOUND:
-                        statuses[item.item_id] = {
-                            "status": "error",
-                            "error": str(HTTP_NOT_FOUND),
-                            "request": request,
-                            "dest": str(dest),
-                            "item_id": item.item_id,
-                        }
-                        continue
-                    resp.raise_for_status()
-                    if response_mode == "json":
-                        payload = resp.json()
-                        atomic_write_text(dest, safe_json_dump(payload))
-                    else:
-                        atomic_write_bytes(dest, resp.content)
-                    statuses[item.item_id] = {
-                        "status": "ok",
-                        "request": request,
-                        "dest": str(dest),
-                        "item_id": item.item_id,
-                        "metadata": dict(item.metadata or {}),
-                    }
-                except (httpx.HTTPError, ValueError) as exc:
-                    statuses[item.item_id] = {
-                        "status": "error",
-                        "error": f"{type(exc).__name__}: {exc}",
-                        "request": request,
-                        "dest": str(dest),
-                        "item_id": item.item_id,
-                        "metadata": dict(item.metadata or {}),
-                    }
-            except Exception as exc:
-                statuses[getattr(item, "item_id", "<unknown>")] = {
-                    "status": "error",
-                    "error": f"UNCAUGHT {type(exc).__name__}: {exc}",
-                }
+                statuses[item.item_id] = await _run_fanout_item(
+                    cache=cache,
+                    base_url=base_url,
+                    item=item,
+                    dest_root=dest_root,
+                    response_mode=response_mode,
+                    bucket=bucket,
+                    refresh=refresh,
+                )
             finally:
                 work_queue.task_done()
 

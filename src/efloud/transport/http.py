@@ -100,7 +100,7 @@ class HttpCache:
                     # `always_cache` knob; newer ones do not. If unsupported, ignore force_cache
                     # rather than crashing at runtime.
                     try:
-                        cache_options = CacheOptions(always_cache=True)  # type: ignore[call-arg]
+                        cache_options = CacheOptions(always_cache=True)  # ty: ignore[unknown-argument]  # compatibility with older Hishel versions that exposed always_cache
                         policy = SpecificationPolicy(cache_options=cache_options)
                     except TypeError:
                         logger.warning(

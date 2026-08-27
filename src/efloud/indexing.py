@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, Self
 
 from efloud.fs import atomic_write_text, safe_json_dump
 from efloud.json_types import JsonMapping, JsonObject, JsonValue, copy_json_mapping, json_mapping_or_none
@@ -17,10 +17,16 @@ class CachedIndex(Protocol):
     fetched_at: float
     ttl_seconds: int
 
+    @property
+    def fetched_at(self) -> float: ...
+
+    @property
+    def ttl_seconds(self) -> int: ...
+
     def to_dict(self) -> JsonObject: ...
 
     @classmethod
-    def from_dict(cls, data: JsonMapping) -> CachedIndex: ...
+    def from_dict(cls, data: JsonMapping) -> Self: ...
 
     def is_expired(self) -> bool: ...
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from efloud.health import build_mirror_health_summary
-from efloud.json_types import JsonMapping, JsonObject, JsonValue, json_mapping_or_none
+from efloud.json_types import JsonArray, JsonMapping, JsonObject, JsonValue, json_mapping_or_none
 from efloud.manifest import load_latest_manifest
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
@@ -97,11 +97,11 @@ def _add_rsync_source_details(entry: JsonMapping, details: JsonObject) -> None:
         details["updates"] = updates
 
 
-def _rsync_updates(results: JsonValue | None) -> list[JsonObject]:
+def _rsync_updates(results: JsonValue | None) -> JsonArray:
     results_mapping = json_mapping_or_none(results)
     if results_mapping is None:
         return []
-    updates: list[JsonObject] = []
+    updates: JsonArray = []
     for key, value in results_mapping.items():
         value_mapping = json_mapping_or_none(value)
         if value_mapping is None:

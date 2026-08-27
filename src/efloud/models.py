@@ -41,11 +41,17 @@ class Manifest(TypedDict, total=False):
     errors: list[ManifestError]
 
 
-class NormalizedManifest(Manifest, total=False):
+class NormalizedManifest(TypedDict, total=False):
     """Canonical schema guaranteed by ``normalize_manifest``."""
 
     version: Required[int]
+    started_at_unix: int
+    started_at_iso: str
+    finished_at_unix: int
+    finished_at_iso: str
+    duration_seconds: float
     root: Required[str]
+    config: JsonObject
     results: Required[ManifestResults]
     errors: Required[list[ManifestError]]
 

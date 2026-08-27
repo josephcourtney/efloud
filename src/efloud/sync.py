@@ -21,7 +21,7 @@ from efloud.fs import (
     prune_orphan_mirrors,
     safe_json_dump,
 )
-from efloud.json_types import copy_json_mapping, json_mapping_or_none
+from efloud.json_types import JsonArray, JsonObject, copy_json_mapping, json_mapping_or_none
 from efloud.manifest import merge_manifests, normalize_manifest
 from efloud.models import EngineConfig, ManifestError, NormalizedManifest, SyncResult
 from efloud.policy import DefaultSyncPolicy
@@ -59,6 +59,7 @@ _HASH_PROGRESS_MIN_SECONDS = 2.0
 _HASH_PROGRESS_MIN_FILES = 10_000
 _MMCIF_BUCKET_PARTS = 2
 _MMCIF_BUCKET_WIDTH = 2
+_MMCIF_PREFILTER_MIN_PATHS = 2
 _RSYNC_FILE_OR_ATTR_ERROR_CODE = 23
 
 
@@ -103,11 +104,17 @@ class ManifestRecorder:
     def record_derived(self, *, name: str, payload: dict[str, Any]) -> None:
         self._manifest["results"]["derived"][name] = payload
 
+    @staticmethod
+    def _string_array(values: list[str]) -> JsonArray:
+        return list(values)
+
     def record_http_cache_deleted(self, removed: list[str]) -> None:
-        self._manifest["results"]["http"]["cache_deleted"] = {"removed": removed}
+        payload: JsonObject = {"removed": self._string_array(removed)}
+        self._manifest["results"]["http"]["cache_deleted"] = payload
 
     def record_pruned_orphan_mirrors(self, removed: list[str]) -> None:
-        self._manifest["results"]["rsync"]["pruned_orphan_mirrors"] = {"removed": removed}
+        payload: JsonObject = {"removed": self._string_array(removed)}
+        self._manifest["results"]["rsync"]["pruned_orphan_mirrors"] = payload
 
     def finish(self) -> None:
         end = int(time.time())
@@ -377,7 +384,7 @@ def _should_prefilter_pdb_mmcif_buckets(
         return False
     if not mirror_paths:
         return False
-    if len(mirror_paths) < 2:
+    if len(mirror_paths) < _MMCIF_PREFILTER_MIN_PATHS:
         return False
     return all(_looks_like_mmcif_bucket_path(rel) for rel in mirror_paths)
 
@@ -740,7 +747,7 @@ async def _run_rsync_source(
     )
     mode = "update_paths" if mirror_paths else "update"
 
-    try:
+    try:  # ruff: ignore[too-many-statements-in-try-clause] - the entire per-source rsync transaction must share one transport-failure boundary.
         results_payload = await _run_rsync_source_operation(
             cfg=cfg,
             source=source,
@@ -943,7 +950,7 @@ def _update_canonical_manifest(
     if cfg.dry_run:
         return
     canonical_manifest_target = _default_manifest_path(paths, cfg.manifest_filename)
-    try:
+    try:  # ruff: ignore[too-many-statements-in-try-clause] - read/merge/normalize/write is one atomic best-effort manifest update.
         prev_raw: Any | None = None
         if canonical_manifest_target.exists():
             prev_raw = json.loads(canonical_manifest_target.read_text(encoding="utf-8"))
@@ -1135,7 +1142,7 @@ def _update_mirror_state(*, cfg: EngineConfig, paths: SyncPaths, manifest_path: 
         return None
     state_path = paths.root / cfg.state_filename
     source_info = _mirror_source_info(cfg)
-    try:
+    try:  # ruff: ignore[too-many-statements-in-try-clause] - mirror-state reconstruction and persistence form one recoverable operation.
         previous_state = load_mirror_state(state_path)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         can_reuse_tree = (

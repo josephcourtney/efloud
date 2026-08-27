@@ -45,8 +45,10 @@ The repository is still in alpha. The public surface today is centered on Python
 - `query_target()`, `root_payload()`, `store_payload()`, and `source_payload()` to inspect cached artifacts
 - `collect_status_payload()` and `build_summary()` to summarize sync outcomes
 - `RestBaseFanoutTask` for derived fanout materialization
+- `http_dest_for_source_url()` and `http_dests_for_source_urls()` to resolve
+  downloaded HTTP source URLs to their local materialized paths
 
-`pyproject.toml` currently declares an `efloud` console script, but the repository does not yet contain a documented CLI entrypoint. The stable thing to rely on today is the Python API.
+The stable public surface is currently the Python API.
 
 ## Core Concepts
 
@@ -191,13 +193,12 @@ To run the validation commands used by the project:
 
 ## Project Status
 
-The implementation is ahead of the written docs. Several repository documents are still placeholders, so the most accurate description of current behavior is in the source and tests.
+Alpha — `0.0.9`.
 
-For the most relevant code paths, start with:
+The core HTTP, REST, rsync, manifest, query, status, indexing, and derived
+materialization functionality is implemented and tested. The package is used
+as a support library for data-mirroring workflows and is intended primarily
+for programmatic use.
 
-- `src/efloud/sync.py`
-- `src/efloud/query.py`
-- `src/efloud/status.py`
-- `src/efloud/fanout.py`
-- `tests/unit/test_fanout_and_sync.py`
-- `tests/unit/test_summary_health_status_query.py`
+The Python API is the supported interface. The project remains pre-1.0 and its
+internal orchestration and type boundaries may continue to evolve.

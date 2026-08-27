@@ -2,7 +2,7 @@
 [project]
   name = "efloud"
   version = "0.0.9"
-  description = "mirror"
+  description = "Local mirroring and materialization of HTTP, REST, and rsync data sources"
   readme = "README.md"
   authors = [
     { name = "Joseph M Courtney", email = "5942706+josephcourtney@users.noreply.github.com" },
@@ -19,6 +19,7 @@
   requires-python = ">=3.12,<3.15"
   dependencies = [
     "anyio>=3.0,<4.dev0",
+    "click>=8.5.0",
     "hishel>=1.1.9",
     "httpx>=0.28.1",
     "smartratelimit>=0.3.1",

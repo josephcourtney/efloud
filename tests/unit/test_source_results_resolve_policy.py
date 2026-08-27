@@ -29,7 +29,7 @@ from efloud.source_results import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit, pytest.mark.medium]
+pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture
@@ -78,6 +78,7 @@ def manifest(tmp_path: Path) -> NormalizedManifest:
     }
 
 
+@pytest.mark.small
 def test_manifest_section_and_entry_helpers_resolve_sources_and_aliases(sources, manifest):
     aliases = {"http-id": ("legacy-http",)}
 
@@ -111,6 +112,7 @@ def test_manifest_section_and_entry_helpers_resolve_sources_and_aliases(sources,
     )
 
 
+@pytest.mark.small
 def test_local_materialized_path_and_status_hint_cover_supported_shapes(tmp_path: Path):
     assert local_materialized_path({"dest": str(tmp_path / "a")}) == tmp_path / "a"
     assert local_materialized_path({"local": str(tmp_path / "b")}) == tmp_path / "b"
@@ -126,6 +128,7 @@ def test_local_materialized_path_and_status_hint_cover_supported_shapes(tmp_path
     assert source_status_hint({"dest": "x"}) == "present"
 
 
+@pytest.mark.small
 def test_resolve_helpers_locate_mirror_and_materialized_paths(sources, manifest, tmp_path: Path):
     sync_result = SyncResult(ok=True, root=tmp_path, manifest_path=None, manifest=manifest)
 
@@ -142,6 +145,7 @@ def test_resolve_helpers_locate_mirror_and_materialized_paths(sources, manifest,
     assert manifest_entry_for_source(None, None) is None
 
 
+@pytest.mark.small
 def test_default_sync_policy_uses_refresh_flags_and_rsync_paths(tmp_path: Path, sources):
     cfg = EngineConfig(root=tmp_path, sources=sources, refresh_http=True, refresh_rsync=False)
 
@@ -160,6 +164,7 @@ def test_default_sync_policy_uses_refresh_flags_and_rsync_paths(tmp_path: Path, 
     )
 
 
+@pytest.mark.small
 def test_role_driven_sync_policy_overrides_refresh_by_role_and_rest_base(tmp_path: Path):
     sources = [
         SourceDefinition(

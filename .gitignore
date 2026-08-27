@@ -1,1 +1,42 @@
+.coverage
+.cache/
+.aghast
+.claude
+.coverage.*
 .ropefolder
+.ropeproject
+.testmondata*
+out/
+Untitled
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+.testmondata
+.pytest_cache/
+.hypothesis/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Office temp/lock files
+~$*.xlsx
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc

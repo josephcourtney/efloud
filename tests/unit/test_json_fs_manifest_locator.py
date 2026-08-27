@@ -39,9 +39,10 @@ from efloud.locator import (
 )
 from efloud.manifest import load_latest_manifest, merge_manifests, normalize_manifest
 
-pytestmark = [pytest.mark.unit, pytest.mark.medium]
+pytestmark = [pytest.mark.unit]
 
 
+@pytest.mark.small
 def test_json_type_helpers_recognize_and_copy_mappings():
     class StringKeyMapping(UserDict):
         pass
@@ -59,6 +60,7 @@ def test_json_type_helpers_recognize_and_copy_mappings():
     assert copy_json_mapping(mapping) == {"a": 1}
 
 
+@pytest.mark.medium
 def test_fs_helpers_round_trip_and_manage_directories(tmp_path: Path):
     text_path = tmp_path / "nested" / "payload.txt"
     bytes_path = tmp_path / "nested" / "payload.bin"
@@ -80,6 +82,7 @@ def test_fs_helpers_round_trip_and_manage_directories(tmp_path: Path):
     assert dirs["cache"] == dirs["root"] / "cache"
 
 
+@pytest.mark.medium
 def test_fs_helpers_prune_and_delete_cache_files(tmp_path: Path):
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
@@ -106,6 +109,7 @@ def test_fs_helpers_prune_and_delete_cache_files(tmp_path: Path):
     assert not remove_dir.exists()
 
 
+@pytest.mark.small
 def test_normalize_manifest_adds_defaults_and_hoists_request_url():
     manifest = normalize_manifest({
         "results": {
@@ -125,11 +129,13 @@ def test_normalize_manifest_adds_defaults_and_hoists_request_url():
     assert manifest["results"]["derived"] == {}
 
 
+@pytest.mark.small
 def test_normalize_manifest_rejects_non_mapping():
     with pytest.raises(TypeError, match="manifest must be a JSON object"):
         normalize_manifest(["not", "a", "mapping"])
 
 
+@pytest.mark.small
 def test_merge_manifests_preserves_previous_sections_and_replaces_metadata():
     previous = {
         "root": "/old",
@@ -159,6 +165,7 @@ def test_merge_manifests_preserves_previous_sections_and_replaces_metadata():
     assert merged["results"]["derived"] == {"d": {"ok": True}}
 
 
+@pytest.mark.medium
 def test_load_latest_manifest_handles_missing_invalid_and_root_mismatch(tmp_path: Path):
     log_dir = tmp_path / "log"
     manifest, warnings, guessed = load_latest_manifest(log_dir, "sync-manifest.json", expected_root=tmp_path)
@@ -187,6 +194,7 @@ def test_load_latest_manifest_handles_missing_invalid_and_root_mismatch(tmp_path
     assert "conflicts with configured cache root" in warnings[0]
 
 
+@pytest.mark.small
 def test_split_locator_and_parts_cover_supported_forms():
     assert split_locator("artifact.json#/items/0/name") == ("artifact.json", "/items/0/name")
     assert split_locator("artifact.json") == ("artifact.json", None)
@@ -202,6 +210,7 @@ def test_split_locator_and_parts_cover_supported_forms():
     assert star_locator_to_pointer("STAR tag=_Entry.ID value=1") == "#/Entry/ID"
 
 
+@pytest.mark.small
 def test_apply_structured_locator_handles_dict_list_and_errors():
     value = cast("JsonValue", {"items": [{"name": "alpha"}]})
 
@@ -217,6 +226,7 @@ def test_apply_structured_locator_handles_dict_list_and_errors():
     )
 
 
+@pytest.mark.medium
 def test_resolve_locator_from_file_supports_json_text_and_candidate_fallbacks(tmp_path: Path):
     json_path = tmp_path / "payload.json"
     json_path.write_text(json.dumps({"items": [{"name": "alpha"}]}), encoding="utf-8")

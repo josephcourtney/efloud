@@ -7,12 +7,11 @@ import logging
 import math
 import re
 import socket
-import subprocess  # noqa: S404 - rsync transport intentionally shells out to the local rsync executable.
+import subprocess  # ruff: ignore[suspicious-subprocess-import] - rsync transport intentionally shells out to the local rsync executable.
 import sys
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import click
@@ -136,7 +135,7 @@ class RsyncMirrorMeta:
 
     @staticmethod
     # Stored metadata is read from disk and can contain arbitrary payloads.
-    def from_json(obj: Any) -> RsyncMirrorMeta:  # noqa: ANN401
+    def from_json(obj: Any) -> RsyncMirrorMeta:  # ruff: ignore[any-type]
         json_obj = json_object_or_none(obj)
         if json_obj is None:
             return RsyncMirrorMeta()
@@ -796,7 +795,7 @@ def _run_rsync_process_once(
     attempt: int,
     max_attempts: int,
 ) -> OpResult:
-    proc = subprocess.Popen(  # noqa: S603 - argv is assembled from structured config fields, not raw shell text.
+    proc = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true] - argv is assembled from structured config fields, not raw shell text.
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1081,7 +1080,7 @@ def _remove_empty_dirs(root: Path) -> None:
             p.rmdir()
 
 
-def _updated_paths(value: Any) -> list[str]:  # noqa: ANN401 - persisted metadata may contain arbitrary values
+def _updated_paths(value: Any) -> list[str]:  # ruff: ignore[any-type] - persisted metadata may contain arbitrary values
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]

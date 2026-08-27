@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from efloud.models import NormalizedManifest
 
-pytestmark = [pytest.mark.unit, pytest.mark.medium]
+pytestmark = [pytest.mark.unit]
 
 
 class ForeignSourceKind(StrEnum):
@@ -59,6 +59,7 @@ def cfg(tmp_path: Path):
     )
 
 
+@pytest.mark.small
 def _write_manifest(root: Path, cfg: EngineConfig) -> Path:
     manifest_dir = root / cfg.log_dir
     manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -113,6 +114,7 @@ def _write_manifest(root: Path, cfg: EngineConfig) -> Path:
     return path
 
 
+@pytest.mark.medium
 def test_build_summary_and_status_helpers(cfg: EngineConfig, tmp_path: Path):
     manifest_path = _write_manifest(tmp_path, cfg)
     result = SyncResult(
@@ -165,6 +167,7 @@ def test_build_summary_and_status_helpers(cfg: EngineConfig, tmp_path: Path):
     assert [row["status"] for row in rows] == ["ok", "error", "ok"]
 
 
+@pytest.mark.medium
 def test_health_and_collect_status_payload(cfg: EngineConfig, tmp_path: Path):
     manifest_path = _write_manifest(tmp_path, cfg)
     mirror_root = tmp_path / cfg.mirrors_dir / "mirror/source"
@@ -188,6 +191,7 @@ def test_health_and_collect_status_payload(cfg: EngineConfig, tmp_path: Path):
     assert payload["health"]["manifest_errors"] == ["broken source"]
 
 
+@pytest.mark.medium
 def test_store_index_root_and_query_payloads(cfg: EngineConfig, tmp_path: Path):
     _write_manifest(tmp_path, cfg)
     source_file = tmp_path / cfg.http_dir / "data.json"
@@ -246,6 +250,7 @@ def test_store_index_root_and_query_payloads(cfg: EngineConfig, tmp_path: Path):
         query_target("bad", cfg=cfg)
 
 
+@pytest.mark.small
 def test_status_helpers_accept_foreign_but_value_compatible_source_kind_enum(tmp_path: Path):
     foreign_rsync = SourceDefinition(
         "foreign-rsync",

@@ -20,15 +20,17 @@ from efloud.state import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit, pytest.mark.medium]
+pytestmark = [pytest.mark.unit]
 
 
+@pytest.mark.small
 def _write_tree(root: Path) -> None:
     (root / "group").mkdir(parents=True, exist_ok=True)
     (root / "group" / "a.txt").write_text("a", encoding="utf-8")
     (root / "b.txt").write_text("b", encoding="utf-8")
 
 
+@pytest.mark.small
 def test_mirror_state_node_and_source_state_round_trip():
     node = MirrorStateNode("file", "abc", 1, 0)
     assert MirrorStateNode.from_dict(node.to_dict()) == node
@@ -45,6 +47,7 @@ def test_mirror_state_node_and_source_state_round_trip():
     assert MirrorSourceState.from_dict({"source_id": 1, "local_subdir": "group"}) is None
 
 
+@pytest.mark.medium
 def test_build_hash_tree_node_lookup_and_diffing(tmp_path: Path):
     _write_tree(tmp_path)
     tree = build_hash_tree(tmp_path)
@@ -66,6 +69,7 @@ def test_build_hash_tree_node_lookup_and_diffing(tmp_path: Path):
     assert any("group" in diff or "a.txt" in diff for diff in diffs)
 
 
+@pytest.mark.medium
 def test_update_hash_tree_for_subdirs_replaces_only_requested_subtrees(tmp_path: Path):
     _write_tree(tmp_path)
     base = build_hash_tree(tmp_path)
@@ -79,6 +83,7 @@ def test_update_hash_tree_for_subdirs_replaces_only_requested_subtrees(tmp_path:
     assert node_at_path(updated, "b.txt") == node_at_path(base, "b.txt")
 
 
+@pytest.mark.medium
 def test_build_hash_tree_reports_progress(tmp_path: Path):
     _write_tree(tmp_path)
     events: list[tuple[int, int, str]] = []
@@ -96,6 +101,7 @@ def test_build_hash_tree_reports_progress(tmp_path: Path):
     assert events[-1][1] >= 2
 
 
+@pytest.mark.medium
 def test_mirror_state_build_to_from_dict_and_load(tmp_path: Path, monkeypatch):
     mirrors = tmp_path / "mirrors"
     _write_tree(mirrors)

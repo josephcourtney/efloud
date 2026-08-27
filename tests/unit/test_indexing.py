@@ -10,9 +10,10 @@ from efloud.indexing import IndexDefinition, IndexRegistry, JsonTtlIndex, load_i
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit, pytest.mark.medium]
+pytestmark = [pytest.mark.unit]
 
 
+@pytest.mark.small
 def test_json_ttl_index_round_trip_and_expiry(monkeypatch):
     index = JsonTtlIndex(fetched_at=100.0, ttl_seconds=10, payload={"ok": True})
 
@@ -31,6 +32,7 @@ def test_json_ttl_index_round_trip_and_expiry(monkeypatch):
         JsonTtlIndex.from_dict({"payload": []})
 
 
+@pytest.mark.medium
 def test_write_and_load_index_round_trip(tmp_path: Path):
     path = tmp_path / "index.json"
     index = JsonTtlIndex(fetched_at=1.0, ttl_seconds=2, payload={"value": 1})
@@ -47,6 +49,7 @@ def test_write_and_load_index_round_trip(tmp_path: Path):
     assert load_index(path, JsonTtlIndex) is None
 
 
+@pytest.mark.medium
 def test_index_registry_build_reuses_fresh_cache_and_reports_status(tmp_path: Path, monkeypatch):
     built_values: list[Path] = []
 
@@ -85,6 +88,7 @@ def test_index_registry_build_reuses_fresh_cache_and_reports_status(tmp_path: Pa
     assert registry.load("alpha", root=tmp_path) is not None
 
 
+@pytest.mark.medium
 def test_index_registry_handles_unparseable_and_unknown_indexes(tmp_path: Path):
     registry = IndexRegistry([
         IndexDefinition(

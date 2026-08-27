@@ -67,7 +67,7 @@ class _RouteHTTPServer(ThreadingHTTPServer):
 
 class _Handler(BaseHTTPRequestHandler):
     # BaseHTTPRequestHandler passes printf-style args with mixed runtime types here.
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002, PLR6301
+    def log_message(self, format: str, *args: Any) -> None:  # ruff: ignore[builtin-argument-shadowing, no-self-use]
         del format, args
 
     def do_HEAD(self) -> None:

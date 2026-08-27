@@ -13,7 +13,7 @@ from efloud.registry import (
 )
 from efloud.source_aliases import SourceAliasResolver, source_by_id_or_alias
 
-pytestmark = [pytest.mark.unit, pytest.mark.medium]
+pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture
@@ -33,6 +33,7 @@ def sources():
     ]
 
 
+@pytest.mark.small
 def test_registry_helpers_return_expected_source_views(sources):
     assert source_ids(sources) == ("http-one", "mirror-one", "rest-base")
     assert source_by_id("mirror-one", sources) is sources[1]
@@ -41,6 +42,7 @@ def test_registry_helpers_return_expected_source_views(sources):
     assert source_ids_for_kind(SourceKind.RSYNC, sources) == ["mirror-one"]
 
 
+@pytest.mark.small
 def test_source_alias_resolver_handles_declared_and_reverse_aliases(sources):
     resolver = SourceAliasResolver({
         "http-one": ("legacy-http", "alias-http"),
@@ -58,6 +60,7 @@ def test_source_alias_resolver_handles_declared_and_reverse_aliases(sources):
     assert resolver.source_by_id("missing", sources) is None
 
 
+@pytest.mark.small
 def test_source_by_id_or_alias_uses_alias_map(sources):
     aliases = {"http-one": ("legacy-http",)}
 

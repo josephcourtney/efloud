@@ -25,7 +25,7 @@ from efloud.transport.rsync import OpResult, RsyncMirror, RsyncMirrorConfig
 fanout_mod = importlib.import_module("efloud.fanout")
 sync_mod = importlib.import_module("efloud.sync")
 
-pytestmark = [pytest.mark.unit, pytest.mark.medium]
+pytestmark = [pytest.mark.unit]
 
 
 class FakeFanoutResponse:
@@ -83,6 +83,7 @@ class DummyCache:
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_materialize_fanout_and_rest_base_task(tmp_path: Path, monkeypatch):
     assert fanout_mod.two_char_bucket("ABC123") == Path("bc") / "abc123.json"
     assert fanout_mod.two_char_bucket("x") == Path("xx") / "x.json"
@@ -157,6 +158,7 @@ async def test_materialize_fanout_and_rest_base_task(tmp_path: Path, monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_manifest_recorder_and_sync_helpers(tmp_path: Path, monkeypatch):
     cfg = EngineConfig(
         root=tmp_path,
@@ -239,6 +241,7 @@ async def test_manifest_recorder_and_sync_helpers(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_run_phases_with_fake_transports(tmp_path: Path, monkeypatch):
     sources = [
         SourceDefinition("http-id", "HTTP", "https://example.test/data.bin", SourceKind.HTTP),
@@ -325,6 +328,7 @@ async def test_run_phases_with_fake_transports(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_run_rsync_phase_passes_source_port_to_rsync_config(tmp_path: Path, monkeypatch):
     source = SourceDefinition(
         "rsync-id",
@@ -378,6 +382,7 @@ async def test_run_rsync_phase_passes_source_port_to_rsync_config(tmp_path: Path
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_run_rsync_phase_uses_less_aggressive_flags_for_pdb_mmcif(tmp_path: Path, monkeypatch):
     sources = [
         SourceDefinition(
@@ -442,6 +447,7 @@ async def test_run_rsync_phase_uses_less_aggressive_flags_for_pdb_mmcif(tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_run_rsync_phase_uses_compact_progress_for_pdb_mmcif_only(tmp_path: Path, monkeypatch):
     sources = [
         SourceDefinition(
@@ -510,6 +516,7 @@ async def test_run_rsync_phase_uses_compact_progress_for_pdb_mmcif_only(tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_sync_orchestration_with_stubbed_phases(tmp_path: Path, monkeypatch):
     sources = [
         SourceDefinition("http-id", "HTTP", "https://example.test/data.bin", SourceKind.HTTP),
@@ -565,6 +572,7 @@ async def test_sync_orchestration_with_stubbed_phases(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_sync_marks_rsync_transport_failures_as_errors(tmp_path: Path, monkeypatch):
     cfg = EngineConfig(
         root=tmp_path,
@@ -615,6 +623,7 @@ async def test_sync_marks_rsync_transport_failures_as_errors(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_run_rsync_phase_skips_missing_pdb_mmcif_bucket_dirs(tmp_path: Path, monkeypatch):
     source = SourceDefinition(
         "pdb_mmcif",
@@ -662,6 +671,7 @@ async def test_run_rsync_phase_skips_missing_pdb_mmcif_bucket_dirs(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_run_rsync_phase_prefilters_missing_pdb_mmcif_buckets(tmp_path: Path, monkeypatch):
     source = SourceDefinition(
         "pdb_mmcif",
@@ -710,6 +720,7 @@ async def test_run_rsync_phase_prefilters_missing_pdb_mmcif_buckets(tmp_path: Pa
     assert any("skipping 1 missing remote buckets" in message for message in seen_messages)
 
 
+@pytest.mark.small
 def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path):
     transport_mod = importlib.import_module("efloud.transport.rsync")
     cfg = RsyncMirrorConfig(
@@ -760,6 +771,7 @@ def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path)
     assert any("retry 2/3 starts in 5s" in message for message in messages)
 
 
+@pytest.mark.small
 def test_incremental_rsync_subdirs_uses_manifest_paths_for_shared_root(tmp_path: Path):
     cfg = EngineConfig(
         root=tmp_path,
@@ -810,6 +822,7 @@ def test_incremental_rsync_subdirs_uses_manifest_paths_for_shared_root(tmp_path:
     ]
 
 
+@pytest.mark.medium
 def test_build_incremental_state_uses_touched_subdirs(monkeypatch, tmp_path: Path):
     cfg = EngineConfig(
         root=tmp_path,
@@ -865,6 +878,7 @@ def test_build_incremental_state_uses_touched_subdirs(monkeypatch, tmp_path: Pat
     assert captured_subdirs == ["pdb_structures_all/nmr_chemical_shifts"]
 
 
+@pytest.mark.medium
 def test_record_manifest_hash_state_persists_source_counts(tmp_path: Path):
     source = SourceDefinition(
         "pdb_unified_nmr",
@@ -911,6 +925,43 @@ def test_record_manifest_hash_state_persists_source_counts(tmp_path: Path):
     assert source_payload["subtrees"]["nmr_data"]["file_count"] == 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.small
+async def test_prepare_rsync_paths_skips_remote_discovery_for_single_pdb_mmcif_bucket(
+    tmp_path: Path,
+    monkeypatch,
+):
+    source = SourceDefinition(
+        "pdb_mmcif",
+        "PDB structures",
+        "rsync.rcsb.org::ftp/data/structures/divided/",
+        SourceKind.RSYNC,
+        local_subpath="pdb_structures_all",
+        mirror_mode=MirrorMode.PATHS,
+        mirror_paths=("mmCIF/ab/",),
+    )
+    cfg = EngineConfig(root=tmp_path, sources=[source])
+
+    called = {"discover": False}
+
+    def fake_discover(_source: SourceDefinition) -> set[str]:
+        called["discover"] = True
+        return {"mmCIF/ab/"}
+
+    monkeypatch.setattr(sync_mod, "_discover_existing_pdb_mmcif_buckets", fake_discover)
+
+    mirror_paths, synthetic = await sync_mod._prepare_rsync_paths_for_source(
+        source=source,
+        mirror_paths=("mmCIF/ab/",),
+        cfg=cfg,
+    )
+
+    assert mirror_paths == ("mmCIF/ab/",)
+    assert synthetic == {}
+    assert called["discover"] is False
+
+
+@pytest.mark.small
 def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_path: Path):
     transport_mod = importlib.import_module("efloud.transport.rsync")
     cfg = RsyncMirrorConfig(
@@ -948,6 +999,7 @@ def test_rsync_transport_does_not_retry_non_transient_failures(monkeypatch, tmp_
     assert len(attempts) == 1
 
 
+@pytest.mark.small
 def test_rsync_transport_does_not_retry_host_key_or_path_failures(monkeypatch, tmp_path: Path):
     transport_mod = importlib.import_module("efloud.transport.rsync")
     cfg = RsyncMirrorConfig(
@@ -1002,6 +1054,7 @@ def test_rsync_transport_does_not_retry_host_key_or_path_failures(monkeypatch, t
     assert len(attempts) == 2
 
 
+@pytest.mark.small
 def test_remote_display_target_uses_rsync_daemon_module_syntax() -> None:
     transport_mod = importlib.import_module("efloud.transport.rsync")
 

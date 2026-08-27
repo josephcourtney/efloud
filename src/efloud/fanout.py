@@ -204,17 +204,28 @@ async def _materialize_fanout(
                         "item_id": item.item_id,
                         "metadata": dict(item.metadata or {}),
                     }
+            except Exception as exc:
+                statuses[getattr(item, "item_id", "<unknown>")] = {
+                    "status": "error",
+                    "error": f"UNCAUGHT {type(exc).__name__}: {exc}",
+                }
             finally:
                 work_queue.task_done()
 
     n_workers = max(1, int(concurrency))
     workers = [asyncio.create_task(worker()) for _ in range(n_workers)]
-    for item in items:
-        await work_queue.put(item)
-    for _ in range(n_workers):
-        await work_queue.put(None)
-    await work_queue.join()
-    await asyncio.gather(*workers)
+    try:
+        for item in items:
+            await work_queue.put(item)
+        for _ in range(n_workers):
+            await work_queue.put(None)
+
+        await asyncio.gather(*workers)
+    finally:
+        for task in workers:
+            if not task.done():
+                task.cancel()
+
     return statuses
 
 

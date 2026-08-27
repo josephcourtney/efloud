@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 # Manifest payloads come from callers and JSON files, so the entrypoint must accept arbitrary input.
-def normalize_manifest(raw: Any) -> NormalizedManifest:  # noqa: ANN401
+def normalize_manifest(raw: Any) -> NormalizedManifest:  # ruff: ignore[any-type]
     raw_mapping = json_mapping_or_none(raw)
     if raw_mapping is None:
         msg = "manifest must be a JSON object"
@@ -65,7 +65,7 @@ def normalize_manifest(raw: Any) -> NormalizedManifest:  # noqa: ANN401
     return cast("NormalizedManifest", m)
 
 
-def merge_manifests(previous: Any | None, new: Any) -> NormalizedManifest:  # noqa: ANN401
+def merge_manifests(previous: Any | None, new: Any) -> NormalizedManifest:  # ruff: ignore[any-type]
     """
     Merge two manifests such that per-source results are retained across runs.
 

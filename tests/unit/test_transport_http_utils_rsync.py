@@ -30,7 +30,7 @@ from efloud.transport.rsync import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit, pytest.mark.medium]
+pytestmark = [pytest.mark.unit]
 
 
 class FakeResponse:
@@ -62,6 +62,7 @@ class FakeCache:
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_http_utils_helpers_and_fetchers(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("efloud.transport.http_utils.time.time", lambda: 123.0)
 
@@ -111,6 +112,7 @@ async def test_http_utils_helpers_and_fetchers(tmp_path: Path, monkeypatch):
     assert json_result.size_bytes > 0
 
 
+@pytest.mark.small
 def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
     cfg = RsyncMirrorConfig(
         name="mirror",
@@ -212,6 +214,7 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
     )
 
 
+@pytest.mark.small
 def test_build_rsync_cmd_logs_exact_argv_and_shell_rendering(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ):
@@ -237,6 +240,7 @@ def test_build_rsync_cmd_logs_exact_argv_and_shell_rendering(
     assert f"'{tmp_path / 'target dir'}'" in prepared
 
 
+@pytest.mark.small
 def test_build_rsync_cmd_includes_prune_empty_dirs_when_enabled(tmp_path: Path):
     cfg = RsyncMirrorConfig(
         name="mirror",
@@ -250,6 +254,7 @@ def test_build_rsync_cmd_includes_prune_empty_dirs_when_enabled(tmp_path: Path):
     assert "--prune-empty-dirs" in cmd
 
 
+@pytest.mark.small
 def test_file_list_stall_warning_emits_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     cfg = RsyncMirrorConfig(
         name="mirror",
@@ -291,6 +296,7 @@ def test_file_list_stall_warning_emits_once(tmp_path: Path, monkeypatch: pytest.
     assert phase_state["file_list_warning_emitted"] is True
 
 
+@pytest.mark.small
 def test_observe_runtime_phase_captures_file_list_count(monkeypatch: pytest.MonkeyPatch):
     phase_state: dict[str, str | float | bool | int] = {"phase": "connecting"}
     monkeypatch.setattr(rsync_mod.time, "perf_counter", lambda: 123.0)
@@ -302,6 +308,7 @@ def test_observe_runtime_phase_captures_file_list_count(monkeypatch: pytest.Monk
     assert phase_state["file_list_count"] == 67_200
 
 
+@pytest.mark.small
 def test_observe_runtime_phase_captures_transfer_stats(monkeypatch: pytest.MonkeyPatch):
     phase_state: dict[str, str | float | bool | int] = {"phase": "connecting"}
     monkeypatch.setattr(rsync_mod.time, "perf_counter", lambda: 456.0)
@@ -320,6 +327,7 @@ def test_observe_runtime_phase_captures_transfer_stats(monkeypatch: pytest.Monke
     assert phase_state["transfer_rate"] == "34.85MB/s"
 
 
+@pytest.mark.small
 def test_result_phase_prefers_transfer_markers_over_file_list_text() -> None:
     result = OpResult(
         status="failed",
@@ -338,6 +346,7 @@ def test_result_phase_prefers_transfer_markers_over_file_list_text() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_rsync_mirror_skips_fresh_and_updates_paths(tmp_path: Path, monkeypatch):
     mirror_root = tmp_path / "mirror"
     mirror_root.mkdir()
@@ -388,6 +397,7 @@ async def test_rsync_mirror_skips_fresh_and_updates_paths(tmp_path: Path, monkey
     assert meta.paths["nested/file.txt"]["updated"] == ["file.txt"]
 
 
+@pytest.mark.medium
 def test_rsync_meta_round_trip_and_invalid_read(tmp_path: Path):
     payload = {"version": 2, "paths": {"a": {"updated_at_unix": 1, "updated": ["x"]}}}
     meta = RsyncMirrorMeta.from_json(payload)
@@ -403,6 +413,7 @@ def test_rsync_meta_round_trip_and_invalid_read(tmp_path: Path):
     assert read_rsync_mirror_meta(tmp_path) is None
 
 
+@pytest.mark.small
 def test_rsync_process_once_does_not_set_start_new_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     captured_kwargs: dict[str, object] = {}
 

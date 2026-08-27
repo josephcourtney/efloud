@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import json
 import logging
-import subprocess  # noqa: S404 - this module intentionally executes the local rsync binary for mirror probes.
+import subprocess  # ruff: ignore[suspicious-subprocess-import] - this module intentionally executes the local rsync binary for mirror probes.
 import sys
 import time
 from dataclasses import dataclass
@@ -345,13 +345,14 @@ def _discover_existing_pdb_mmcif_buckets(source: SourceDefinition) -> set[str] |
         cmd.append(f"--port={source.port}")
     cmd.append(remote)
     try:
-        proc = subprocess.run(  # noqa: S603 - command argv is programmatic and uses validated source settings.
+        proc = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - command argv is programmatic and uses validated source settings.
             cmd,
             check=False,
             capture_output=True,
             text=True,
+            timeout=15,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
         logger.debug(
@@ -367,6 +368,20 @@ def _discover_existing_pdb_mmcif_buckets(source: SourceDefinition) -> set[str] |
     }
 
 
+def _should_prefilter_pdb_mmcif_buckets(
+    *,
+    source: SourceDefinition,
+    mirror_paths: tuple[str, ...] | None,
+) -> bool:
+    if source.id != "pdb_mmcif":
+        return False
+    if not mirror_paths:
+        return False
+    if len(mirror_paths) < 2:
+        return False
+    return all(_looks_like_mmcif_bucket_path(rel) for rel in mirror_paths)
+
+
 async def _prepare_rsync_paths_for_source(
     *,
     source: SourceDefinition,
@@ -375,7 +390,10 @@ async def _prepare_rsync_paths_for_source(
 ) -> tuple[tuple[str, ...] | None, dict[str, dict[str, Any]]]:
     if not mirror_paths:
         return mirror_paths, {}
-    if source.id != "pdb_mmcif":
+
+    # Only pay the remote discovery cost when this is a real
+    # multi-shard mmCIF bucket sweep. Single-path updates should stay local and test-friendly."
+    if not _should_prefilter_pdb_mmcif_buckets(source=source, mirror_paths=mirror_paths):
         return mirror_paths, {}
 
     existing = await asyncio.to_thread(_discover_existing_pdb_mmcif_buckets, source)

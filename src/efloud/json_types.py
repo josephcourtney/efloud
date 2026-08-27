@@ -11,19 +11,19 @@ type JsonMapping = Mapping[str, JsonValue]
 
 
 # These validators sit at deserialization boundaries and must accept arbitrary runtime payloads.
-def is_json_mapping(value: Any) -> TypeGuard[JsonMapping]:  # noqa: ANN401
+def is_json_mapping(value: Any) -> TypeGuard[JsonMapping]:  # ruff: ignore[any-type]
     return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
 
 
-def is_json_object(value: Any) -> TypeGuard[JsonObject]:  # noqa: ANN401
+def is_json_object(value: Any) -> TypeGuard[JsonObject]:  # ruff: ignore[any-type]
     return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
-def json_mapping_or_none(value: Any) -> JsonMapping | None:  # noqa: ANN401
+def json_mapping_or_none(value: Any) -> JsonMapping | None:  # ruff: ignore[any-type]
     return value if is_json_mapping(value) else None
 
 
-def json_object_or_none(value: Any) -> JsonObject | None:  # noqa: ANN401
+def json_object_or_none(value: Any) -> JsonObject | None:  # ruff: ignore[any-type]
     return value if is_json_object(value) else None
 
 

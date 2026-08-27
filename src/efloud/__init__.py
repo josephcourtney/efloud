@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from importlib.metadata import version
+
 from efloud.artifacts import build_path_index, canonical_path, sha256_hex, verify_gzip
 from efloud.fanout import FanoutItem, RestBaseFanoutTask, two_char_bucket
 from efloud.health import MirrorHealthSummary, build_mirror_health_summary
 from efloud.indexing import IndexDefinition, IndexRegistry, IndexStatus, JsonTtlIndex
 from efloud.manifest import load_latest_manifest, merge_manifests, normalize_manifest
+from efloud.materialization import http_dest_for_source_url, http_dests_for_source_urls
 from efloud.models import EngineConfig
 from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
 from efloud.query import query_target, root_payload, source_payload, store_payload
@@ -48,6 +51,8 @@ from efloud.transport.http import HttpCache, HttpCacheConfig
 from efloud.transport.http_utils import HttpFetchResult, cache_group_name, dest_for_http_source
 from efloud.transport.rsync import OpResult, RsyncCommandConfig, RsyncMirror, RsyncMirrorConfig
 
+__version__ = version("efloud")
+
 __all__ = [
     "AliasMap",
     "DefaultSyncPolicy",
@@ -78,6 +83,7 @@ __all__ = [
     "StorePathKind",
     "StoreSpec",
     "SyncResult",
+    "__version__",
     "build_mirror_health_summary",
     "build_path_index",
     "build_summary",
@@ -87,6 +93,8 @@ __all__ = [
     "derived_summary",
     "dest_for_http_source",
     "generic_store_metadata",
+    "http_dest_for_source_url",
+    "http_dests_for_source_urls",
     "iter_manifest_entries",
     "json_shape",
     "load_latest_manifest",

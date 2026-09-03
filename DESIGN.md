@@ -1,737 +1,965 @@
 # DESIGN
 
-> This document is normative. It defines the intended v2 architecture for `efloud`,
-> the compatibility constraints on that architecture, and the invariants new work
-> must preserve while the implementation migrates from the current alpha design.
+> This document is normative. It defines the intended architecture for `efloud`
+> and the invariants new work must preserve while the implementation migrates
+> from the current alpha design.
 
 ## Intent And Scope
 
-`efloud` is a library for building inspectable local mirrors of remote data. The
-design must satisfy two goals that pull in opposite directions:
+`efloud` is a versioned data-ingestion and artifact-repository library.
 
-- keep the default user experience simple
-- allow protocol, storage, policy, and execution behavior to evolve without
-  forcing invasive changes to the engine core
+It acquires external data through heterogeneous protocols, records what was
+observed and how it was obtained, stores immutable content efficiently, tracks
+provenance and integrity, and can freeze exact selections of artifact versions
+into reproducible immutable datasets.
 
-The v2 architecture therefore uses:
+The repository, not a filesystem mirror or JSON manifest, is the authoritative
+model of state.
 
-- one easy public `Engine`
-- an internal composed `Runtime`
-- a typed sync plan made of operations
-- adapter-driven protocol behavior
-- explicit storage abstractions
-- decision-based policy objects
-- queryable, stable, human-readable metadata by default
+The design must preserve the useful properties of the current implementation:
 
-The design is not a clean-slate replacement of current behavior. It must remain
-compatible with the package's existing strengths:
-
-- stable root-oriented storage
-- manifest-based transparency
-- mixed HTTP, REST, and `rsync` support
-- derived fanout materialization
+- simple programmatic ingestion
+- HTTP, REST, collection/fanout, and `rsync` support
+- deterministic planning and execution
+- inspectable local state
+- offline use after acquisition
+- derived artifacts and indexes
 - query and status helpers
-- deterministic outputs suitable for testing and automation
 
-## High-Level Goals
+while replacing path-centric storage and merged-manifest state with explicit
+artifact identity, version history, provenance, and repository-backed queries.
 
-- expose a compact top-level API for ordinary use
-- separate planning from execution so dry-run and future resume/checkpoint work
-  become straightforward
-- isolate protocol-specific logic behind adapters instead of branching through
-  the orchestration core
-- make artifact identity explicit rather than coupling all state to filesystem
-  paths
-- preserve transparency through manifests, plans, query responses, and readable
-  on-disk records where possible
-- support incremental growth toward richer policies, indexes, derived tasks, and
-  alternate storage backends
+## High-Level Architecture
+
+The default architecture is:
+
+```text
+Sources
+   |
+   v
+Engine / Planner / Executor
+   |
+   v
+Repository
+   |-----------------------------|
+   |                             |
+MetadataStore                 BlobStore
+(SQLite by default)           (content-addressed files by default)
+   |                             |
+   |-----------------------------|
+                 |
+                 v
+        immutable repository state
+                 |
+      +----------+-----------+----------------+
+      |                      |                |
+   Query API          Immutable datasets   optional views
+                                           / exports
+```
+
+The major responsibility boundaries are:
+
+- **ingestion** decides what external work to perform and records its results
+- **repository** owns authoritative artifact, observation, provenance, dataset,
+  validation, and retention state
+- **blob storage** owns immutable bytes identified by content digest
+- **metadata storage** owns identities and relationships
+- **query and dataset APIs** expose read-only views over repository state
+- **filesystem mirrors, manifests, exports, and virtual filesystems** are derived
+  representations, not authoritative storage
+
+## Core Invariant
+
+All authoritative mutation occurs through the `efloud` repository API.
+
+Filesystem projections and exported manifests are read-only or disposable
+representations of repository state. External code must never be able to mutate
+repository content by editing a projected path.
+
+This invariant makes complete provenance, transactional updates, historical
+reconstruction, and integrity checking possible.
+
+## Goals
+
+- expose a compact API for ordinary acquisition and repository use
+- support heterogeneous sources behind protocol adapters
+- make logical artifact identity independent of filesystem layout
+- distinguish retrieval observations from immutable content
+- retain complete acquisition and derivation provenance
+- deduplicate identical content without losing repeated observations
+- represent source state and file trees historically
+- create immutable datasets from exact artifact observations
+- support reproducible temporal or "as-of" dataset resolution
+- make derived artifacts first-class repository objects
+- use relational integrity for universal structure while allowing flexible JSON
+  metadata
+- keep bytes directly inspectable in a portable content-addressed blob store
+- permit optional native or virtual filesystem views without making them part of
+  the storage model
+- keep planning deterministic and policy decisions explainable
 
 ## Non-Goals
 
-- building a generic desktop sync client
-- hiding all implementation details behind opaque runtime objects
-- replacing human-readable metadata with opaque binary state
-- requiring advanced composition for ordinary use
-- introducing distributed orchestration or remote workers in the default design
-
-## Public API Tiers
-
-The public API is organized into three tiers.
-
-### Tier 1: Easy Mode
-
-This is the default user experience.
-
-```python
-from efloud import Engine, HttpSource, RsyncSource, RestCollectionSource
-
-engine = Engine(root="cache", sources=[...])
-result = await engine.sync()
-payload = engine.query("source:foo")
-status = engine.status()
-```
-
-Requirements:
-
-- one constructor for ordinary users
-- batteries-included runtime assembly
-- no requirement to understand planners, executors, or stores
-- deterministic defaults
-
-### Tier 2: Configured Engine
-
-This keeps the default orchestrator while allowing selective customization.
-
-```python
-engine = Engine(
-    root="cache",
-    sources=[...],
-    refresh_policy=...,
-    artifact_store=...,
-    metadata_store=...,
-    derived_tasks=[...],
-    indexes=[...],
-)
-```
-
-Requirements:
-
-- callers can override specific subsystems without forking the whole runtime
-- optional components still use the standard query and metadata model
-- defaults remain stable when not overridden
-
-### Tier 3: Fully Composed Runtime
-
-This is the escape hatch for advanced deployments.
-
-```python
-runtime = Runtime(
-    planner=...,
-    executor=...,
-    adapter_registry=...,
-    stores=...,
-    policies=...,
-    event_bus=...,
-    query_service=...,
-)
-await runtime.run(SyncRequest.all_sources())
-```
-
-Requirements:
-
-- all major subsystems are swappable
-- compatibility helpers may adapt Tier 1 or Tier 2 objects onto this runtime
-- the public contract remains explicit and typed
-
-## Architectural Decomposition
-
-The default v2 structure is:
-
-```text
-Engine
-  -> Runtime
-      -> SourceRegistry
-      -> ProtocolAdapterRegistry
-      -> Planner
-      -> Executor
-      -> StoreSet
-      -> PolicySet
-      -> QueryService
-      -> EventBus
-```
-
-Responsibilities:
-
-- `Engine`: convenience facade, compatibility surface, and default runtime
-  assembly
-- `Runtime`: orchestration boundary that coordinates planning, execution,
-  storage, policy, and querying
-- `Planner`: converts a sync request plus current state into a deterministic
-  operation plan
-- `Executor`: executes planned operations while respecting dependencies and
-  concurrency rules
-- `ProtocolAdapterRegistry`: resolves the adapter responsible for a source or
-  operation
-- `StoreSet`: owns artifact, metadata, state, cache, and index persistence
-- `PolicySet`: owns refresh, retention, naming, and validation decisions
-- `QueryService`: answers user and tooling queries against logical and physical
-  state
-- `EventBus`: emits observability and extension events without becoming the main
-  user model
+- being a general desktop file synchronization product
+- being a workflow scheduler or distributed compute system
+- interpreting application-specific scientific or business data
+- forcing all artifact metadata into a rigid relational schema
+- requiring a server database for ordinary local use
+- making a FUSE/WinFsp filesystem a core dependency
+- using filesystem paths, mtimes, inodes, or hardlinks as artifact identity
+- treating cache files or exported manifests as authoritative state
 
 ## Domain Model
 
-### Source Specs
+### Source
 
-Source specs are declarative inputs. They carry source facts, not execution
- state.
+A source is a stable declarative description of an external data origin.
 
-Shared source fields:
+Shared source fields include:
 
-- `id`
-- `description`
-- `tags`
-- `role`
-- `aliases`
-- `policy`
-- `metadata`
+- stable source identifier
+- description
+- protocol/source type
+- upstream locator
+- tags and role
+- aliases
+- source-specific metadata
+- policy hints
 
-Protocol-specific source types include:
+Protocol-specific source types may include:
 
 - `HttpSource`
 - `RestSource`
 - `RsyncSource`
-- `RestCollectionSource`
+- `CollectionSource`
+- `GitSource`
 
-Rules:
+Source definitions describe facts and configuration. Execution state belongs in
+runs, operations, observations, and source snapshots.
 
-- source identity must be stable across runs
-- protocol-specific fields belong only to protocol-specific source types
-- source specs may include policy hints, but policy execution belongs to policy
-  objects
-- source specs must remain serializable for manifests and diagnostics
+Protocol-specific fields must remain isolated to the source type or adapter that
+understands them.
 
-### Artifact Model
+### Logical Artifact
 
-Artifacts have a logical identity independent of their storage backend.
+A logical artifact names a thing whose content may change over time.
 
-`ArtifactRef` represents:
+Examples:
 
-- artifact identifier
-- source identifier
-- artifact type
-- logical path
-- media type
-- storage key
-
-`ArtifactRecord` extends that with:
-
-- size
-- checksum
-- creation timestamp
-- metadata
-- provenance
-
-Rules:
-
-- logical identity must not depend on absolute filesystem paths
-- default filesystem-backed implementations must still expose the resolved local
-  path for transparency
-- query responses must expose both logical identity and physical location when a
-  physical location exists
-
-### Provenance Model
-
-Provenance records describe how an artifact came to exist.
-
-Required provenance fields:
-
-- `run_id`
-- `source_id`
-- `operation_id`
-
-Optional provenance fields may include:
-
-- input artifact identifiers
-- upstream locator
-- transport metadata
-- task name and version
-
-Rules:
-
-- derived tasks and indexes must record provenance in the same model as fetched
-  artifacts
-- provenance should be stable enough to support debugging, audit, and rebuild
-  decisions
-
-## Runtime Model
-
-`Runtime` coordinates the main pluggable subsystems.
-
-```python
-@dataclass
-class Runtime:
-    planner: SyncPlanner
-    executor: SyncExecutor
-    adapter_registry: ProtocolAdapterRegistry
-    stores: StoreSet
-    policies: PolicySet
-    event_bus: EventBus
-    query_service: QueryService
+```text
+reference:taxonomy:nodes
+weather:noaa:station:KBDR:daily
+pdb:8ef4:mmcif
 ```
 
-### Store Set
+The repository treats the identifier as an opaque, stable key. Domain packages
+may define conventions for keys, but `efloud` must not interpret their domain
+meaning.
 
-The runtime groups storage concerns into a `StoreSet`.
+Logical artifact identity must not depend on:
 
-Required stores:
+- absolute paths
+- local cache roots
+- inode identity
+- retrieval time
+- storage backend
 
-- `artifact_store`
-- `metadata_store`
-- `state_store`
+### Content Object
 
-Optional stores:
+A content object is an immutable byte sequence identified by content digest.
 
-- `cache_store`
-- `index_store`
+The default identity is SHA-256:
 
-Rules:
+```text
+sha256:<hex digest>
+```
 
-- storage concerns must remain separate even when multiple stores share the same
-  filesystem root
-- the default implementation may colocate files on disk but must preserve
-  conceptual boundaries
+A content record includes at least:
 
-### Policy Set
+- content identifier
+- byte size
+- media type when known
+- blob-store key
 
-The runtime groups policy concerns into a `PolicySet`.
+Identical bytes must reuse the same content object even when they are observed
+multiple times, by different sources, or under different logical artifact keys.
 
-Required policies:
+Content objects are immutable. Replacement means creating or reusing another
+content object and recording a new observation.
 
-- `refresh_policy`
-- `retention_policy`
-- `naming_policy`
+### Observation
 
-Optional policies:
+An observation records that a logical artifact was observed with particular
+content under particular acquisition circumstances.
 
-- `validation_policy`
+An observation includes at least:
 
-Rules:
+- observation identifier
+- logical artifact key
+- content identifier
+- source identifier when applicable
+- run and operation identifiers
+- observation time
+- source-relative path or upstream locator when applicable
+- source-provided version or modification metadata when available
+- transport/source-specific metadata
 
-- policies make decisions; they do not perform transport or storage work
-- policy outputs must be structured enough to explain why work was planned
+Repeated acquisition of unchanged bytes therefore produces:
 
-## Planning And Execution
+```text
+1 logical artifact
+1 content object
+N observations
+```
 
-### Sync Request
+This preserves acquisition history without duplicating content.
 
-`SyncRequest` defines the caller's intent.
+### Materialization
 
-Core request fields:
+A materialization describes a physical representation of content, such as a blob
+path, native checkout, or mirror path.
 
-- `targets`
-- `refresh`
-- `dry_run`
-- `rebuild_indexes`
-- `rebuild_derived`
+Materialization is not identity.
 
-Requirements:
+The repository must remain correct if a disposable materialized view is removed
+and reconstructed from authoritative blobs and metadata.
 
-- empty targets means all sources
-- requests must be serializable for observability and diagnostics
+### Provenance
 
-### Sync Plan
+Provenance records describe how observations and derived artifacts came to
+exist.
 
-`SyncPlan` contains:
+A provenance record should include:
 
-- `run_id`
-- ordered operations
-- planning decisions
+- run identifier
+- operation identifier
+- producer/task identity
+- producer/task version when applicable
+- source identifier when applicable
+- upstream locator when applicable
+- input observation identifiers
+- normalized parameters
+- start and completion times
+- transport or transformation metadata
 
-`PlanningDecision` explains:
+Fetched and derived artifacts use the same provenance model.
 
-- the subject being considered
-- the action selected
-- the reason
-- structured decision details
+Provenance therefore forms a directed graph from source observations through
+transformations, indexes, and other derived artifacts.
 
-Requirements:
+### Validation
 
-- plans must be deterministic for a given request and planning state
-- dry-run must use the same planning path as real execution
-- decisions must be recorded in a form suitable for humans and machines
+Validation results are immutable records associated with content identity and a
+validator identity/version.
 
-### Operation Model
+Validation is layered:
 
-Execution is expressed as typed operations such as:
+1. **storage integrity** - content still hashes to its content identifier
+2. **generic encoding/container validation** - for example gzip or JSON validity
+3. **domain validation** - supplied by consuming packages
 
-- `fetch_http`
-- `fetch_rest`
-- `mirror_rsync`
-- `mirror_rsync_paths`
-- `enumerate_collection`
-- `fetch_collection_item`
-- `delete_artifact`
-- `build_derived`
-- `build_index`
-- `validate_artifact`
+A validation result should be reusable when both content identity and validator
+identity/version are unchanged.
 
-Each operation contains:
+Validation must never silently mutate artifact content.
 
-- `op_id`
-- `kind`
-- `source_id`
-- typed input payload
-- dependency identifiers
+### Source Snapshot
 
-Requirements:
+A source snapshot records what state of a source was actually observed.
 
-- operations must be safe to topologically order
-- dependencies must be explicit
-- operation records must be stable enough for future retry, resume, and audit
+Snapshot evidence is source-specific. Examples include:
 
-### Planner Interface
+- HTTP ETag, Last-Modified value, or response digest
+- REST collection enumeration identity
+- `rsync` tree identity and requested path scope
+- Git commit or tree identity
 
-The planner is responsible for assembling a full plan from:
+Snapshots must explicitly represent coverage or completeness. "Not observed"
+must not be conflated with "observed absent".
 
-- requested targets
-- registered sources
-- adapter capabilities
-- store state
-- policy decisions
-- derived task and index definitions
+For partial synchronization, the snapshot records the selectors or subtrees that
+were actually examined.
 
-The planner must not perform network or filesystem mutation as part of planning.
+### Tree Snapshot
 
-### Executor Interface
+File-tree sources may be represented by immutable Merkle-style tree snapshots.
 
-The executor is responsible for:
+A tree consists of entries that reference:
 
-- dependency-aware scheduling
-- concurrency control
-- adapter dispatch
-- operation result recording
-- event emission
+- content objects for files
+- child tree identities for directories
+- symlink targets when preserved
 
-The executor must not invent new work outside the approved plan except for local
- bookkeeping required to persist results.
+Tree identity is derived from canonical ordered entries and semantic tree
+metadata. Local filesystem details such as inode, ctime, or local ownership must
+not participate in tree identity by default.
 
-## Protocol Adapter Architecture
+Unchanged files and subtrees are shared between snapshots.
 
-Protocol-specific logic moves behind adapters.
+The original source-relative path remains recorded and can be reconstructed even
+though the authoritative bytes live in the blob store.
 
-Each adapter must:
+## Repository
 
-- declare which source type it supports
-- plan operations for that source
-- execute operations it owns
+`Repository` is the authoritative service boundary over metadata and blobs.
 
-Default built-ins:
+Conceptually:
 
-- `HttpFileAdapter`
-- `RestJsonAdapter`
-- `RsyncAdapter`
-- `RestCollectionAdapter`
+```python
+Repository(
+    metadata_store=SQLiteMetadataStore(...),
+    blob_store=FilesystemBlobStore(...),
+)
+```
 
-Rules:
+The repository coordinates transactions across these stores and exposes
+semantic operations rather than arbitrary CRUD.
 
-- adding a new protocol must not require editing the engine core
-- adapter planning semantics may differ by protocol, but operation and metadata
-  recording semantics must remain consistent across adapters
-- adapter output must preserve transparency in query and manifest layers
+Typical mutation operations include:
+
+- ingest or record an observation
+- record derived output
+- record validation
+- create or update source snapshots
+- resolve and publish datasets
+- apply retention decisions
+- remove unreferenced content after policy permits it
+
+Typical read operations include:
+
+- resolve a logical artifact
+- enumerate observation history
+- open content
+- inspect provenance
+- query source snapshots
+- open immutable datasets
+
+The public API should avoid exposing "write this repository path" as a primitive.
+Callers declare artifact semantics and input relationships; the repository owns
+physical placement and provenance recording.
 
 ## Storage Architecture
 
-### Artifact Store
-
-The artifact store owns artifact bytes and payload materialization.
-
-Default implementation:
-
-- `FilesystemArtifactStore`
-
-Potential alternates:
-
-- object storage
-- content-addressed storage
-- SQLite-backed storage
-
-Rules:
-
-- filesystem remains the default
-- callers must be able to resolve a human-meaningful location when one exists
-- stores must support deterministic writes suitable for tests
-
 ### Metadata Store
 
-The metadata store owns:
+The default metadata store is SQLite.
 
-- run records
-- operation records
-- artifact records
-- provenance
-- statuses
+The relational model should encode universal structure and integrity constraints,
+including entities such as:
 
-Default implementation:
+```text
+sources
+runs
+operations
+logical_artifacts
+content_objects
+observations
+provenance_edges
+validations
+source_snapshots
+tree_snapshots
+datasets
+dataset_members
+materializations
+```
 
-- JSON manifest files, potentially with light indexing support
+Foreign keys, unique constraints, and transactions should enforce repository
+invariants where possible.
 
-Rules:
+Protocol- and domain-specific details belong in JSON columns rather than causing
+transport-specific relational columns to proliferate.
 
-- metadata must remain readable and inspectable by default
-- v1 manifest compatibility must be preserved during migration
+SQLite is the local default because the normal repository is single-machine and
+should not require a service. The repository API should permit a future
+PostgreSQL metadata implementation if shared multi-machine repositories become a
+requirement.
 
-### State Store
+### Blob Store
 
-The state store owns:
+The default blob store is a portable content-addressed filesystem layout, for
+example:
 
-- mirror-state hash trees
-- source freshness data
-- transport-specific sync state that is not artifact content
+```text
+objects/
+  sha256/
+    ab/
+      abcdef...
+```
 
-Rules:
+Blob storage rules:
 
-- mirror-state concerns must not be conflated with artifact storage
-- future migration to database-backed state must not require planner or query
-  rewrites
+- content is immutable after installation
+- blob identity is derived from bytes
+- writes occur through temporary files followed by atomic installation where the
+  backend permits it
+- identical content is stored once
+- storage paths are implementation details
+- whole-file content addressing is the default
 
-## Policy Architecture
+Chunk-level deduplication is not part of the initial design. It may be added for
+large-file workloads only if measurements justify the complexity.
 
-Policies return decisions rather than bare booleans.
+Potential future blob backends include object storage, but the repository model
+must not depend on filesystem-specific features.
 
-### Refresh Policy
+### Transactional Ingestion
 
-The refresh policy returns a `RefreshDecision` containing:
+The repository must not expose metadata referencing unavailable content.
 
-- action
-- reason
-- details
+The default ingestion sequence is:
 
-Actions may include:
+```text
+acquire bytes into temporary storage
+        |
+        v
+compute content identity and basic integrity
+        |
+        v
+atomically install or reuse immutable blob
+        |
+        v
+metadata transaction
+  - content record
+  - observation
+  - provenance
+  - source/run/operation updates
+        |
+        v
+commit
+```
 
-- `skip`
-- `fetch`
-- `revalidate`
-- `mirror`
-- `mirror_paths`
-- `rebuild`
+Equivalent guarantees must be preserved by alternate storage backends.
 
-Default refresh behavior should layer simple rules in priority order:
+## Ingestion And Synchronization
 
-1. explicit refresh request
-2. missing artifact
-3. previous run failure
-4. TTL expiration
-5. dependency change
-6. otherwise skip or revalidate depending on transport
+### Engine
 
-Source-level policy hints may include:
+`Engine` is the high-level convenience facade for acquisition.
 
-- TTL
-- refresh-on-error
-- allow-revalidate
-- priority
+It assembles the default repository, planner, executor, adapters, policies, and
+query services while keeping advanced composition optional.
 
-Rules:
+A simple usage model should remain possible:
 
-- the decision model must remain explainable
-- refresh logic should be centralized, not reimplemented inside adapters
+```python
+engine = Engine(root="repo", sources=[...])
+result = await engine.sync()
+```
 
-### Retention, Naming, And Validation
+### Planning
 
-Retention, naming, and validation policies are separate concerns.
+Planning converts caller intent and repository state into deterministic typed
+operations.
 
-Requirements:
+Planning may consider:
 
-- retention rules must describe artifact deletion or tombstoning behavior
-- naming rules must stabilize logical paths and storage keys
-- validation rules must be optional and must not silently mutate artifacts
+- requested targets
+- source definitions
+- source snapshot state
+- current artifact observations
+- adapter capabilities
+- refresh policies
+- derived dependencies
+- validation state
 
-## Derived Tasks
+Planning performs no authoritative mutation or network retrieval.
 
-Derived tasks become dependency-aware planned work rather than purely
- post-sync callbacks.
+Dry-run uses the same planning path as real execution.
 
-Each derived task should declare:
+Planning decisions must be explainable and serializable.
 
-- `name`
-- `version`
-- dependencies
-- planned operations
+### Execution
 
-Requirements:
+Execution performs approved operations, controls concurrency, dispatches to
+protocol adapters, and commits resulting repository records.
 
-- derived work must participate in planning and policy decisions
-- reconciliation behavior for collection-like outputs must be explicit
-- deletion semantics must be configurable through a reconciliation policy
+Execution must not invent unrelated work outside the approved plan except local
+bookkeeping necessary to safely complete an operation.
 
-## Indexing
+### Protocol Adapters
 
-Indexes are first-class derived artifacts with stronger cache semantics.
+Protocol-specific acquisition behavior belongs behind adapters.
 
-Each index definition should declare:
+Each adapter must:
 
-- identifier
-- description
-- dependencies
-- TTL
-- builder
+- declare the source/operation types it supports
+- plan or contribute protocol-specific operations
+- execute the operations it owns
+- emit normalized observations, source snapshots, and operation results
 
-Requirements:
+Initial adapters include:
 
-- index build decisions must be dependency-aware
-- query interfaces must surface both status and payload
-- existing TTL-backed JSON index behavior should remain representable during
-  migration
+- HTTP file acquisition
+- REST acquisition
+- `rsync` tree synchronization
+- collection/fanout acquisition
+
+Git should become a first-class adapter for versioned upstream repositories.
+
+Adding a protocol must not require modifying repository semantics.
+
+### Collection Sources
+
+Collection/fanout acquisition is a first-class source pattern rather than a
+special REST_BASE concept.
+
+A collection source separates:
+
+- enumeration of item identities
+- per-item retrieval
+- naming/logical artifact mapping
+- reconciliation/completeness policy
+
+REST pagination and REST fanout are implementations of this more general model.
+
+### File-Tree Sources
+
+For file-tree sources such as `rsync`, the adapter must report individual
+artifact observations and enough tree state to construct source snapshots.
+
+The repository must not need to rescan its own mirror later merely to rediscover
+which files it previously ingested.
+
+Source-relative paths are retained as metadata. A current source-like tree may be
+materialized for convenience, but it is a derived view over repository state.
+
+### Derived Artifacts
+
+Derived outputs are ordinary artifacts with provenance, not a separate cache
+object family.
+
+A derived task declares:
+
+- stable task identity
+- task version
+- input observations or selectors
+- normalized parameters
+- output artifact identities
+
+The repository records the resulting observations and provenance edges.
+
+Derived invalidation should prefer exact dependency identities over time-based
+TTL expiration:
+
+```text
+recorded input content/observation identities
+        !=
+current selected input identities
+```
+
+TTL remains appropriate for deciding when an external source should be
+re-observed, not for deterministic dependency invalidation.
+
+### Indexes
+
+Indexes are specialized derived artifacts.
+
+Index definitions may add query-oriented metadata and convenience APIs, but
+index outputs and their provenance are stored using the ordinary artifact model.
+
+Disposable database indexes used solely to accelerate repository queries remain
+implementation caches and are not repository artifacts.
+
+## Time Model
+
+The repository must distinguish temporal concepts rather than using one generic
+timestamp.
+
+Relevant times may include:
+
+- request/start time
+- observation time
+- storage/commit time
+- upstream modification time
+- upstream validity interval when explicitly provided
+
+Temporal dataset or artifact resolution must explicitly state which temporal
+semantics it uses.
+
+Observation time is always repository provenance; upstream time is source data
+and may be absent or unreliable.
+
+## Immutable Datasets
+
+A dataset is a reproducible immutable selection of exact artifact observations.
+
+The model separates definition from resolved state:
+
+```text
+DatasetDefinition
+      |
+      | resolve against repository state
+      v
+DatasetManifest
+      |
+      | canonical identity
+      v
+ImmutableDataset
+```
+
+### Dataset Definition
+
+A definition is an intensional selection rule. It may express operations such as:
+
+- exact observation selection
+- latest observation for an artifact
+- latest observation before a timestamp
+- selection by namespace, source, role, or tag
+
+A definition is not itself sufficient for reproducibility because future
+resolution may produce a different result.
+
+### Dataset Manifest
+
+Resolution freezes every selector to exact observation and content identities.
+The resulting manifest contains no unresolved temporal queries.
+
+Dataset identity must not depend on local storage paths or cache locations.
+
+The repository may expose two useful identities:
+
+- **dataset identity** - exact membership including observation/provenance identity
+- **dataset content identity** - semantic membership plus content identities,
+  allowing two independently observed but byte-identical datasets to be
+  recognized as content-equivalent
+
+### Dataset Resolution Policy
+
+Temporal multi-source resolution may require consistency policies such as:
+
+- latest-before a timestamp
+- same-run observations
+- maximum observation-time skew
+- required complete source snapshots
+
+The resolver must not infer absence from incomplete source coverage.
+
+### Immutable Dataset API
+
+Consumers should have a small read-only interface, for example:
+
+```python
+dataset = repository.dataset(dataset_id)
+dataset.artifacts()
+dataset.artifact("logical:key")
+dataset.open("logical:key")
+dataset.verify()
+```
+
+A consumer can therefore operate entirely on frozen artifact versions without
+knowing whether data originally came from HTTP, REST, `rsync`, Git, or a derived
+operation.
+
+## Retention And Garbage Collection
+
+Retention operates on repository references, not on arbitrary filesystem paths.
+
+Content referenced by immutable datasets must not be collected.
+
+Policies may retain, for example:
+
+- all observations referenced by datasets
+- the latest N observations for each logical artifact
+- observations newer than an age threshold
+- provenance ancestors required by retained derived artifacts
+
+Content is collectible only when no retained observation, dataset, or other
+protected repository object requires it.
+
+Garbage collection should be reachability-based and should support a grace period
+before physical blob deletion.
 
 ## Query Architecture
 
-The query layer sits above stores and metadata, not directly on raw files.
+The query layer operates against repository state, not raw mirror directories or
+merged JSON manifests.
 
-Supported target kinds should include:
+Useful target classes include:
 
-- `root`
-- `source:<id>`
-- `source:<id>#/locator`
-- `artifact:<artifact-id>`
-- `index:<index-id>`
-- `run:<run-id>`
-- `store:<store-id>`
+- source
+- logical artifact
+- observation
+- content
+- source snapshot
+- run
+- operation
+- dataset
+- derived artifact/index
 
-Requirements:
+Queries should expose physical storage locations only as optional implementation
+information. Logical identity, provenance, and content identity are primary.
 
-- query results must expose logical identity and physical location when possible
-- source queries must continue to support locator resolution
-- v1 query forms must remain supported during migration
+Existing alpha query forms may remain available through compatibility parsers
+while the repository-backed query API becomes authoritative.
 
-## Event Architecture
+## Manifests And Exports
 
-Events support observability and optional extension.
+Human-readable manifests remain important for transparency and interoperability,
+but they are exports of authoritative repository state.
 
-Useful default event types include:
+The repository may export:
 
-- `plan.built`
-- `source.planned`
-- `operation.started`
-- `operation.completed`
-- `operation.failed`
-- `artifact.materialized`
-- `artifact.deleted`
-- `derived.completed`
-- `index.completed`
-- `run.completed`
+- sync/run summaries
+- source snapshots
+- artifact manifests
+- immutable dataset manifests
+- provenance subsets
 
-Rules:
+The current merged sync manifest may be supported as a compatibility view, but it
+must not remain a second state database.
 
-- events are supplementary, not the main user interface
-- the default event bus may be a no-op
-- event payloads must be structured and deterministic
+A targeted sync therefore does not require manifest merging to preserve untouched
+source state; historical state already exists as repository records.
 
-## Locking And Concurrency
+## Native Filesystem Views
 
-Locking and concurrency are explicit runtime concerns.
+Source-like trees and dataset trees may be materialized as ordinary native
+filesystem views.
 
-### Locking
+Possible strategies include:
 
-The default runtime uses a filesystem lock for one-root-at-a-time sync safety.
+- copies, always available
+- hardlinks when safe and supported
+- reflinks/clones when supported
+- symlinks where their semantics are acceptable
 
-Requirements:
+These mechanisms are optimizations only. Repository correctness must never
+depend on link semantics or filesystem snapshot support.
 
-- lock ownership must be explicit
-- failure to acquire a lock must produce a clear error
+Materialized views should be read-only to ordinary consumers where practical.
+Mutation of repository state must still occur through the repository API.
 
-### Concurrency
+## Optional Virtual Filesystem
 
-The executor must support:
+A read-only virtual filesystem may provide convenient file-oriented projections
+of repository state. It is an optional utility, not a core storage component.
+
+Possible views include:
+
+- current source state
+- a source snapshot
+- repository state as of a specified time
+- an immutable dataset
+- all observations or distinct content versions of one logical artifact
+
+Filesystem lookup conceptually resolves:
+
+```text
+view + path
+   -> logical artifact/member
+   -> selected observation
+   -> content identity
+   -> blob
+```
+
+The VFS must never become an authoritative mutation path.
+
+## Policy Architecture
+
+Policies make structured decisions and do not directly perform transport or
+storage work.
+
+Important policy areas include:
+
+- source refresh
+- retention and garbage collection
+- collection reconciliation/completeness
+- naming/logical artifact mapping
+- validation
+- dataset resolution
+
+Policy outputs should include actions, reasons, and structured details suitable
+for diagnostics and dry-run output.
+
+## Concurrency And Locking
+
+Repository mutation must be transactionally safe.
+
+The default SQLite repository may use process/root locking in addition to SQLite
+transactions where needed to coordinate blob installation and metadata commits.
+
+Execution supports:
 
 - serial execution
 - bounded parallel execution for independent operations
-- per-adapter or per-source concurrency limits
+- per-source or per-adapter concurrency limits
 
-Rules:
+Concurrency must respect operation dependencies and repository transaction
+boundaries.
 
-- concurrency must respect operation dependencies
-- concurrency defaults must favor correctness over maximum throughput
+Defaults favor correctness over maximum throughput.
 
-## Default Runtime Assembly
+## Public API Shape
 
-The default `Engine` constructor assembles:
+The public API should distinguish mutable repository capabilities from read-only
+views.
 
-- filesystem-backed artifact storage
-- manifest-backed metadata storage
-- filesystem-backed state and index stores
-- default policy set
-- built-in protocol adapters
-- a default planner
-- a default executor
-- a null event bus
-- a query service
+Conceptual interfaces include:
 
-This assembly must remain an implementation detail of Tier 1 and Tier 2 usage.
+```text
+Engine                 acquisition convenience facade
+Repository             authoritative mutable repository service
+RepositoryView         general read/query capability
+ImmutableDataset       frozen read-only capability
+```
 
-## Compatibility Requirements
+Consumers that only analyze data should be able to depend on read-only
+interfaces without acquiring transport or mutation capabilities.
 
-The v2 design must preserve compatibility with current functionality while the
- implementation migrates.
+Advanced users may compose alternate adapters, policies, metadata stores, or blob
+stores without patching core repository logic.
 
-Required compatibility guarantees:
+## Default Repository Layout
 
-- existing `sync(cfg)` behavior remains available through a compatibility layer
-- current `EngineConfig` and `SourceDefinition` can be adapted into v2 runtime
-  inputs during the transition
-- current manifest consumers continue to function, either against the existing
-  schema or an explicit compatibility serializer
-- current query targets remain valid
-- current derived fanout workflows remain expressible
-- current index registry behavior remains representable
+The default local implementation may use a layout such as:
 
-Compatibility may be achieved by adapters, shims, translators, or staged
- deprecations, but not by silently dropping current capabilities.
+```text
+repo/
+  metadata.sqlite
+  objects/
+    sha256/
+      ...
+  views/
+    ...                 # optional/disposable materializations
+  exports/
+    ...                 # optional manifests and portable exports
+  operational/
+    ...                 # HTTP cache, rate-limit state, locks, temporary state
+```
 
-## Package Layout
+Only `metadata.sqlite` and retained blob objects are authoritative repository
+state. Disposable query indexes, caches, views, and exports must be reconstructable
+or explicitly classified as operational state.
 
-A target v2 package layout is:
+## Caches Versus Repository Data
+
+The term "cache" must be reserved for state whose deletion does not destroy
+semantic history or reproducibility.
+
+Repository data includes:
+
+- retained content objects
+- observations
+- provenance
+- source snapshots
+- derived artifact records
+- dataset manifests and membership
+
+Implementation caches include:
+
+- HTTP response cache
+- rate-limit/backoff state
+- disposable query indexes
+- temporary materializations
+
+If deleting an object loses provenance or prevents reconstruction of a retained
+dataset, it is not a cache.
+
+## Compatibility And Migration
+
+The repository architecture is a migration target. Existing alpha APIs may be
+adapted incrementally.
+
+A preferred migration sequence is:
+
+1. introduce repository artifact, content, observation, and provenance records
+2. make existing protocol adapters populate repository state alongside current
+   manifests
+3. make the blob store content-addressed and authoritative
+4. make source/file-tree synchronization produce artifact observations directly
+5. represent derived outputs and indexes as ordinary artifacts
+6. implement source and tree snapshots
+7. implement immutable datasets and migrate generic catalog functionality into
+   `efloud`
+8. make repository queries authoritative and reduce manifests/mirror scans to
+   compatibility views
+9. add Git and broader collection-source support
+10. remove obsolete path-centric and duplicated state mechanisms
+
+During migration:
+
+- existing `sync(cfg)` behavior may remain through a compatibility layer
+- current `EngineConfig` and `SourceDefinition` may be adapted to new source
+  specifications
+- current manifest consumers may use explicit compatibility serializers
+- current query targets may map onto repository queries
+- compatibility code must be isolated, testable, and removable
+
+## Suggested Package Structure
+
+Avoid excessive fragmentation. A target structure is approximately:
 
 ```text
 efloud/
-  api/
-    engine.py
-    builders.py
-  domain/
-    sources.py
-    artifacts.py
-    provenance.py
-    operations.py
-    plans.py
-    results.py
-  adapters/
-    base.py
+  engine.py
+  repository.py
+  sources.py
+  artifacts.py
+  provenance.py
+  datasets.py
+  operations.py
+  policy.py
+  validation.py
+  query.py
+  indexing.py
+
+  storage/
+    metadata.py
+    sqlite.py
+    blobs.py
+    filesystem.py
+
+  transport/
     http.py
     rest.py
     rsync.py
-    rest_collection.py
-  stores/
-    artifacts.py
-    metadata.py
-    state.py
-    index.py
-    cache.py
-    filesystem.py
-    sqlite.py
-  policy/
-    refresh.py
-    retention.py
-    naming.py
-    validation.py
-  planner/
-    default.py
-  executor/
-    default.py
-    parallel.py
-    locks.py
-  query/
-    parser.py
-    service.py
-    locators.py
-  observe/
-    events.py
-    logging.py
+    collection.py
+    git.py
+
   compat/
     manifest_v1.py
 ```
 
-This layout is intended to make subsystem boundaries visible without forcing a
-large public API.
+Internal dependency direction should remain simple:
+
+```text
+primitive domain models
+        |
+        v
+repository / storage
+        |
+        +----> datasets
+        +----> query
+        |
+        v
+planning / execution / adapters
+        |
+        v
+Engine
+```
+
+Read-only dataset and query code must not depend on transport implementations.
 
 ## Design Invariants
 
 All implementations must preserve these invariants:
 
-- sync output is deterministic for deterministic upstream inputs
-- metadata remains inspectable and stable enough for automation
-- the default experience stays simple
-- advanced customization does not require patching core engine code
-- artifacts remain queryable after materialization
-- protocol-specific details do not leak into unrelated subsystems
+- the repository is the authoritative source of semantic state
+- all authoritative mutation goes through repository operations
+- content objects are immutable and content-addressed
+- logical artifact identity is independent of storage paths
+- repeated observations do not require duplicate content
+- observations retain acquisition provenance even when content is unchanged
+- fetched and derived artifacts use the same provenance model
+- source snapshot completeness is explicit
+- filesystem paths and mirrors are representations, not identity
+- immutable datasets resolve to exact observations
+- retained datasets protect all content required to read them
+- manifests and filesystem views are derived/exported state
+- deterministic inputs and repository state produce deterministic plans
+- policies remain explainable
+- protocol-specific details do not leak into repository semantics
+- domain-specific interpretation remains outside `efloud`
+- the default local implementation requires no database server
+- optional filesystem projections are read-only mutation boundaries
 - compatibility shims are explicit and testable

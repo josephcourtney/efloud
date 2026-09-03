@@ -89,7 +89,6 @@ class HttpCache:
                 storage = AsyncSqliteStorage(
                     database_path=db_path,
                     default_ttl=float(cfg.ttl_seconds) if cfg.ttl_seconds is not None else None,
-                    refresh_ttl_on_access=True,
                 )
 
                 next_transport = httpx.AsyncHTTPTransport()
@@ -100,7 +99,7 @@ class HttpCache:
                     # `always_cache` knob; newer ones do not. If unsupported, ignore force_cache
                     # rather than crashing at runtime.
                     try:
-                        cache_options = CacheOptions(always_cache=True)  # ty: ignore[unknown-argument]  # compatibility with older Hishel versions that exposed always_cache
+                        cache_options = CacheOptions(always_cache=True)  # ty: ignore[unknown-argument]
                         policy = SpecificationPolicy(cache_options=cache_options)
                     except TypeError:
                         logger.warning(
@@ -174,11 +173,20 @@ class HttpCache:
         """
         Request by absolute URL.
 
-        If hishel is enabled, GET responses may be served from or stored in the cache
+        If hishel is enabled, responses may be served from or stored in the cache
         according to RFC 9111.
         """
         method_u = method.upper()
-        return await self._send(method_u, url, **kwargs)
+
+        extensions = dict(kwargs.pop("extensions", {}) or {})
+        extensions.setdefault("hishel_refresh_ttl_on_access", True)
+
+        return await self._send(
+            method_u,
+            url,
+            extensions=extensions,
+            **kwargs,
+        )
 
     async def get(self, url: str, *, refresh: bool = False, **kwargs: Any) -> httpx.Response:
         headers = (kwargs.pop("headers", {}) or {}).copy()

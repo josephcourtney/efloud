@@ -10,13 +10,57 @@ from efloud.json_types import JsonArray, JsonMapping, JsonObject, JsonValue, jso
 from efloud.manifest import load_latest_manifest
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
+from efloud.repository import Repository
+from efloud.repository_compat import repository_exists, repository_source_entry
 from efloud.source_results import manifest_entry_for_source, source_status_hint
 
 
-def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]]:
-    warnings: list[str] = []
-    root = Path(cfg.root)
+def _repository_health(repository: Repository, cfg: EngineConfig) -> dict[str, Any]:
+    mirror_timestamps: dict[str, float | None] = {}
+    missing_roots: list[str] = []
+    rsync_results: dict[str, JsonObject] = {}
+    http_results: dict[str, JsonObject] = {}
+    errors: list[str] = []
+    for source in cfg.sources:
+        entry = repository_source_entry(repository, source, cfg=cfg)
+        if source.kind is SourceKind.RSYNC:
+            snapshot = repository.latest_source_snapshot(source.id)
+            mirror_timestamps[source.id] = snapshot.observed_at if snapshot is not None else None
+            if source.local_subpath is None or not (
+                Path(cfg.root) / cfg.mirrors_dir / source.local_subpath
+            ).exists():
+                missing_roots.append(source.id)
+            rsync_results[source.id] = entry
+        elif source.kind in {SourceKind.HTTP, SourceKind.REST}:
+            http_results[source.id] = entry
+        error = entry.get("error")
+        if isinstance(error, str):
+            errors.append(f"{source.id}: {error}")
+    return {
+        "mirror_timestamps": mirror_timestamps,
+        "missing_roots": missing_roots,
+        "manifest_errors": errors,
+        "rsync_results": rsync_results,
+        "http_results": http_results,
+    }
 
+
+def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]]:
+    root = Path(cfg.root)
+    if repository_exists(cfg):
+        with Repository(root) as repository:
+            payload = {
+                "mirror_root": str(root),
+                "manifest_path": None,
+                "repository_metadata": str(root / "metadata.sqlite"),
+                "repository_authoritative": True,
+                "source_count": len(cfg.sources),
+                "index_count": len(cfg.index_registry.ids()) if cfg.index_registry is not None else 0,
+                "health": _repository_health(repository, cfg),
+            }
+        return payload, []
+
+    warnings: list[str] = []
     manifest, manifest_warnings, manifest_path = load_latest_manifest(
         root / cfg.log_dir,
         cfg.manifest_filename,
@@ -41,6 +85,8 @@ def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]
         "manifest_path": str(sync_res.manifest_path)
         if sync_res is not None and sync_res.manifest_path
         else None,
+        "repository_metadata": None,
+        "repository_authoritative": False,
         "source_count": len(cfg.sources),
         "index_count": len(cfg.index_registry.ids()) if cfg.index_registry is not None else 0,
         "health": build_mirror_health_summary(
@@ -76,6 +122,11 @@ def describe_source_status(
 
 
 def _add_http_source_details(entry: JsonMapping, details: JsonObject) -> None:
+    freshness = json_mapping_or_none(entry.get("freshness"))
+    if freshness is not None:
+        status_code = freshness.get("status_code")
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            details["status_code"] = status_code
     if isinstance(entry.get("status_code"), int):
         details["status_code"] = entry["status_code"]
     if isinstance(entry.get("dest"), str):
@@ -92,6 +143,10 @@ def _add_rsync_source_details(entry: JsonMapping, details: JsonObject) -> None:
         details["local"] = entry["local"]
     if isinstance(entry.get("mode"), str):
         details["mode"] = entry["mode"]
+    if isinstance(entry.get("reconciliation_complete"), bool):
+        details["reconciliation_complete"] = entry["reconciliation_complete"]
+    if isinstance(entry.get("complete"), bool):
+        details["complete"] = entry["complete"]
     updates = _rsync_updates(entry.get("results"))
     if updates:
         details["updates"] = updates
@@ -170,6 +225,27 @@ def _copy_int(source: JsonMapping, dest: JsonObject, key: str) -> None:
 def _kind_name(kind: object) -> str:
     value = getattr(kind, "value", kind)
     return str(value)
+
+
+def source_status_rows_from_repository(
+    repository: Repository,
+    cfg: EngineConfig,
+) -> list[OrderedDict[str, Any]]:
+    rows: list[OrderedDict[str, Any]] = []
+    for source in cfg.sources:
+        entry = repository_source_entry(repository, source, cfg=cfg)
+        status, details = describe_source_status(source, entry)
+        rows.append(
+            OrderedDict(
+                [
+                    ("source_id", source.id),
+                    ("kind", source.kind.value),
+                    ("status", status),
+                    ("details", details),
+                ]
+            )
+        )
+    return rows
 
 
 def source_status_rows(

@@ -11,11 +11,12 @@ from efloud.fanout import RestBaseFanoutTask
 from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 async def _unused_enumerator(*, sync_root, manifest, sources):
     del sync_root, manifest, sources
+    await asyncio.sleep(0)
     return []
 
 
@@ -40,6 +41,7 @@ def test_engine_records_rest_base_fanout_result(tmp_path: Path, monkeypatch: pyt
     config = EngineConfig(root=tmp_path, sources=[source], derived_tasks=(task,))
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,

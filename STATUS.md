@@ -4,38 +4,40 @@ File Purpose: Current project state and continuity notes for the next developmen
 
 ## Current Focus
 
-The repository-centered migration is in the read/cutover stage. Acquisition can now
-populate the new repository while legacy manifests and mirrors remain available for
-compatibility. The next work is to make repository-backed queries/status the normal
-read path, then replace legacy rsync delta import with authoritative reconciliation.
+The repository-centered migration has reached the authority-cutover stage. Core
+repository reads and rsync reconciliation are implemented; the next work is to
+record collection/derived outputs in the repository and make compatibility
+manifests/state entirely repository-derived.
 
 ## Current State
 
 Implemented on `main`:
 
-- typed repository identities and immutable SHA-256 content-addressed blob storage
-- SQLite metadata persistence with schema migration support
-- logical artifacts, observations, provenance edges, validations, materializations,
-  source/tree snapshots, and explicit artifact-absence states
-- immutable datasets with exact, latest, and temporal selection; dataset provenance
-  identity is distinct from content-equivalence identity
-- transitional `Engine` integration that dual-records HTTP/REST acquisition into the
-  repository while preserving existing sync outputs
-- conservative rsync delta ingestion: changed files and scoped tree evidence are
-  recorded, but legacy rsync snapshots remain incomplete and do not infer deletion
+- typed artifact/content/observation/run/snapshot/dataset identities, SHA-256 blob
+  storage, SQLite metadata, provenance, validation, materialization, and absence
+  records
+- immutable datasets with exact/latest/as-of selection and separate provenance vs
+  content-equivalence identities
+- repository-native artifact, observation, snapshot, dataset, source, run, and
+  status/query APIs, including blob-backed locator evaluation
+- HTTP/REST dual-recording while existing sync outputs remain available
+- rsync inventory and coverage-aware reconciliation with changed/new observations,
+  unchanged-content reuse, scoped snapshots, and deletion observations only when
+  enumeration proves absence
+- conservative rsync delta fallback when authoritative enumeration fails
+- `source:` query/status compatibility paths prefer repository state when
+  `metadata.sqlite` exists and fall back to legacy manifests for old stores
 
-Legacy manifest, mirror-state, query, and status paths still exist and are not yet
-fully derived from repository state.
+Still transitional:
 
-## Validation / Risks
-
-Focused repository/Engine tests passed during implementation, but the complete
-repository quality gate has not been run in the available execution environment.
-Authoritative rsync deletion semantics remain blocked on explicit enumeration and
-coverage-aware reconciliation.
+- `REST_BASE` fanout and generic derived-task outputs are still manifest-first
+- canonical manifest, mirror-state, health, summary, and some resolver paths retain
+  legacy authority or duplicate repository facts
+- full repository lint/type/test gates have not been run for the latest migration
+  tranche in the available execution environment
 
 ## Continuity
 
-A repository-native read/query layer has been drafted and exercised locally but is
-not committed. Resume by landing that layer and public exports, then migrate
-source/run/status reads before changing rsync reconciliation semantics.
+Next implement repository recording for fanout/derived artifacts, then generate
+compatibility manifest/state facts from SQLite and source snapshots. After parity,
+remove remaining normal read dependencies on canonical manifests and mirror metadata.

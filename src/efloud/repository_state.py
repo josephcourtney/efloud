@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import operator
 import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -51,18 +52,16 @@ def _finalize(directory: _Directory) -> MirrorStateNode:
     for name, child in directory.directories.items():
         children.append((name, _finalize(child)))
     for name, digest in directory.files.items():
-        children.append(
-            (
-                name,
-                MirrorStateNode(
-                    path_type="file",
-                    hash=digest,
-                    file_count=1,
-                    dir_count=0,
-                ),
-            )
-        )
-    children.sort(key=lambda item: item[0])
+        children.append((
+            name,
+            MirrorStateNode(
+                path_type="file",
+                hash=digest,
+                file_count=1,
+                dir_count=0,
+            ),
+        ))
+    children.sort(key=operator.itemgetter(0))
     file_count = sum(node.file_count for _, node in children)
     dir_count = 1 + sum(node.dir_count for _, node in children)
     return MirrorStateNode(
@@ -129,7 +128,6 @@ def repository_mirror_state(
     Returns ``None`` when there are no configured rsync sources or when any
     configured rsync source lacks a complete repository reconciliation baseline.
     """
-
     rsync_sources = [source for source in cfg.sources if source.kind is SourceKind.RSYNC]
     if not rsync_sources:
         return None

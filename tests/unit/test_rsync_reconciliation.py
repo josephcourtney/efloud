@@ -1,4 +1,5 @@
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -11,7 +12,12 @@ from efloud.transport.rsync_inventory import (
     parse_rsync_list_only,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.regression,
+    # pytest.mark.db,
+    # pytest.mark.medium,
+]
 
 
 def _run(repo: Repository, source: SourceId, *, started_at: float):
@@ -38,15 +44,17 @@ def _file_inventory(
     )
 
 
+@pytest.mark.small
 def test_parse_rsync_list_only_preserves_file_tree_metadata() -> None:
-    text = "\n".join(
-        (
-            "drwxr-xr-x          4,096 2026/09/04 10:00:00 .",
-            "drwxr-xr-x          4,096 2026/09/04 10:00:00 aa",
-            "-rw-r--r--              5 2026/09/04 10:00:00 aa/a.txt",
-            "lrwxrwxrwx              0 2026/09/04 10:00:00 aa/link -> a.txt",
-        )
+    text = dedent(
+        """\
+        drwxr-xr-x          4,096 2026/09/04 10:00:00 .
+        drwxr-xr-x          4,096 2026/09/04 10:00:00 aa
+        -rw-r--r--              5 2026/09/04 10:00:00 aa/a.txt
+        lrwxrwxrwx              0 2026/09/04 10:00:00 aa/link -> a.txt\
+        """
     )
+
     entries = parse_rsync_list_only(text)
     assert [entry.relative_path for entry in entries] == ["aa", "aa/a.txt", "aa/link"]
     assert entries[1].byte_size == 5
@@ -54,6 +62,8 @@ def test_parse_rsync_list_only_preserves_file_tree_metadata() -> None:
     assert entries[2].target == "a.txt"
 
 
+@pytest.mark.medium
+@pytest.mark.db
 def test_reconciliation_adds_then_reuses_unchanged_content(tmp_path: Path) -> None:
     mirror = tmp_path / "mirror"
     (mirror / "aa").mkdir(parents=True)
@@ -99,6 +109,8 @@ def test_reconciliation_adds_then_reuses_unchanged_content(tmp_path: Path) -> No
         assert len(blob_files) == 1
 
 
+@pytest.mark.medium
+@pytest.mark.db
 def test_reconciliation_records_modification_and_deletion(tmp_path: Path) -> None:
     mirror = tmp_path / "mirror"
     (mirror / "aa").mkdir(parents=True)
@@ -158,6 +170,8 @@ def test_reconciliation_records_modification_and_deletion(tmp_path: Path) -> Non
         assert isinstance(repo.latest_state("source:rsync-source:path:aa/a.txt"), ArtifactAbsence)
 
 
+@pytest.mark.medium
+@pytest.mark.db
 def test_partial_scope_can_prove_absence_only_within_same_scope(tmp_path: Path) -> None:
     mirror = tmp_path / "mirror"
     (mirror / "aa").mkdir(parents=True)
@@ -201,6 +215,8 @@ def test_partial_scope_can_prove_absence_only_within_same_scope(tmp_path: Path) 
         assert isinstance(repo.latest_state("source:rsync-source:path:aa/a.txt"), ArtifactAbsence)
 
 
+@pytest.mark.medium
+@pytest.mark.db
 def test_incomplete_inventory_never_emits_absence(tmp_path: Path) -> None:
     mirror = tmp_path / "mirror"
     (mirror / "aa").mkdir(parents=True)

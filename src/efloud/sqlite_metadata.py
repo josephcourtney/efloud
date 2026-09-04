@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from efloud.json_types import JsonObject
 from efloud.metadata_store import (
     DatasetMemberRecord,
     DatasetRecord,
@@ -33,6 +31,12 @@ from efloud.repository_models import (
     TreeId,
     ValidationResult,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from pathlib import Path
+
+    from efloud.json_types import JsonObject
 
 _SCHEMA_VERSION = 2
 
@@ -195,7 +199,7 @@ def _load_string_tuple(value: str) -> tuple[str, ...]:
     return tuple(decoded)
 
 
-class SQLiteMetadataStore:
+class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,12 +237,16 @@ class SQLiteMetadataStore:
         ).fetchone()
         if row is None:
             return None
-        return SourceRecord(source_id=SourceId(row["source_id"]), definition=_load_object(row["definition_json"]))
+        return SourceRecord(
+            source_id=SourceId(row["source_id"]), definition=_load_object(row["definition_json"])
+        )
 
     def sources(self) -> tuple[SourceRecord, ...]:
         rows = self._connection.execute("SELECT * FROM sources ORDER BY source_id").fetchall()
         return tuple(
-            SourceRecord(source_id=SourceId(row["source_id"]), definition=_load_object(row["definition_json"]))
+            SourceRecord(
+                source_id=SourceId(row["source_id"]), definition=_load_object(row["definition_json"])
+            )
             for row in rows
         )
 

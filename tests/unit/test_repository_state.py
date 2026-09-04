@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,7 +11,9 @@ from efloud.repository_models import SourceId, TreeEntry
 from efloud.repository_state import repository_mirror_state
 from efloud.state import node_at_path
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _rsync_source() -> SourceDefinition:

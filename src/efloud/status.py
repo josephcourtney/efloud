@@ -26,9 +26,10 @@ def _repository_health(repository: Repository, cfg: EngineConfig) -> dict[str, A
         if source.kind is SourceKind.RSYNC:
             snapshot = repository.latest_source_snapshot(source.id)
             mirror_timestamps[source.id] = snapshot.observed_at if snapshot is not None else None
-            if source.local_subpath is None or not (
-                Path(cfg.root) / cfg.mirrors_dir / source.local_subpath
-            ).exists():
+            if (
+                source.local_subpath is None
+                or not (Path(cfg.root) / cfg.mirrors_dir / source.local_subpath).exists()
+            ):
                 missing_roots.append(source.id)
             rsync_results[source.id] = entry
         elif source.kind in {SourceKind.HTTP, SourceKind.REST}:
@@ -236,14 +237,12 @@ def source_status_rows_from_repository(
         entry = repository_source_entry(repository, source, cfg=cfg)
         status, details = describe_source_status(source, entry)
         rows.append(
-            OrderedDict(
-                [
-                    ("source_id", source.id),
-                    ("kind", source.kind.value),
-                    ("status", status),
-                    ("details", details),
-                ]
-            )
+            OrderedDict([
+                ("source_id", source.id),
+                ("kind", source.kind.value),
+                ("status", status),
+                ("details", details),
+            ])
         )
     return rows
 

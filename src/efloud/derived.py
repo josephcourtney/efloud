@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from efloud.json_types import JsonObject
-from efloud.models import NormalizedManifest
-from efloud.registry import SourceDefinition
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from efloud.json_types import JsonObject
+    from efloud.models import NormalizedManifest
+    from efloud.registry import SourceDefinition
 
 
 class DerivedTask(Protocol):

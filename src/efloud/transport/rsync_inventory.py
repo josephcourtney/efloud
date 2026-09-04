@@ -4,9 +4,10 @@ import math
 import re
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - structured rsync argv is executed without a shell.
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from efloud.transport.rsync import RsyncMirrorConfig
+if TYPE_CHECKING:
+    from efloud.transport.rsync import RsyncMirrorConfig
 
 InventoryKind = Literal["file", "directory", "symlink"]
 _MODE_RE = re.compile(r"^[bcdlps-][rwxstST-]{9}$")
@@ -81,11 +82,7 @@ def _parse_list_line(line: str, *, prefix: str = "") -> RsyncInventoryEntry | No
 
 
 def parse_rsync_list_only(text: str, *, prefix: str = "") -> tuple[RsyncInventoryEntry, ...]:
-    entries = [
-        entry
-        for line in text.splitlines()
-        if (entry := _parse_list_line(line, prefix=prefix))
-    ]
+    entries = [entry for line in text.splitlines() if (entry := _parse_list_line(line, prefix=prefix))]
     by_path = {entry.relative_path: entry for entry in entries}
     return tuple(by_path[path] for path in sorted(by_path))
 
@@ -130,15 +127,7 @@ def enumerate_rsync(
     *,
     scope: tuple[str, ...] = (),
 ) -> RsyncInventory:
-    scopes = tuple(
-        sorted(
-            {
-                item.strip().strip("/") + "/"
-                for item in scope
-                if item.strip().strip("/")
-            }
-        )
-    )
+    scopes = tuple(sorted({item.strip().strip("/") + "/" for item in scope if item.strip().strip("/")}))
     requests = scopes or ("",)
     entries: dict[str, RsyncInventoryEntry] = {}
     errors: list[str] = []
@@ -156,9 +145,7 @@ def enumerate_rsync(
             continue
         if completed.returncode != 0:
             detail = (
-                completed.stderr.strip()
-                or completed.stdout.strip()
-                or f"rsync exited {completed.returncode}"
+                completed.stderr.strip() or completed.stdout.strip() or f"rsync exited {completed.returncode}"
             )
             errors.append(f"{requested_scope or '.'}: {detail}")
             continue

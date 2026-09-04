@@ -4,7 +4,6 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, BinaryIO, Protocol
 
-from efloud.json_types import JsonObject
 from efloud.metadata_store import DatasetMemberRecord, DatasetRecord
 from efloud.repository_models import (
     ArtifactAbsence,
@@ -16,6 +15,7 @@ from efloud.repository_models import (
 )
 
 if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
     from efloud.repository import Repository
 
 
@@ -194,12 +194,11 @@ def resolve_dataset(
 ) -> DatasetManifest:
     resolved: list[tuple[ArtifactObservation, str | None]] = []
     for selection in definition.selections:
-        for observation in selection.selector.resolve(repository):
-            resolved.append((observation, selection.role))
+        resolved.extend(
+            (observation, selection.role) for observation in selection.selector.resolve(repository)
+        )
 
-    resolved.sort(
-        key=lambda item: (str(item[0].artifact_key), item[1] or "", str(item[0].observation_id))
-    )
+    resolved.sort(key=lambda item: (str(item[0].artifact_key), item[1] or "", str(item[0].observation_id)))
     seen: set[str] = set()
     members: list[DatasetMemberRecord] = []
     for observation, role in resolved:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -13,7 +13,9 @@ from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_engine_manifest_property_and_canonical_file_are_repository_derived(
@@ -106,9 +108,7 @@ def test_engine_publishes_repository_mirror_state_after_complete_rsync_reconcili
                             "ok": True,
                             "local": str(mirror_root),
                             "request": {"paths": None},
-                            "results": {
-                                "update": {"status": "success", "updated": ["aa/entry.txt"]}
-                            },
+                            "results": {"update": {"status": "success", "updated": ["aa/entry.txt"]}},
                         }
                     },
                     "derived": {},
@@ -178,9 +178,7 @@ def test_engine_does_not_replace_mirror_state_from_partial_only_history(
                             "ok": True,
                             "local": str(mirror_root),
                             "request": {"paths": ["aa/"]},
-                            "results": {
-                                "aa/": {"status": "success", "updated": ["aa/entry.txt"]}
-                            },
+                            "results": {"aa/": {"status": "success", "updated": ["aa/entry.txt"]}},
                         }
                     },
                     "derived": {},

@@ -4,18 +4,21 @@ import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 import anyio
 
 from efloud.json_types import JsonMapping, JsonObject, json_mapping_or_none
-from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
-from efloud.repository import Repository
 from efloud.repository_derived import import_derived_results
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId, TreeEntry
 from efloud.rsync_reconciliation import reconcile_rsync_inventory
 from efloud.transport.rsync import RsyncMirrorConfig
 from efloud.transport.rsync_inventory import enumerate_rsync
+
+if TYPE_CHECKING:
+    from efloud.models import EngineConfig, SyncResult
+    from efloud.repository import Repository
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +27,13 @@ class _HttpFreshness:
     etag: str | None
     last_modified: str | None
     status_code: int | None
+
+
+@dataclass(slots=True)
+class _ManifestErrorState:
+    existing_keys: set[tuple[str, str, str | None]]
+    existing_source_failures: set[tuple[str, str]]
+    known_source_ids: set[str]
 
 
 def _source_definition_payload(source: SourceDefinition) -> JsonObject:
@@ -88,9 +98,7 @@ def _http_freshness(entry: JsonMapping, *, fallback: float) -> _HttpFreshness:
         etag=etag_value if isinstance(etag_value, str) else None,
         last_modified=modified_value if isinstance(modified_value, str) else None,
         status_code=(
-            status_value
-            if isinstance(status_value, int) and not isinstance(status_value, bool)
-            else None
+            status_value if isinstance(status_value, int) and not isinstance(status_value, bool) else None
         ),
     )
 
@@ -197,26 +205,31 @@ class RepositorySyncRecorder:
             if source.kind is SourceKind.REST_BASE and source.id not in handled_source_ids
         )
 
+    def _manifest_error_state(self) -> _ManifestErrorState:
+        operations = self.repository.metadata.operations_for_run(self.run_id)
+        return _ManifestErrorState(
+            existing_keys={
+                (
+                    operation.kind,
+                    operation.subject,
+                    str(operation.source_id) if operation.source_id is not None else None,
+                )
+                for operation in operations
+            },
+            existing_source_failures={
+                (operation.kind, str(operation.source_id))
+                for operation in operations
+                if operation.source_id is not None and operation.status in {"failed", "partial"}
+            },
+            known_source_ids={source.id for source in self.config.sources},
+        )
+
     def _import_manifest_errors(self, result: SyncResult) -> None:
+        state = self._manifest_error_state()
+
         raw_errors = result.manifest.get("errors", [])
         if not isinstance(raw_errors, list):
             return
-
-        operations = self.repository.metadata.operations_for_run(self.run_id)
-        existing_keys = {
-            (
-                operation.kind,
-                operation.subject,
-                str(operation.source_id) if operation.source_id is not None else None,
-            )
-            for operation in operations
-        }
-        existing_source_failures = {
-            (operation.kind, str(operation.source_id))
-            for operation in operations
-            if operation.source_id is not None and operation.status in {"failed", "partial"}
-        }
-        known_source_ids = {source.id for source in self.config.sources}
 
         for raw_error in raw_errors:
             error_mapping = json_mapping_or_none(raw_error)
@@ -226,13 +239,13 @@ class RepositorySyncRecorder:
             phase = phase_value.strip().lower() if isinstance(phase_value, str) else "sync"
             source_value = error_mapping.get("source_id")
             source_text = source_value if isinstance(source_value, str) else None
-            source_id = SourceId(source_text) if source_text in known_source_ids else None
+            source_id = SourceId(source_text) if source_text in state.known_source_ids else None
             name_value = error_mapping.get("name")
             subject = name_value if isinstance(name_value, str) and name_value else source_text or phase
             key = (phase, subject, source_text if source_id is not None else None)
-            if key in existing_keys:
+            if key in state.existing_keys:
                 continue
-            if source_text is not None and (phase, source_text) in existing_source_failures:
+            if source_text is not None and (phase, source_text) in state.existing_source_failures:
                 continue
 
             operation_id = self.repository.start_operation(
@@ -252,17 +265,15 @@ class RepositorySyncRecorder:
                     "compatibility_manifest_error": True,
                 },
             )
-            existing_keys.add(key)
+            state.existing_keys.add(key)
             if source_text is not None:
-                existing_source_failures.add((phase, source_text))
+                state.existing_source_failures.add((phase, source_text))
 
     def _import_http_source(self, source: SourceDefinition, entry: JsonMapping) -> None:
         operation_id = self._start_source_operation(source)
         if entry.get("ok") is False:
             error = entry.get("error")
-            details: JsonObject = {
-                "error": error if isinstance(error, str) else "source acquisition failed"
-            }
+            details: JsonObject = {"error": error if isinstance(error, str) else "source acquisition failed"}
             self.repository.finish_operation(operation_id, status="failed", details=details)
             return
 
@@ -430,9 +441,7 @@ class RepositorySyncRecorder:
         operation_id = self._start_source_operation(source)
         if entry.get("ok") is False:
             error = entry.get("error")
-            details: JsonObject = {
-                "error": error if isinstance(error, str) else "rsync acquisition failed"
-            }
+            details: JsonObject = {"error": error if isinstance(error, str) else "rsync acquisition failed"}
             self.repository.finish_operation(operation_id, status="failed", details=details)
             return
 
@@ -457,9 +466,7 @@ class RepositorySyncRecorder:
             include=source.include or (),
             exclude=source.exclude or (),
         )
-        inventory = await anyio.to_thread.run_sync(
-            lambda: enumerate_rsync(inventory_cfg, scope=scope)
-        )
+        inventory = await anyio.to_thread.run_sync(lambda: enumerate_rsync(inventory_cfg, scope=scope))
         if not inventory.complete:
             self._legacy_rsync_delta(
                 source=source,

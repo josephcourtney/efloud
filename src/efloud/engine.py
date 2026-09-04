@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from types import TracebackType
+from typing import TYPE_CHECKING, Self
 
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
-from efloud.registry import SourceDefinition
 from efloud.repository import Repository
 from efloud.repository_compat import repository_manifest, write_repository_manifest
-from efloud.repository_models import ObservationId, RunId
 from efloud.repository_recording import RepositorySyncRecorder
 from efloud.repository_state import write_repository_mirror_state
-from efloud.state import MirrorState
 from efloud.sync import sync as legacy_sync
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+    from types import TracebackType
+
+    from efloud.registry import SourceDefinition
+    from efloud.repository_models import ObservationId, RunId
+    from efloud.state import MirrorState
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +76,7 @@ class Engine:
         engine.config = config
         return engine
 
-    def __enter__(self) -> Engine:
+    def __enter__(self) -> Self:
         """Return this engine for context-manager use."""
         return self
 

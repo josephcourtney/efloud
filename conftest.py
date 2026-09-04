@@ -92,3 +92,17 @@ def pytest_terminal_summary(terminalreporter, exitstatus: int, config: pytest.Co
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if (_FAST_CALL_OFFENDERS or _FAST_TOTAL_OFFENDERS) and session.exitstatus == pytest.ExitCode.OK:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def _reset_test_categories_process_blocker(config: pytest.Config) -> None:
+    # Temporary workaround for pytest-test-categories 1.2.1 leaking
+    # subprocess.Popen state between randomized tests.
+    from pytest_test_categories.plugin import _get_process_blocker  # noqa: PLC0415
+
+    _get_process_blocker(config).reset()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
+    del nextitem
+    _reset_test_categories_process_blocker(item.config)

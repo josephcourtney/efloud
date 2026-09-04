@@ -1,29 +1,31 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from efloud.json_types import JsonObject
-from efloud.repository_models import (
-    ArtifactAbsence,
-    ArtifactKey,
-    ArtifactObservation,
-    ArtifactState,
-    ContentId,
-    ContentRef,
-    DatasetId,
-    ObservationId,
-    OperationId,
-    ProvenanceEdge,
-    RunId,
-    SnapshotId,
-    SourceId,
-    SourceSnapshot,
-    TreeEntry,
-    TreeId,
-    ValidationResult,
-)
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from efloud.json_types import JsonObject
+    from efloud.repository_models import (
+        ArtifactAbsence,
+        ArtifactKey,
+        ArtifactObservation,
+        ArtifactState,
+        ContentId,
+        ContentRef,
+        DatasetId,
+        ObservationId,
+        OperationId,
+        ProvenanceEdge,
+        RunId,
+        SnapshotId,
+        SourceId,
+        SourceSnapshot,
+        TreeEntry,
+        TreeId,
+        ValidationResult,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +83,7 @@ class DatasetRecord:
     members: tuple[DatasetMemberRecord, ...]
 
 
-class MetadataStore(Protocol):  # noqa: PLR0904 - semantic repository store protocol intentionally exposes the full repository vocabulary.
+class MetadataStore(Protocol):  # ruff: ignore[too-many-public-methods] - semantic repository store protocol intentionally exposes the full repository vocabulary.
     def close(self) -> None: ...
 
     def register_source(self, source_id: SourceId, definition: JsonObject) -> None: ...

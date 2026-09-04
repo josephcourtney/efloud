@@ -23,6 +23,7 @@ RUFF_CACHE_DIR := REPO_CACHE_DIR + "/ruff"
 
 PY_SRC      := "src"
 PY_TESTPATH := "tests"
+PY_SCRIPTS  := "scripts"
 
 
 # ======================================================================
@@ -30,14 +31,16 @@ PY_TESTPATH := "tests"
 # ======================================================================
 
 UV                  := "uv --cache-dir " + UV_CACHE_DIR
-RUFF                := ROOT_DIR + "/.venv/bin/ruff"
-PYTEST              := ROOT_DIR + "/.venv/bin/pytest"
-TY                  := ROOT_DIR + "/.venv/bin/ty"
-SHOWCOV             := ROOT_DIR + "/.venv/bin/showcov"
-MKDOCS              := ROOT_DIR + "/.venv/bin/mkdocs"
-VULTURE             := ROOT_DIR + "/.venv/bin/vulture"
-RADON                := ROOT_DIR + "/.venv/bin/radon"
-IMPORTLINTER        := ROOT_DIR + "/.venv/bin/lint-imports"
+PYTHON              := UV + " run python"
+RUFF                := UV + " run ruff"
+RUFF_LINT           := RUFF + " check --cache-dir " + RUFF_CACHE_DIR
+RUFF_FORMAT         := RUFF + " format --cache-dir " + RUFF_CACHE_DIR
+PYTEST              := UV + " run pytest"
+TY                  := UV + " run ty"
+SHOWCOV             := UV + " run showcov"
+VULTURE             := UV + " run vulture"
+RADON               := UV + " run radon"
+IMPORTLINTER        := UV + " run lint-imports"
 IMPORTLINTER_CONFIG := ROOT_DIR + "/import-linter.toml"
 
 JSCPD := "npx --yes jscpd@4.0"
@@ -52,17 +55,11 @@ PYTEST_DEV_DIST    := env("PYTEST_DEV_DIST", "loadscope")
 PYTEST_DEV_THRESHOLD := env("PYTEST_DEV_THRESHOLD", "80")
 
 PYTEST_TIMEOUT := env("PYTEST_TIMEOUT", "300")
-
 PYTEST_BASE_OPTS := "--timeout=" + PYTEST_TIMEOUT + " --cov=" + PYTHON_PACKAGE
-
 PYTEST_QUIET_OPTS := "-q --tb=short -r fE --show-capture=no -o log_cli=false"
-
 PYTEST_DEBUG_OPTS := "-vv --tb=long -l --show-capture=all -o log_cli=true"
-
 PYTEST_LOG_OPTS := "-q --tb=short -r fE --show-capture=no -o log_cli=true --log-cli-level=INFO"
-
 PYTEST_FAST_OPTS := "-m 'not slow' --durations=25 --durations-min=0.1 --timeout=30"
-
 PYTEST_FAILING_OPTS := "--lf"
 
 # testmon is useful for development iteration but incompatible with useful
@@ -95,12 +92,12 @@ env:
   @echo "PYTHON_PACKAGE={{PYTHON_PACKAGE}}"
   @echo "PY_SRC={{PY_SRC}}"
   @echo "PY_TESTPATH={{PY_TESTPATH}}"
+  @echo "PY_SCRIPTS={{PY_SCRIPTS}}"
   @echo "UV={{UV}}"
   @echo "RUFF={{RUFF}}"
   @echo "PYTEST={{PYTEST}}"
   @echo "TY={{TY}}"
   @echo "SHOWCOV={{SHOWCOV}}"
-  @echo "MKDOCS={{MKDOCS}}"
   @echo "VULTURE={{VULTURE}}"
   @echo "RADON={{RADON}}"
   @echo "IMPORTLINTER={{IMPORTLINTER}}"
@@ -117,21 +114,11 @@ env:
 
 [private]
 _log_start NAME:
-  @bash -euo pipefail -c '\
-    if [ "{{VERBOSE}}" != "0" ]; then \
-      printf "\n=== START: %s ===\n" "{{NAME}}"; \
-    fi \
-  '
-
+  @if [ "{{VERBOSE}}" != "0" ]; then printf "\n=== START: %s ===\n" "{{NAME}}"; fi
 
 [private]
 _log_end NAME:
-  @bash -euo pipefail -c '\
-    if [ "{{VERBOSE}}" != "0" ]; then \
-      printf "=== END: %s ===\n\n" "{{NAME}}"; \
-    fi \
-  '
-
+  @if [ "{{VERBOSE}}" != "0" ]; then printf "=== END: %s ===\n\n" "{{NAME}}"; fi
 
 [private]
 _cache_dirs:
@@ -141,109 +128,187 @@ _cache_dirs:
 # Run a command quietly on success and print its captured output on failure.
 [private]
 _run NAME CMD:
-  @bash -euo pipefail -c '\
-    name="$1"; \
-    cmd="$2"; \
-    set +e; \
-    out="$(bash -c "$cmd" 2>&1)"; \
-    status=$?; \
-    set -e; \
-    if [ "$status" -eq 0 ]; then \
-      printf "\033[1;32m✓ %s\033[0m\n" "$name"; \
-    else \
-      printf "\033[1;31m✗ %s\033[0m\n" "$name"; \
-      printf "%s\n" "$out"; \
-      exit "$status"; \
-    fi \
-  ' -- "{{NAME}}" {{quote(CMD)}}
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  name="$NAME"
+  cmd="$CMD"
+
+  set +e
+  out="$(bash -c "$cmd" 2>&1)"
+  status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
+    printf "\033[1;32m✓ %s\033[0m\n" "$name"
+  else
+    printf "\033[1;31m✗ %s\033[0m\n" "$name"
+    printf "%s\n" "$out"
+    exit "$status"
+  fi
 
 
 # Like `_run`, but continue after a failure.
 # Intended for best-effort fixing workflows, never validation gates.
 [private]
 _run_soft NAME CMD:
-  @bash -euo pipefail -c '\
-    name="$1"; \
-    cmd="$2"; \
-    set +e; \
-    out="$(bash -c "$cmd" 2>&1)"; \
-    status=$?; \
-    set -e; \
-    if [ "$status" -eq 0 ]; then \
-      printf "\033[1;32m✓ %s\033[0m\n" "$name"; \
-    else \
-      printf "\033[1;31m✗ %s\033[0m\n" "$name"; \
-      printf "%s\n" "$out"; \
-      printf "\033[1;33m[warn]\033[0m continuing after failure in %s\n" "$name" >&2; \
-    fi \
-  ' -- "{{NAME}}" {{quote(CMD)}}
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  name="$NAME"
+  cmd="$CMD"
+
+  set +e
+  out="$(bash -c "$cmd" 2>&1)"
+  status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
+    printf "\033[1;32m✓ %s\033[0m\n" "$name"
+  else
+    printf "\033[1;31m✗ %s\033[0m\n" "$name"
+    printf "%s\n" "$out"
+    exit "$status"
+  fi
 
 
 # ======================================================================
-# Bootstrap
+# Environment
 # ======================================================================
 
-[group('bootstrap')]
-setup:
-  @just _log_start setup
-  @just _cache_dirs
+# Bring the local environment in sync with the committed lockfile.
+[group('environment')]
+[arg("force", long="force", value="true")]
+sync force="false":
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start sync
+  just _cache_dirs
+
+  stamp=".venv/.sync-state"
+
+  # Build the exact argument list we'll pass to `uv sync`.
+  sync_args=()
+
+  if grep -Eq '^[[:space:]]*\[tool\.uv\.workspace\][[:space:]]*(#.*)?$' pyproject.toml; then
+    sync_args+=(--all-packages)
+  fi
+
+  fingerprint() {
+    {
+      # Fingerprint the sync policy itself.
+      printf '%s\n' "sync"
+      printf '%s\n' "uv sync"
+      printf 'uv-sync-arg=%s\n' "${sync_args[@]}"
+
+      for file in pyproject.toml uv.lock uv.toml .python-version; do
+        [[ ! -f "$file" ]] || cat "$file"
+      done
+
+      git ls-files '*pyproject.toml' | LC_ALL=C sort | while IFS= read -r file; do
+            [[ "$file" == "pyproject.toml" ]] || cat "$file"
+          done
+    } | shasum -a 256 | cut -d' ' -f1
+  }
+
+  current="$(fingerprint)"
+
+  if [[ "{{force}}" != "true" ]] &&
+     [[ -d .venv ]] &&
+     [[ -f "$stamp" ]] &&
+     [[ "$(cat "$stamp")" == "$current" ]]; then
+    echo "already up to date."
+    just _log_end sync
+    exit 0
+  fi
+
+  {{UV}} sync "${sync_args[@]}"
+
+  # uv sync may update uv.lock.
+  fingerprint > "$stamp"
+
+  just _log_end sync
+
+
+# Upgrade all dependencies allowed by pyproject.toml, then sync.
+[group('environment')]
+upgrade:
+  {{UV}} lock --upgrade
   {{UV}} sync
-  @just _log_end setup
 
+# Upgrade one dependency
+[group('environment')]
+upgrade-package package:
+  {{UV}} lock --upgrade-package {{package}}
+  just sync --force
 
 # ======================================================================
 # Code quality
 # ======================================================================
 
+
+# Check for any pythonn syntax errors
+[group('code quality')]
+syntax:
+  {{PYTHON}} -m compileall "{{ROOT_DIR}}/src"
+  {{PYTHON}} -m compileall "{{ROOT_DIR}}/tests"
+  {{PYTHON}} -m compileall "{{ROOT_DIR}}/scripts"
+
+
 # Lint with Ruff. By default fixes safe violations; use --no-fix for validation.
 [group('code quality')]
 [arg("no-fix", long, value="true")]
 lint no-fix="false":
-  @just _log_start lint
-  @just _cache_dirs
-  @bash -euo pipefail -c '\
-    args=("{{RUFF}}" check --cache-dir "{{RUFF_CACHE_DIR}}"); \
-    if [ "{{no-fix}}" = "true" ]; then \
-      args+=(--no-fix); \
-    else \
-      args+=(--fix); \
-    fi; \
-    args+=("{{PY_SRC}}" "{{PY_TESTPATH}}"); \
-    "${args[@]}" \
-  '
-  @just _log_end lint
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start lint
+  just _cache_dirs
+
+  args=({{RUFF_LINT}})
+
+  if [ "{{no-fix}}" = "true" ]; then
+    args+=(--no-fix)
+  else
+    args+=(--fix)
+  fi
+
+  args+=("{{PY_SRC}}" "{{PY_TESTPATH}}" "{{PY_SCRIPTS}}")
+  "${args[@]}"
+
+  just _log_end lint
 
 
 # Format with Ruff. Use --check for non-mutating validation.
 [group('code quality')]
 [arg("check", long, value="true")]
 format check="false":
-  @just _log_start format
-  @just _cache_dirs
-  @bash -euo pipefail -c '\
-    args=("{{RUFF}}" format --cache-dir "{{RUFF_CACHE_DIR}}"); \
-    if [ "{{check}}" = "true" ]; then \
-      args+=(--check); \
-    fi; \
-    args+=("{{PY_SRC}}" "{{PY_TESTPATH}}"); \
-    "${args[@]}" \
-  '
-  @just _log_end format
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start format
+  just _cache_dirs
+
+  args=({{RUFF_FORMAT}})
+
+  if [ "{{check}}" = "true" ]; then
+    args+=(--check)
+  fi
+
+  args+=("{{PY_SRC}}" "{{PY_TESTPATH}}" "{{PY_SCRIPTS}}")
+
+  "${args[@]}"
+
+  just _log_end format
 
 
 # Validate import architecture.
 [group('code quality')]
 lint-imports:
-  @just _log_start lint-imports
-  @bash -euo pipefail -c '\
-    if [ ! -x "{{IMPORTLINTER}}" ]; then \
-      echo "[lint-imports] ERROR: lint-imports not found at {{IMPORTLINTER}}" >&2; \
-      echo "[lint-imports] run: just setup" >&2; \
-      exit 1; \
-    fi; \
-    "{{IMPORTLINTER}}" --verbose --config "{{IMPORTLINTER_CONFIG}}" \
-  '
-  @just _log_end lint-imports
+  just _log_start lint-imports
+  {{IMPORTLINTER}} --verbose --config "{{IMPORTLINTER_CONFIG}}"
+  just _log_end lint-imports
 
 
 # Static type checking.
@@ -253,27 +318,29 @@ lint-imports:
 # explicitly runs it with MODE=ci and therefore treats absence as a failure.
 [group('code quality')]
 typecheck:
-  @just _log_start typecheck
-  @bash -euo pipefail -c '\
-    if [ -x "{{TY}}" ]; then \
-      "{{TY}}" check "{{PY_SRC}}" "{{PY_TESTPATH}}"; \
-      exit 0; \
-    fi; \
-    if [ "{{MODE}}" = "ci" ]; then \
-      echo "[typecheck] ERROR: ty not found at {{TY}}" >&2; \
-      echo "[typecheck] run: just setup" >&2; \
-      exit 1; \
-    fi; \
-    echo "[typecheck] skipping: ty not found (MODE={{MODE}})" \
-  '
-  @just _log_end typecheck
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start typecheck
+
+  if {{TY}} --version >/dev/null 2>&1; then
+    {{TY}} check "{{PY_SRC}}" "{{PY_TESTPATH}}" "{{PY_SCRIPTS}}"
+  elif [ "{{MODE}}" = "ci" ]; then
+    echo "[typecheck] ERROR: ty is not available" >&2
+    echo "[typecheck] run: just sync" >&2
+    exit 1
+  else
+    echo "[typecheck] skipping: ty not available (MODE={{MODE}})"
+  fi
+
+  just _log_end typecheck
 
 
 # Scan for likely dead code.
 [group('code quality')]
 dead-code:
   @just _log_start dead-code
-  {{VULTURE}} --min-confidence 61 {{PY_SRC}} {{PY_TESTPATH}}
+  {{VULTURE}} --min-confidence 61 {{PY_SRC}} {{PY_TESTPATH}} {{PY_SCRIPTS}}
   @just _log_end dead-code
 
 
@@ -282,33 +349,40 @@ dead-code:
 [arg("raw", long, value="true")]
 [arg("strict", long, value="true")]
 complexity raw="false" strict="false" min_complexity="11":
-  @just _log_start complexity
-  @bash -euo pipefail -c '\
-    if [ "{{raw}}" = "true" ] && [ "{{strict}}" = "true" ]; then \
-      echo "[complexity] ERROR: choose at most one of --raw or --strict" >&2; \
-      exit 2; \
-    fi; \
-    if [ "{{raw}}" = "true" ]; then \
-      "{{RADON}}" raw "{{PY_SRC}}"; \
-    elif [ "{{strict}}" = "true" ]; then \
-      echo "[complexity] failing if any block has complexity >= {{min_complexity}}"; \
-      output="$("{{RADON}}" cc -s -n "{{min_complexity}}" "{{PY_SRC}}" || true)"; \
-      if [ -n "$output" ]; then \
-        echo "$output"; \
-        exit 1; \
-      fi; \
-      echo "[complexity] all blocks are below {{min_complexity}}"; \
-    else \
-      "{{RADON}}" cc -s -a "{{PY_SRC}}"; \
-    fi \
-  '
-  @just _log_end complexity
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start complexity
+
+  if [ "{{raw}}" = "true" ] && [ "{{strict}}" = "true" ]; then
+    echo "[complexity] ERROR: choose at most one of --raw or --strict" >&2
+    exit 2
+  fi
+  if [ "{{raw}}" = "true" ]; then
+    {{RADON}} raw "{{PY_SRC}}"
+  elif [ "{{strict}}" = "true" ]; then
+    echo "[complexity] failing if any block has complexity >= {{min_complexity}}"
+    output="$({{RADON}} cc -s -n "{{min_complexity}}" "{{PY_SRC}}" || true)"
+    if [ -n "$output" ]; then
+      echo "$output"
+      exit 1
+    fi
+    echo "[complexity] all blocks are below {{min_complexity}}"
+  else
+    {{RADON}} cc -s -a "{{PY_SRC}}"
+  fi
+  
+  just _log_end complexity
 
 
 # Detect duplicated source/test code.
 [group('code quality')]
 dup:
-  @just _log_start dup
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start dup
+
   {{JSCPD}} \
     --pattern "{{PY_SRC}}/*/*.py" \
     --pattern "{{PY_SRC}}/*/*/*.py" \
@@ -317,8 +391,11 @@ dup:
     --pattern "{{PY_TESTPATH}}/*/*.py" \
     --pattern "{{PY_TESTPATH}}/*/*/*.py" \
     --pattern "{{PY_TESTPATH}}/*/*/*/*.py" \
+    --pattern "{{PY_SCRIPTS}}/*.py" \
+    --pattern "{{PY_SCRIPTS}}/*/*.py" \
     --reporters console
-  @just _log_end dup
+
+  just _log_end dup
 
 
 # ======================================================================
@@ -327,33 +404,40 @@ dup:
 
 # Secret scan. Report-only when TruffleHog is not installed.
 [group('security')]
-sec-secrets:
-  @just _log_start sec-secrets
-  @bash -euo pipefail -c '\
-    if command -v trufflehog >/dev/null 2>&1; then \
-      tmp_file="$(mktemp)"; \
-      trap '\''rm -f "$tmp_file"'\'' EXIT; \
-      printf ".venv\n.cache\nbuild\ndist\n" > "$tmp_file"; \
-      trufflehog filesystem . --exclude-paths "$tmp_file"; \
-    else \
-      echo "[sec-secrets] skipping: trufflehog not found on PATH"; \
-    fi \
-  '
-  @just _log_end sec-secrets
+secrets:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start secrets
+
+  if command -v trufflehog >/dev/null 2>&1; then
+    tmp_file="$(mktemp)"
+    trap 'rm -f "$tmp_file"' EXIT
+    printf ".venv\n.cache\nbuild\ndist\n" > "$tmp_file"
+    trufflehog filesystem . --exclude-paths "$tmp_file"
+  else
+    echo "[secrets] skipping: trufflehog not found on PATH"
+  fi
+  
+  just _log_end secrets
 
 
 # Audit installed dependencies.
 [group('security')]
 sec-deps:
-  @just _log_start sec-deps
-  @bash -euo pipefail -c '\
-    if [ ! -x "{{ROOT_DIR}}/.venv/bin/pip-audit" ]; then \
-      echo "[sec-deps] ERROR: pip-audit not found" >&2; \
-      exit 1; \
-    fi; \
-    PIP_NO_CACHE_DIR=1 "{{ROOT_DIR}}/.venv/bin/pip-audit" \
-  '
-  @just _log_end sec-deps
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start sec-deps
+
+  if [ ! -x "{{ROOT_DIR}}/.venv/bin/pip-audit" ]; then
+    echo "[sec-deps] ERROR: pip-audit not found" >&2
+    exit 1
+  fi
+
+  PIP_NO_CACHE_DIR=1 "{{ROOT_DIR}}/.venv/bin/pip-audit"
+
+  just _log_end sec-deps
 
 
 # ======================================================================
@@ -417,7 +501,7 @@ test strict="true" fast="false" dev="false" quiet="" logs="" debug="" failing="f
     eval "extra_flags+=({{PYTEST_FAILING_OPTS}})"
   fi
 
-  args=("{{PYTEST}}")
+  args=({{PYTEST}})
 
   eval "args+=({{PYTEST_BASE_OPTS}})"
 
@@ -437,7 +521,7 @@ test strict="true" fast="false" dev="false" quiet="" logs="" debug="" failing="f
     # Explicitly disable coverage during collection to avoid paying for it
     # merely to count tests.
     collect_args=(
-      "{{PYTEST}}"
+      {{PYTEST}}
       "--collect-only"
       "-q"
       "--no-cov"
@@ -496,46 +580,18 @@ test strict="true" fast="false" dev="false" quiet="" logs="" debug="" failing="f
 [group('test quality')]
 [arg("lines", long, value="true")]
 cov lines="false":
-  @just _log_start cov
-  @bash -euo pipefail -c '\
-    if [ ! -x "{{SHOWCOV}}" ]; then \
-      echo "[cov] ERROR: showcov not found at {{SHOWCOV}}" >&2; \
-      echo "[cov] run: just setup" >&2; \
-      exit 1; \
-    fi; \
-    if [ "{{lines}}" = "true" ]; then \
-      "{{SHOWCOV}}" report --lines --code --context 2; \
-    else \
-      "{{SHOWCOV}}" report --summary --no-lines --no-branches; \
-    fi \
-  '
-  @just _log_end cov
+  #!/usr/bin/env bash
+  set -euo pipefail
 
+  just _log_start cov
 
-# ======================================================================
-# Documentation
-# ======================================================================
+  if [ "{{lines}}" = "true" ]; then
+    {{SHOWCOV}} report --lines --code --context 2
+  else
+    {{SHOWCOV}} report --summary --no-lines --no-branches
+  fi
 
-# Build docs by default; use --serve for a local development server.
-# Documentation remains optional: repositories without MkDocs installed can
-# still use the rest of this shared justfile.
-[group('documentation')]
-[arg("serve", long, value="true")]
-docs serve="false":
-  @just _log_start docs
-  @bash -euo pipefail -c '\
-    if [ ! -x "{{MKDOCS}}" ]; then \
-      echo "[docs] skipping: mkdocs not installed"; \
-      exit 0; \
-    fi; \
-    if [ "{{serve}}" = "true" ]; then \
-      python3 -m webbrowser http://127.0.0.1:8000; \
-      "{{MKDOCS}}" serve --livereload; \
-    else \
-      "{{MKDOCS}}" build; \
-    fi \
-  '
-  @just _log_end docs
+  just _log_end cov
 
 
 # ======================================================================
@@ -576,7 +632,10 @@ publish:
 # Remove generated repository state while preserving the virtual environment.
 [group('cleaning')]
 clean:
-  @just _log_start clean
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start clean
 
   # Avoid traversing .venv when deleting Python bytecode caches.
   find . \
@@ -603,44 +662,50 @@ clean:
     build \
     logs
 
-  @just _log_end clean
+  just _log_end clean
 
 
 # Stash only untracked, non-ignored files before destructive `git clean`.
 [group('cleaning')]
 stash-untracked:
-  @just _log_start stash-untracked
-  @bash -euo pipefail -c '\
-    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
-      echo "[stash-untracked] not a git repository; skipping"; \
-      exit 0; \
-    fi; \
-    mapfile -d "" files < <(git ls-files --others --exclude-standard -z); \
-    if [ "${#files[@]}" -eq 0 ]; then \
-      echo "No untracked non-ignored files to stash."; \
-      exit 0; \
-    fi; \
-    msg="scour:untracked:$(date -u +%Y%m%dT%H%M%SZ)"; \
-    git stash push -m "$msg" -- "${files[@]}" >/dev/null; \
-    echo "Stashed untracked non-ignored files as: $msg" \
-  '
-  @just _log_end stash-untracked
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start stash-untracked
+
+  files=()
+  while IFS= read -r -d '' file; do
+    files+=("$file")
+  done < <(git ls-files --others --exclude-standard -z)
+
+  if [ "${#files[@]}" -eq 0 ]; then
+    echo "No untracked non-ignored files to stash."
+    exit 0
+  fi
+
+  msg="scour:untracked:$(date -u +%Y%m%dT%H%M%SZ)"
+  git stash push --include-untracked -m "$msg" -- "${files[@]}" >/dev/null
+
+  just _log_end stash-untracked
 
 
 # Remove ignored repository files while retaining .venv.
 [group('cleaning')]
 scour:
-  @just _log_start scour
-  @just clean
-  @just stash-untracked
-  @bash -euo pipefail -c '\
-    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
-      git clean -fXd -e .venv/; \
-    else \
-      echo "[scour] not a git repository; skipping"; \
-    fi \
-  '
-  @just _log_end scour
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  just _log_start scour
+  just clean
+  just stash-untracked
+
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git clean -fXd -e .venv/
+  else
+    echo "[scour] not a git repository; skipping"
+  fi
+
+  just _log_end scour
 
 
 # ======================================================================
@@ -649,18 +714,19 @@ scour:
 
 # Best-effort local repair loop.
 #
-# setup and tests remain strict. Mutating/static repair steps continue after
+# tests remain strict. Mutating/static repair steps continue after
 # individual failures so one problem does not hide unrelated fixable problems.
 [group('convenience')]
 fix:
   @just _log_start fix
-  @just _run setup "just setup"
-  @just _run_soft lint "just lint"
+  @just _run_soft sync "just sync"
+  @just _run_soft syntax "just syntax"
   @just _run_soft format "just format"
+  @just _run_soft lint "just lint"
   @just _run_soft typecheck "just typecheck"
   @just _run_soft lint-imports "just lint-imports"
-  @just test --fast
-  @just cov
+  @just _run "test --fast" "just test --fast"
+  @just _run_soft cov "just cov"
   @just _log_end fix
 
 
@@ -671,12 +737,13 @@ fix:
 [group('convenience')]
 check:
   @just _log_start check
-  @just _run lint "just lint --no-fix"
+  @just _run syntax "just syntax"
   @just _run format "just format --check"
+  @just _run lint "just lint --no-fix"
   @just _run typecheck "MODE=ci just typecheck"
   @just _run lint-imports "just lint-imports"
   @just _run test "just test"
-  @just _run coverage "just cov"
+  @just _run cov "just cov"
   @just _log_end check
 
 

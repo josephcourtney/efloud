@@ -8,7 +8,7 @@ from efloud.repository import Repository
 from efloud.repository_models import SourceId, TreeEntry
 from efloud.repository_query import RepositoryQueryService
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
 def _mapping(value: JsonValue | None) -> JsonMapping:

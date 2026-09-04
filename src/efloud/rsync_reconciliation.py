@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from efloud.json_types import JsonObject
 from efloud.repository_models import (
     ArtifactObservation,
     ObservationId,
@@ -13,11 +12,12 @@ from efloud.repository_models import (
     SourceId,
     TreeEntry,
 )
-from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
 if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
     from efloud.repository import Repository
     from efloud.repository_models import SourceSnapshot
+    from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +64,7 @@ def _path_in_scope(path: str, scope: tuple[str, ...]) -> bool:
         return True
     normalized = path.strip("/")
     return any(
-        normalized == item.rstrip("/") or normalized.startswith(item.rstrip("/") + "/")
-        for item in scope
+        normalized == item.rstrip("/") or normalized.startswith(item.rstrip("/") + "/") for item in scope
     )
 
 

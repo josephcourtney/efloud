@@ -99,7 +99,7 @@ class RsyncMirrorConfig:
 
     update_interval_seconds: float | None = None
 
-    rate_limit_storage: str = "sqlite:///mirror_rate_limits.sqlite"
+    rate_limit_storage: str = "memory"
     rate_limit_scope: str | None = None
     raise_on_rate_limit: bool = False
     retry_attempts: int = 3

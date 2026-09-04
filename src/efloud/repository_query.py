@@ -3,8 +3,9 @@ from __future__ import annotations
 import gzip
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 from efloud.json_types import JsonObject, JsonValue
 from efloud.locator import apply_structured_locator, locator_candidates, split_locator
@@ -79,7 +80,12 @@ def _resolve_lines(text: str, value: str, locator: str) -> tuple[JsonValue | Non
     return "\n".join(lines[start - 1 : end]), None
 
 
-def _resolve_regex(text: str, value: str, locator: str) -> tuple[JsonValue | None, str | None]:
+def _resolve_regex(
+    text: str,
+    value: str,
+    locator: str,
+) -> tuple[JsonValue | None, str | None]:
+    del locator  # needed to silence "unused argument". function must adhere to TextLocatorHandler signature
     try:
         match = re.search(value, text, re.MULTILINE)
     except re.error as exc:
@@ -223,7 +229,9 @@ class RepositoryQueryService:
             "target_kind": "artifact",
             "artifact_key": artifact_key,
             "state": state.to_dict() if state is not None else None,
-            "history": [observation.to_dict() for observation in self.repository.observations_for(artifact_key)],
+            "history": [
+                observation.to_dict() for observation in self.repository.observations_for(artifact_key)
+            ],
         }
         if locator is None:
             return payload

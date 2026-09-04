@@ -38,7 +38,7 @@ class HttpCacheConfig:
     cache_db_path: str | None = None
     force_cache: bool = False  # ignore RFC 9111 headers (useful for APIs without cache headers)
 
-    rate_limit_storage: str = "sqlite:///rate_limits.sqlite"
+    rate_limit_storage: str = "memory"
     rate_limit_scope: str | None = None
     raise_on_rate_limit: bool = False
 

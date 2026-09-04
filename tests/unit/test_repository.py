@@ -1,15 +1,17 @@
 import sqlite3
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from efloud.datasets import DatasetDefinition, ExactObservation, Latest, LatestAll, LatestBefore
 from efloud.repository import Repository
 from efloud.repository_models import ArtifactAbsence, ContentId, SourceId, TreeEntry, ValidationResult
-from efloud.sqlite_metadata import SQLiteMetadataStore
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+if TYPE_CHECKING:
+    from efloud.sqlite_metadata import SQLiteMetadataStore
+
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
 def _run(repo: Repository):
@@ -134,17 +136,16 @@ def test_dataset_verification_detects_blob_corruption(tmp_path: Path) -> None:
 
 
 def test_validation_requires_known_content(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repo:
-        with pytest.raises(sqlite3.IntegrityError):
-            repo.record_validation(
-                ValidationResult(
-                    content_id=ContentId("sha256:" + "0" * 64),
-                    validator="test",
-                    validator_version="1",
-                    checked_at=1.0,
-                    status="pass",
-                )
+    with Repository(tmp_path) as repo, pytest.raises(sqlite3.IntegrityError):
+        repo.record_validation(
+            ValidationResult(
+                content_id=ContentId("sha256:" + "0" * 64),
+                validator="test",
+                validator_version="1",
+                checked_at=1.0,
+                status="pass",
             )
+        )
 
 
 def test_absence_hides_latest_artifact_but_preserves_history(tmp_path: Path) -> None:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,6 +24,8 @@ from efloud.repository_models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from efloud.derived import DerivedTask
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
@@ -121,8 +122,7 @@ def _task_runtime_metadata(context: _DerivedTaskContext) -> JsonObject:
         "task": context.task_name,
         "input_snapshot_ids": _json_string_list(context.input_snapshot_ids),
         "input_observation_ids": _json_string_list(context.input_ids),
-        "provenance_complete": context.task is not None
-        and isinstance(context.task, RepositoryDerivedTask),
+        "provenance_complete": context.task is not None and isinstance(context.task, RepositoryDerivedTask),
     }
     if context.task_version is not None:
         metadata["task_version"] = context.task_version

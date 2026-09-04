@@ -10,7 +10,7 @@ from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
 def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -9,12 +9,12 @@ import httpx
 
 from efloud.derived import DerivedTask
 from efloud.fs import atomic_write_bytes, atomic_write_text, safe_json_dump
-from efloud.json_types import JsonObject
 from efloud.transport.http import HttpCache, HttpCacheConfig
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+    from efloud.json_types import JsonObject
     from efloud.manifest import NormalizedManifest
     from efloud.registry import SourceDefinition
 

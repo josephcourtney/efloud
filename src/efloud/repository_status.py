@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from efloud.json_types import JsonObject
 from efloud.repository_models import RunId, SourceId
 
 if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
     from efloud.metadata_store import OperationRecord, RunRecord, SourceRecord
     from efloud.repository import Repository
     from efloud.repository_models import SourceSnapshot
@@ -60,12 +60,9 @@ class RepositoryStatusService:
     def root_payload(self, *, run_limit: int = 20) -> JsonObject:
         return {
             "target_kind": "repository",
-            "sources": [
-                _source_record_payload(source) for source in self.repository.metadata.sources()
-            ],
+            "sources": [_source_record_payload(source) for source in self.repository.metadata.sources()],
             "recent_runs": [
-                _run_record_payload(run)
-                for run in self.repository.metadata.recent_runs(limit=run_limit)
+                _run_record_payload(run) for run in self.repository.metadata.recent_runs(limit=run_limit)
             ],
         }
 

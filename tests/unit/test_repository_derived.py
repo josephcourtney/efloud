@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from efloud.fanout import RestBaseFanoutTask
-from efloud.json_types import JsonObject
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_derived import import_derived_results
 from efloud.repository_models import ArtifactAbsence, SourceId
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from efloud.json_types import JsonObject
 
 
 async def _unused_enumerator(*, sync_root, manifest, sources):
@@ -98,9 +101,7 @@ def test_complete_collection_records_items_absence_snapshot_and_execution(tmp_pa
             config=config,
             run_id=run_id,
             started_at=10.0,
-            derived_results={
-                "fanout": _collection_payload(tmp_path, items=("alpha",), missing=("missing",))
-            },
+            derived_results={"fanout": _collection_payload(tmp_path, items=("alpha",), missing=("missing",))},
         )
 
         assert imported.handled_source_ids == ("collection",)

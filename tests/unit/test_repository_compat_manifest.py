@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -13,7 +13,9 @@ from efloud.repository_compat import repository_manifest
 from efloud.repository_derived import import_derived_results
 from efloud.repository_models import SourceId
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class DerivedTask:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,7 +11,9 @@ from efloud.fanout import RestBaseFanoutTask
 from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 async def _unused_enumerator(*, sync_root, manifest, sources):

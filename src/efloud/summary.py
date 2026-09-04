@@ -258,7 +258,6 @@ def _transport_attempt_errors(results: JsonMapping | None) -> list[str]:
 
 def build_summary(result: SummaryResult) -> dict[str, Any]:
     """Build a stable summary from either legacy or repository-backed sync results."""
-
     errors = result.manifest.get("errors", [])
     results = result.manifest.get("results", {})
     rsync_payload = _normalize_transport_section(results.get("rsync"))

@@ -194,7 +194,7 @@ def test_load_latest_manifest_handles_missing_invalid_and_root_mismatch(tmp_path
     assert "conflicts with configured cache root" in warnings[0]
 
 
-@pytest.mark.small
+@pytest.mark.medium
 def test_split_locator_and_parts_cover_supported_forms():
     assert split_locator("artifact.json#/items/0/name") == ("artifact.json", "/items/0/name")
     assert split_locator("artifact.json") == ("artifact.json", None)

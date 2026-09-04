@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
-from pathlib import Path
-from types import TracebackType
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, Self
 
 from efloud.blob_store import BlobStore, FilesystemBlobStore
-from efloud.json_types import JsonObject
-from efloud.metadata_store import MetadataStore
+from efloud.datasets import DatasetDefinition, DatasetManifest, ImmutableDataset, resolve_dataset
 from efloud.repository_models import (
     ArtifactAbsence,
     ArtifactKey,
@@ -36,10 +32,15 @@ from efloud.repository_models import (
 from efloud.sqlite_metadata import SQLiteMetadataStore
 
 if TYPE_CHECKING:
-    from efloud.datasets import DatasetDefinition, ImmutableDataset
+    from collections.abc import Iterable
+    from pathlib import Path
+    from types import TracebackType
+
+    from efloud.json_types import JsonObject
+    from efloud.metadata_store import MetadataStore
 
 
-class Repository:
+class Repository:  # ruff: ignore[too-many-public-methods]
     def __init__(
         self,
         root: Path,
@@ -52,7 +53,8 @@ class Repository:
         self.metadata = metadata_store or SQLiteMetadataStore(self.root / "metadata.sqlite")
         self.blobs = blob_store or FilesystemBlobStore(self.root / "objects")
 
-    def __enter__(self) -> Repository:
+    def __enter__(self) -> Self:
+        """Return this repository for context-manager use."""
         return self
 
     def __exit__(
@@ -61,6 +63,7 @@ class Repository:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        """Close repository resources when leaving a context manager."""
         self.close()
 
     def close(self) -> None:
@@ -475,7 +478,6 @@ class Repository:
         *,
         created_at: float | None = None,
     ) -> ImmutableDataset:
-        from efloud.datasets import ImmutableDataset, resolve_dataset
 
         manifest = resolve_dataset(self, definition, created_at=created_at)
         existing = self.metadata.dataset(manifest.dataset_id)
@@ -486,7 +488,6 @@ class Repository:
         return ImmutableDataset(self, manifest)
 
     def dataset(self, dataset_id: DatasetId | str) -> ImmutableDataset:
-        from efloud.datasets import DatasetManifest, ImmutableDataset
 
         record = self.metadata.dataset(DatasetId(str(dataset_id)))
         if record is None:

@@ -99,7 +99,7 @@ class FilesystemBlobStore:
                 pass
             except OSError:
                 if not destination.exists():
-                    os.replace(tmp_path, destination)
+                    Path(tmp_path).replace(destination)
                     tmp_path = None
         finally:
             if tmp_path is not None and tmp_path.exists():
@@ -121,7 +121,7 @@ class FilesystemBlobStore:
                 pass
             except OSError:
                 if not destination.exists():
-                    os.replace(tmp_path, destination)
+                    Path(tmp_path).replace(destination)
                     tmp_path = None
         finally:
             if tmp_path is not None and tmp_path.exists():

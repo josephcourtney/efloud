@@ -14,7 +14,11 @@ from efloud.inventory import (
 from efloud.reconciliation import PreviousInventoryItem, reconcile_inventory
 from efloud.repository_models import ArtifactKey, ContentId, ContentRef, SourceId
 from efloud.transport.http_inventory import http_source_inventory
-from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry, rsync_source_inventory
+from efloud.transport.rsync_inventory import (
+    RsyncInventory,
+    RsyncInventoryEntry,
+    rsync_source_inventory,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -73,8 +77,10 @@ def test_complete_inventory_classifies_new_changed_unchanged_and_absent() -> Non
     )
 
     assert result.counts() == {"new": 1, "changed": 1, "unchanged": 1, "absent": 1}
-    assert result.decision_for("same").state == "unchanged"  # type: ignore[union-attr]
-    assert result.decision_for("gone").state == "absent"  # type: ignore[union-attr]
+    same_decision = result.decision_for("same")
+    gone_decision = result.decision_for("gone")
+    assert same_decision is not None and same_decision.state == "unchanged"
+    assert gone_decision is not None and gone_decision.state == "absent"
 
 
 @pytest.mark.small
@@ -90,7 +96,7 @@ def test_incomplete_inventory_never_infers_absence() -> None:
 
 
 @pytest.mark.small
-def test_complete_scoped_inventory_only_infers_absence_inside_scope() -> None:
+def test_complete_scoped_inventory_only_infers_absence_inside_known_scope() -> None:
     inventory = SourceInventory(
         source_id=SourceId("source"),
         observed_at=10.0,
@@ -102,6 +108,7 @@ def test_complete_scoped_inventory_only_infers_absence_inside_scope() -> None:
         (
             _previous("inside", source_path="aa/inside.dat"),
             _previous("outside", source_path="bb/outside.dat"),
+            _previous("unknown-location"),
         ),
     )
     assert tuple(decision.item_id for decision in result.by_state("absent")) == ("inside",)
@@ -117,7 +124,8 @@ def test_weak_change_evidence_does_not_authorize_content_reuse() -> None:
         items=(_item("item", token=weak),),
     )
     result = reconcile_inventory(inventory, (_previous("item", token=weak),))
-    assert result.decision_for("item").state == "changed"  # type: ignore[union-attr]
+    decision = result.decision_for("item")
+    assert decision is not None and decision.state == "changed"
 
 
 @pytest.mark.small
@@ -163,6 +171,27 @@ def test_rsync_inventory_converts_to_same_normalized_inventory_model() -> None:
     assert item.artifact_key == ArtifactKey("source:mirror:path:aa/file.dat")
     assert item.change_token is not None
     assert item.change_token.kind == "rsync-list-state"
+
+
+@pytest.mark.small
+def test_collection_enumeration_uses_normalized_inventory_without_special_reconciliation() -> None:
+    inventory = SourceInventory(
+        source_id=SourceId("collection"),
+        observed_at=10.0,
+        coverage=InventoryCoverage(complete=True),
+        items=(
+            InventoryItem(
+                item_id="42",
+                artifact_key=ArtifactKey("source:collection:item:42"),
+                locator="https://example.test/items/42",
+                change_token=ChangeToken("api-version", "v3", reliability="strong"),
+            ),
+        ),
+        upstream_identity="page-set:v3",
+        metadata={"transport": "synthetic-collection"},
+    )
+    result = reconcile_inventory(inventory)
+    assert result.counts() == {"new": 1, "changed": 0, "unchanged": 0, "absent": 0}
 
 
 @pytest.mark.small

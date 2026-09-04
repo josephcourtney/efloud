@@ -10,6 +10,7 @@ from efloud.transport.rsync import RsyncMirrorConfig
 
 InventoryKind = Literal["file", "directory", "symlink"]
 _MODE_RE = re.compile(r"^[bcdlps-][rwxstST-]{9}$")
+_LIST_ONLY_FIELD_COUNT = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,8 +41,8 @@ def _normalize_relative_path(value: str) -> str | None:
 
 
 def _parse_list_line(line: str, *, prefix: str = "") -> RsyncInventoryEntry | None:
-    parts = line.strip().split(maxsplit=4)
-    if len(parts) != 5 or _MODE_RE.fullmatch(parts[0]) is None:
+    parts = line.strip().split(maxsplit=_LIST_ONLY_FIELD_COUNT - 1)
+    if len(parts) != _LIST_ONLY_FIELD_COUNT or _MODE_RE.fullmatch(parts[0]) is None:
         return None
     mode, size_text, date_text, time_text, raw_path = parts
     target: str | None = None

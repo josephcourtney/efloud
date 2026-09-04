@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from efloud.inventory import ChangeToken, IntegrityExpectation, InventoryCoverage, InventoryItem, SourceInventory
+from efloud.inventory import (
+    ChangeToken,
+    IntegrityExpectation,
+    InventoryCoverage,
+    InventoryItem,
+    SourceInventory,
+)
 from efloud.repository_models import ArtifactKey, SourceId
 
 if TYPE_CHECKING:

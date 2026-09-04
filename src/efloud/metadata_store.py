@@ -81,7 +81,7 @@ class DatasetRecord:
     members: tuple[DatasetMemberRecord, ...]
 
 
-class MetadataStore(Protocol):
+class MetadataStore(Protocol):  # noqa: PLR0904 - semantic repository store protocol intentionally exposes the full repository vocabulary.
     def close(self) -> None: ...
 
     def register_source(self, source_id: SourceId, definition: JsonObject) -> None: ...

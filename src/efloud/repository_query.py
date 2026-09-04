@@ -4,7 +4,7 @@ import gzip
 import json
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from efloud.json_types import JsonObject, JsonValue
 from efloud.locator import apply_structured_locator, locator_candidates, split_locator
@@ -15,6 +15,9 @@ if TYPE_CHECKING:
     from efloud.metadata_store import DatasetMemberRecord
     from efloud.repository import Repository
     from efloud.repository_models import SourceSnapshot
+
+TextLocatorHandler = Callable[[str, str, str], tuple[JsonValue | None, str | None]]
+QueryHandler = Callable[[str, str | None], JsonObject]
 
 
 def _member_payload(member: DatasetMemberRecord) -> JsonObject:
@@ -51,43 +54,103 @@ def _looks_json(observation: ArtifactObservation) -> bool:
     if observation.media_type is not None and "json" in observation.media_type.lower():
         return True
     name = (observation.source_path or observation.upstream_locator or "").lower()
-    return name.endswith(".json") or name.endswith(".json.gz")
+    return name.endswith((".json", ".json.gz"))
+
+
+def _resolve_line(text: str, value: str, locator: str) -> tuple[JsonValue | None, str | None]:
+    if not value.isdigit() or int(value) < 1:
+        return None, f"Invalid line locator: {locator!r}"
+    lines = text.splitlines()
+    index = int(value) - 1
+    if index >= len(lines):
+        return None, f"Line {index + 1} out of range (1..{len(lines)})"
+    return lines[index], None
+
+
+def _resolve_lines(text: str, value: str, locator: str) -> tuple[JsonValue | None, str | None]:
+    match = re.fullmatch(r"(\d+)-(\d+)", value)
+    if match is None:
+        return None, f"Invalid lines locator: {locator!r}"
+    start = int(match.group(1))
+    end = int(match.group(2))
+    lines = text.splitlines()
+    if start < 1 or end < start or end > len(lines):
+        return None, f"Line range {start}-{end} out of range (1..{len(lines)})"
+    return "\n".join(lines[start - 1 : end]), None
+
+
+def _resolve_regex(text: str, value: str, locator: str) -> tuple[JsonValue | None, str | None]:
+    try:
+        match = re.search(value, text, re.MULTILINE)
+    except re.error as exc:
+        return None, f"Invalid regex locator: {exc}"
+    if match is None:
+        return None, f"Regex locator did not match: {value!r}"
+    return match.group(1) if match.lastindex else match.group(0), None
 
 
 def _resolve_text_locator(text: str, locator: str) -> tuple[JsonValue | None, str | None]:
     loc = locator.strip()
     if loc == "text":
         return text, None
-    if loc.startswith("line:"):
-        value = loc.removeprefix("line:").strip()
-        if not value.isdigit() or int(value) < 1:
-            return None, f"Invalid line locator: {locator!r}"
-        lines = text.splitlines()
-        index = int(value) - 1
-        if index >= len(lines):
-            return None, f"Line {index + 1} out of range (1..{len(lines)})"
-        return lines[index], None
-    if loc.startswith("lines:"):
-        value = loc.removeprefix("lines:").strip()
-        match = re.fullmatch(r"(\d+)-(\d+)", value)
-        if match is None:
-            return None, f"Invalid lines locator: {locator!r}"
-        start = int(match.group(1))
-        end = int(match.group(2))
-        lines = text.splitlines()
-        if start < 1 or end < start or end > len(lines):
-            return None, f"Line range {start}-{end} out of range (1..{len(lines)})"
-        return "\n".join(lines[start - 1 : end]), None
-    if loc.startswith("regex:"):
-        pattern = loc.removeprefix("regex:")
-        try:
-            match = re.search(pattern, text, re.MULTILINE)
-        except re.error as exc:
-            return None, f"Invalid regex locator: {exc}"
-        if match is None:
-            return None, f"Regex locator did not match: {pattern!r}"
-        return match.group(1) if match.lastindex else match.group(0), None
-    return None, f"Unsupported text locator: {locator!r}"
+    prefix, separator, value = loc.partition(":")
+    handlers: dict[str, TextLocatorHandler] = {
+        "line": _resolve_line,
+        "lines": _resolve_lines,
+        "regex": _resolve_regex,
+    }
+    handler = handlers.get(prefix) if separator else None
+    if handler is None:
+        return None, f"Unsupported text locator: {locator!r}"
+    return handler(text, value.strip() if prefix != "regex" else value, locator)
+
+
+def _locator_result(locator: str, resolved: str, value: JsonValue) -> JsonObject:
+    return {
+        "requested": locator,
+        "resolved": resolved,
+        "value": value,
+        "error": None,
+    }
+
+
+def _resolve_json_locator(data: bytes, locator: str) -> JsonObject:
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {
+            "requested": locator,
+            "resolved": None,
+            "value": None,
+            "error": f"Failed to decode JSON content: {exc}",
+        }
+    errors: list[str] = []
+    for candidate in locator_candidates(locator):
+        resolved, error = apply_structured_locator(value, candidate)
+        if error is None:
+            return _locator_result(locator, candidate, resolved)
+        errors.append(f"{candidate}: {error}")
+    return _failed_locator(locator, errors)
+
+
+def _resolve_plaintext_locator(data: bytes, locator: str) -> JsonObject:
+    text = data.decode("utf-8", errors="replace")
+    errors: list[str] = []
+    for candidate in locator_candidates(locator):
+        resolved, error = _resolve_text_locator(text, candidate)
+        if error is None:
+            return _locator_result(locator, candidate, resolved)
+        errors.append(f"{candidate}: {error}")
+    return _failed_locator(locator, errors)
+
+
+def _failed_locator(locator: str, errors: list[str]) -> JsonObject:
+    return {
+        "requested": locator,
+        "resolved": None,
+        "value": None,
+        "error": "Locator evaluation failed: " + " | ".join(errors),
+    }
 
 
 def _resolve_locator(
@@ -96,45 +159,15 @@ def _resolve_locator(
     locator: str,
 ) -> JsonObject:
     data = _payload_bytes(repository, observation)
-    errors: list[str] = []
     if _looks_json(observation):
-        try:
-            value = json.loads(data.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            return {
-                "requested": locator,
-                "resolved": None,
-                "value": None,
-                "error": f"Failed to decode JSON content: {exc}",
-            }
-        for candidate in locator_candidates(locator):
-            resolved, error = apply_structured_locator(value, candidate)
-            if error is None:
-                return {
-                    "requested": locator,
-                    "resolved": candidate,
-                    "value": resolved,
-                    "error": None,
-                }
-            errors.append(f"{candidate}: {error}")
-    else:
-        text = data.decode("utf-8", errors="replace")
-        for candidate in locator_candidates(locator):
-            resolved, error = _resolve_text_locator(text, candidate)
-            if error is None:
-                return {
-                    "requested": locator,
-                    "resolved": candidate,
-                    "value": resolved,
-                    "error": None,
-                }
-            errors.append(f"{candidate}: {error}")
-    return {
-        "requested": locator,
-        "resolved": None,
-        "value": None,
-        "error": "Locator evaluation failed: " + " | ".join(errors),
-    }
+        return _resolve_json_locator(data, locator)
+    return _resolve_plaintext_locator(data, locator)
+
+
+def _require_no_locator(locator: str | None, target_kind: str) -> None:
+    if locator is not None:
+        msg = f"Locators are not supported for repository {target_kind} targets."
+        raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,10 +180,7 @@ class RepositoryQueryService:
             msg = "Repository query target must not be empty."
             raise ValueError(msg)
         if target == "root":
-            if locator is not None:
-                msg = "Locators are not supported for the repository root."
-                raise ValueError(msg)
-            return RepositoryStatusService(self.repository).root_payload()
+            return self._root("", locator)
 
         prefix, separator, identifier = target.partition(":")
         if not separator or not identifier:
@@ -160,28 +190,32 @@ class RepositoryQueryService:
                 "dataset:<id>."
             )
             raise ValueError(msg)
-        if prefix == "source":
-            if locator is not None:
-                msg = "Locators are not supported for repository source targets."
-                raise ValueError(msg)
-            return RepositoryStatusService(self.repository).source_payload(identifier)
-        if prefix == "run":
-            if locator is not None:
-                msg = "Locators are not supported for repository run targets."
-                raise ValueError(msg)
-            return RepositoryStatusService(self.repository).run_payload(identifier)
-        if prefix == "artifact":
-            return self._artifact(identifier, locator)
-        if prefix == "observation":
-            return self._observation(identifier, locator)
-        if prefix == "snapshot":
-            return self._snapshot(identifier, locator)
-        if prefix == "source-snapshot":
-            return self._source_snapshot(identifier, locator)
-        if prefix == "dataset":
-            return self._dataset(identifier, locator)
-        msg = f"Unsupported repository query target: {raw!r}"
-        raise ValueError(msg)
+        handlers: dict[str, QueryHandler] = {
+            "source": self._source,
+            "run": self._run,
+            "artifact": self._artifact,
+            "observation": self._observation,
+            "snapshot": self._snapshot,
+            "source-snapshot": self._source_snapshot,
+            "dataset": self._dataset,
+        }
+        handler = handlers.get(prefix)
+        if handler is None:
+            msg = f"Unsupported repository query target: {raw!r}"
+            raise ValueError(msg)
+        return handler(identifier, locator)
+
+    def _root(self, _identifier: str, locator: str | None) -> JsonObject:
+        _require_no_locator(locator, "root")
+        return RepositoryStatusService(self.repository).root_payload()
+
+    def _source(self, source_id: str, locator: str | None) -> JsonObject:
+        _require_no_locator(locator, "source")
+        return RepositoryStatusService(self.repository).source_payload(source_id)
+
+    def _run(self, run_id: str, locator: str | None) -> JsonObject:
+        _require_no_locator(locator, "run")
+        return RepositoryStatusService(self.repository).run_payload(run_id)
 
     def _artifact(self, artifact_key: str, locator: str | None) -> JsonObject:
         state = self.repository.latest_state(artifact_key)
@@ -225,9 +259,7 @@ class RepositoryQueryService:
         return payload
 
     def _snapshot(self, snapshot_id: str, locator: str | None) -> JsonObject:
-        if locator is not None:
-            msg = "Locators are not supported for source snapshots."
-            raise ValueError(msg)
+        _require_no_locator(locator, "source snapshot")
         snapshot = self.repository.metadata.source_snapshot(SnapshotId(snapshot_id))
         if snapshot is None:
             msg = f"Unknown source snapshot: {snapshot_id}"
@@ -238,9 +270,7 @@ class RepositoryQueryService:
         }
 
     def _source_snapshot(self, source_id: str, locator: str | None) -> JsonObject:
-        if locator is not None:
-            msg = "Locators are not supported for source snapshots."
-            raise ValueError(msg)
+        _require_no_locator(locator, "source snapshot")
         snapshot = self.repository.latest_source_snapshot(source_id)
         return {
             "target_kind": "source-snapshot",
@@ -249,9 +279,7 @@ class RepositoryQueryService:
         }
 
     def _dataset(self, dataset_id: str, locator: str | None) -> JsonObject:
-        if locator is not None:
-            msg = "Locators are not supported for dataset targets."
-            raise ValueError(msg)
+        _require_no_locator(locator, "dataset")
         dataset = self.repository.dataset(dataset_id)
         return {
             "target_kind": "dataset",

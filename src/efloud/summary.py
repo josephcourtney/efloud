@@ -1,12 +1,28 @@
 from __future__ import annotations
 
 import operator
-from typing import TYPE_CHECKING, Any, TypeGuard
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
 
 from efloud.json_types import JsonMapping, JsonValue, json_mapping_or_none
 
 if TYPE_CHECKING:
-    from efloud.models import SyncResult
+    from pathlib import Path
+
+    from efloud.models import NormalizedManifest
+
+
+class SummaryResult(Protocol):
+    @property
+    def ok(self) -> bool: ...
+
+    @property
+    def root(self) -> Path: ...
+
+    @property
+    def manifest_path(self) -> Path | None: ...
+
+    @property
+    def manifest(self) -> NormalizedManifest: ...
 
 
 def _normalize_transport_section(raw: JsonValue | dict[str, Any] | None) -> dict[str, Any]:
@@ -90,6 +106,11 @@ def _transport_status(value_mapping: JsonMapping, results_mapping: JsonMapping |
     status_val = value_mapping.get("status")
     fallback = str(status_val) if isinstance(status_val, str) else None
     if results_mapping is None:
+        operation = json_mapping_or_none(value_mapping.get("operation"))
+        if operation is not None:
+            operation_status = operation.get("status")
+            if isinstance(operation_status, str):
+                return operation_status
         return fallback
     return _transport_result_status(results_mapping) or fallback
 
@@ -105,6 +126,10 @@ def _transport_updated(value_mapping: JsonMapping, results_mapping: JsonMapping 
     updated = value_mapping.get("updated")
     if _is_string_list(updated):
         return len(updated)
+    ingested = value_mapping.get("ingested_file_count")
+    reused = value_mapping.get("reused_content_count")
+    if isinstance(ingested, int) and not isinstance(ingested, bool):
+        return ingested + (reused if isinstance(reused, int) and not isinstance(reused, bool) else 0)
     return None
 
 
@@ -231,7 +256,9 @@ def _transport_attempt_errors(results: JsonMapping | None) -> list[str]:
     return errors
 
 
-def build_summary(result: SyncResult) -> dict[str, Any]:
+def build_summary(result: SummaryResult) -> dict[str, Any]:
+    """Build a stable summary from either legacy or repository-backed sync results."""
+
     errors = result.manifest.get("errors", [])
     results = result.manifest.get("results", {})
     rsync_payload = _normalize_transport_section(results.get("rsync"))
@@ -245,3 +272,6 @@ def build_summary(result: SyncResult) -> dict[str, Any]:
         "rsync": rsync_payload,
         "http": http_payload,
     }
+
+
+__all__ = ["SummaryResult", "build_summary"]

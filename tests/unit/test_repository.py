@@ -1,13 +1,15 @@
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from efloud.datasets import DatasetDefinition, ExactObservation, Latest, LatestBefore
+from efloud.datasets import DatasetDefinition, ExactObservation, Latest, LatestAll, LatestBefore
 from efloud.repository import Repository
-from efloud.repository_models import ContentId, SourceId, TreeEntry, ValidationResult
+from efloud.repository_models import ArtifactAbsence, ContentId, SourceId, TreeEntry, ValidationResult
+from efloud.sqlite_metadata import SQLiteMetadataStore
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 def _run(repo: Repository):
@@ -73,7 +75,7 @@ def test_partial_tree_snapshot_retains_scope(tmp_path: Path) -> None:
         snapshot = repo.record_tree_snapshot(
             source_id=source,
             run_id=run,
-            entries=(TreeEntry("aa/a.txt", 'file', obs.content_id, 5),),
+            entries=(TreeEntry("aa/a.txt", "file", obs.content_id, 5),),
             complete=False,
             scope=("aa/",),
             observed_at=105.0,
@@ -146,9 +148,6 @@ def test_validation_requires_known_content(tmp_path: Path) -> None:
 
 
 def test_absence_hides_latest_artifact_but_preserves_history(tmp_path: Path) -> None:
-    from efloud.datasets import LatestAll
-    from efloud.repository_models import ArtifactAbsence
-
     with Repository(tmp_path) as repo:
         source, run, op = _run(repo)
         old = repo.ingest_bytes(
@@ -185,11 +184,12 @@ def test_schema_v1_migrates_to_absence_capable_v2(tmp_path: Path) -> None:
 
     # A v1 database receives the additive v2 tables without losing existing data.
     with Repository(tmp_path) as repo:
-        version = repo.metadata._connection.execute("PRAGMA user_version").fetchone()[0]
+        metadata = cast("SQLiteMetadataStore", repo.metadata)
+        version = metadata._connection.execute("PRAGMA user_version").fetchone()[0]
         assert version == 2
         names = {
             row[0]
-            for row in repo.metadata._connection.execute(
+            for row in metadata._connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             ).fetchall()
         }

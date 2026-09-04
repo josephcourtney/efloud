@@ -22,11 +22,17 @@ Items should be categorized under these headings:
 - add provenance edges, validation records, materialization records, source/tree snapshots, and explicit artifact-absence states so repository history can distinguish unchanged content, changed content, and known absence
 - add immutable datasets with exact, latest, latest-before, and latest-all selection plus separate provenance-sensitive dataset identity and content-equivalence identity
 - add a transitional `Engine` that preserves existing sync outputs while recording HTTP/REST acquisitions and rsync file deltas into the repository
+- add repository-native artifact, observation, source-snapshot/tree, dataset, source, and run inspection APIs, including locator evaluation directly against immutable blob content
+- add repository-backed source/run status reporting that works after reopening a repository without canonical manifests or mirror-state files
+- add authoritative rsync inventory and coverage-aware reconciliation, including complete/scoped source snapshots, unchanged-content reuse, and explicit absence observations when enumeration proves deletion
 
 ### Changed
 - change temporal dataset resolution to treat an explicit later absence as authoritative instead of falling back to an older content-bearing observation
 - record legacy rsync changes as scoped, incomplete repository snapshots; source-relative paths are preserved, but deletion is not inferred when the existing rsync mode cannot prove upstream absence
 - add additive SQLite schema migration support for repository metadata evolution
+- change `Engine.sync()` rsync recording to attempt authoritative remote enumeration after successful transfer and fall back to conservative delta recording when enumeration is incomplete or unavailable
+- change initialized-repository `source:` queries and source status rows to prefer SQLite/blob repository state while preserving manifest fallback for older stores without repository metadata
+- expose the repository, immutable dataset selectors/types, repository identities, query service, and repository status service through the package public API
 
 ### Deprecated
 
@@ -34,6 +40,7 @@ Items should be categorized under these headings:
 
 ### Fixed
 - prevent temporal dataset selection from resurrecting files that have a later authoritative absence observation
+- restore `sqlite_metadata.py` as valid importable source while preserving the schema-v2 absence migration and repository metadata behavior
 
 ### Security
 

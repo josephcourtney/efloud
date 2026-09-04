@@ -210,6 +210,53 @@ class Repository:
             )
         return observation
 
+    def observe_content(
+        self,
+        artifact_key: ArtifactKey | str,
+        content_id: ContentId | str,
+        *,
+        run_id: RunId,
+        operation_id: OperationId,
+        source_id: SourceId | str | None = None,
+        observed_at: float | None = None,
+        source_path: str | None = None,
+        upstream_locator: str | None = None,
+        upstream_modified_at: float | None = None,
+        upstream_version: str | None = None,
+        metadata: JsonObject | None = None,
+        inputs: Iterable[ObservationId] = (),
+        materialization_kind: str | None = None,
+        materialization_path: Path | None = None,
+    ) -> ArtifactObservation:
+        normalized_content_id = ContentId(str(content_id))
+        content = self.metadata.content(normalized_content_id)
+        if content is None:
+            msg = f"Unknown repository content: {content_id}"
+            raise KeyError(msg)
+        observation = self._record_content_observation(
+            artifact_key=ArtifactKey(str(artifact_key)),
+            content=content,
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=SourceId(str(source_id)) if source_id is not None else None,
+            observed_at=time.time() if observed_at is None else observed_at,
+            source_path=source_path,
+            upstream_locator=upstream_locator,
+            upstream_modified_at=upstream_modified_at,
+            upstream_version=upstream_version,
+            media_type=content.media_type,
+            metadata=metadata or {},
+            inputs=inputs,
+        )
+        if materialization_kind is not None and materialization_path is not None:
+            self.metadata.record_materialization(
+                content_id=content.content_id,
+                kind=materialization_kind,
+                path=materialization_path.resolve().as_posix(),
+                metadata={},
+            )
+        return observation
+
     def _record_content_observation(
         self,
         *,

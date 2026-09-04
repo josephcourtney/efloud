@@ -141,6 +141,7 @@ def test_http_resource_uses_normalized_inventory_and_keeps_etag_out_of_content_i
     )
     item = inventory.items[0]
     assert inventory.coverage.complete
+    assert item.change_token is not None
     assert item.change_token == ChangeToken("http-etag", '"revision-7"', reliability="strong")
     assert item.expected_integrity[0].expected_content_id == ContentId(f"sha256:{'a' * 64}")
     assert item.change_token.value != str(item.expected_integrity[0].expected_content_id)

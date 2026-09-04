@@ -1,51 +1,41 @@
 # STATUS.md
 
-File Purpose: Current project state, progress against `DESIGN.md`, and continuity notes for the next development pass.
-
-Rules:
-- Keep this short-horizon and high-signal.
-- Do not use this as a task list (`TODO.md`) or execution strategy (`PLAN.md`).
-- Remove stale historical detail as soon as it stops helping continuity.
+File Purpose: Current project state and continuity notes for the next development pass.
 
 ## Current Focus
 
-The repository-centered architecture is now being implemented. Immutable content
-identity and the filesystem blob-store foundation are present; the immediate
-next step is to land the SQLite metadata/repository layer and route existing
-acquisition results through it without breaking compatibility outputs.
+The repository-centered migration is in the read/cutover stage. Acquisition can now
+populate the new repository while legacy manifests and mirrors remain available for
+compatibility. The next work is to make repository-backed queries/status the normal
+read path, then replace legacy rsync delta import with authoritative reconciliation.
 
-## Current State Summary
+## Current State
 
-Implemented so far:
+Implemented on `main`:
 
-- stable typed identifiers for sources, artifacts, content, observations, runs,
-  operations, snapshots, trees, and datasets
-- immutable artifact-observation/content records
-- deterministic ID canonicalization
-- portable SHA-256 content-addressed filesystem blob storage
-- atomic blob installation and content verification
+- typed repository identities and immutable SHA-256 content-addressed blob storage
+- SQLite metadata persistence with schema migration support
+- logical artifacts, observations, provenance edges, validations, materializations,
+  source/tree snapshots, and explicit artifact-absence states
+- immutable datasets with exact, latest, and temporal selection; dataset provenance
+  identity is distinct from content-equivalence identity
+- transitional `Engine` integration that dual-records HTTP/REST acquisition into the
+  repository while preserving existing sync outputs
+- conservative rsync delta ingestion: changed files and scoped tree evidence are
+  recorded, but legacy rsync snapshots remain incomplete and do not infer deletion
 
-Still pending in the current implementation tranche:
+Legacy manifest, mirror-state, query, and status paths still exist and are not yet
+fully derived from repository state.
 
-- SQLite metadata persistence
-- Repository service facade
-- source/tree snapshots and materialization records
-- immutable dataset API
-- Engine integration with the existing sync pipeline
-- repository-focused tests and public exports
+## Validation / Risks
 
-Legacy transport, manifest, mirror-state, query, and status behavior remains
-unchanged at this point.
+Focused repository/Engine tests passed during implementation, but the complete
+repository quality gate has not been run in the available execution environment.
+Authoritative rsync deletion semantics remain blocked on explicit enumeration and
+coverage-aware reconciliation.
 
-## Validation Notes
+## Continuity
 
-The new primitive modules were syntax-checked and their content-addressed storage
-behavior was exercised locally. The full repository gate cannot be run in the
-current environment because the repository cannot be cloned and lint/type
-dependencies cannot be downloaded.
-
-## Continuity Notes
-
-Continue the current implementation tranche before starting transport-native
-repository commits. The next commit should add SQLite metadata and the semantic
-Repository API, followed by dataset and Engine compatibility integration.
+A repository-native read/query layer has been drafted and exercised locally but is
+not committed. Resume by landing that layer and public exports, then migrate
+source/run/status reads before changing rsync reconciliation semantics.

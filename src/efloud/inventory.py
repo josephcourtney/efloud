@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from efloud.repository_models import ArtifactKey, ContentId, ContentRef, SourceId
+from efloud.repository_models import ContentId
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from efloud.json_types import JsonObject
+    from efloud.repository_models import ArtifactKey, ContentRef, SourceId
 
 ChangeTokenReliability = Literal["weak", "strong"]
 

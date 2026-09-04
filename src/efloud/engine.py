@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +9,7 @@ from types import TracebackType
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
 from efloud.registry import SourceDefinition
 from efloud.repository import Repository
+from efloud.repository_compat import repository_manifest, write_repository_manifest
 from efloud.repository_models import ObservationId, RunId
 from efloud.repository_recording import RepositorySyncRecorder
 from efloud.sync import sync as legacy_sync
@@ -19,6 +21,8 @@ class EngineSyncResult:
     repository_run_id: RunId
     observations: tuple[ObservationId, ...]
     skipped_source_ids: tuple[str, ...]
+    repository_manifest: NormalizedManifest | None = None
+    repository_manifest_path: Path | None = None
 
     @property
     def ok(self) -> bool:
@@ -30,6 +34,10 @@ class EngineSyncResult:
 
     @property
     def manifest(self) -> NormalizedManifest:
+        return self.repository_manifest or self.sync_result.manifest
+
+    @property
+    def legacy_manifest(self) -> NormalizedManifest:
         return self.sync_result.manifest
 
 
@@ -82,11 +90,29 @@ class Engine:
             recorder.finish(ok=False)
             raise
         recorder.finish(ok=sync_result.ok)
+
+        current_manifest: NormalizedManifest | None = None
+        manifest_path: Path | None = None
+        if not self.config.dry_run:
+            current_manifest = repository_manifest(
+                self.repository,
+                cfg=self.config,
+                run_id=recorder.run_id,
+            )
+            with contextlib.suppress(OSError):
+                current_manifest, manifest_path = write_repository_manifest(
+                    self.repository,
+                    cfg=self.config,
+                    run_id=recorder.run_id,
+                )
+
         return EngineSyncResult(
             sync_result=sync_result,
             repository_run_id=recorder.run_id,
             observations=tuple(recorder.observations),
             skipped_source_ids=tuple(recorder.skipped_source_ids),
+            repository_manifest=current_manifest,
+            repository_manifest_path=manifest_path,
         )
 
 

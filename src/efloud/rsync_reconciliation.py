@@ -5,7 +5,15 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from efloud.reconciliation import PreviousInventoryItem, ReconciliationDecision, reconcile_inventory
-from efloud.repository_models import ObservationId, OperationId, RunId, SourceId, TreeEntry
+from efloud.repository_models import (
+    ArtifactKey,
+    ArtifactObservation,
+    ObservationId,
+    OperationId,
+    RunId,
+    SourceId,
+    TreeEntry,
+)
 from efloud.transport.rsync_inventory import rsync_change_token, rsync_source_inventory
 
 if TYPE_CHECKING:
@@ -93,7 +101,7 @@ def _observe_existing_content(
     source_path: str,
     upstream_locator: str,
     local_path: Path,
-):
+) -> ArtifactObservation | None:
     if previous.content_id is None:
         return None
     try:
@@ -189,7 +197,7 @@ def _previous_items(
         items.append(
             PreviousInventoryItem(
                 item_id=entry.relative_path,
-                artifact_key=f"source:{source_id}:path:{entry.relative_path}",
+                artifact_key=ArtifactKey(f"source:{source_id}:path:{entry.relative_path}"),
                 content_id=entry.content_id,
                 source_path=entry.relative_path,
                 change_token=rsync_change_token(

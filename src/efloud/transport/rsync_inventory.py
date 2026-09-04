@@ -80,7 +80,11 @@ def _parse_list_line(line: str, *, prefix: str = "") -> RsyncInventoryEntry | No
 
 
 def parse_rsync_list_only(text: str, *, prefix: str = "") -> tuple[RsyncInventoryEntry, ...]:
-    entries = [entry for line in text.splitlines() if (entry := _parse_list_line(line, prefix=prefix))]
+    entries = [
+        entry
+        for line in text.splitlines()
+        if (entry := _parse_list_line(line, prefix=prefix))
+    ]
     by_path = {entry.relative_path: entry for entry in entries}
     return tuple(by_path[path] for path in sorted(by_path))
 
@@ -125,38 +129,51 @@ def enumerate_rsync(
     *,
     scope: tuple[str, ...] = (),
 ) -> RsyncInventory:
-    scopes = tuple(sorted({item.strip().strip("/") + "/" for item in scope if item.strip().strip("/")}))
+    scopes = tuple(
+        sorted(
+            {
+                item.strip().strip("/") + "/"
+                for item in scope
+                if item.strip().strip("/")
+            }
+        )
+    )
     requests = scopes or ("",)
     entries: dict[str, RsyncInventoryEntry] = {}
     errors: list[str] = []
     for requested_scope in requests:
         remote = _scoped_remote(cfg.remote, requested_scope)
-        completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - argv is structured and shell=False is the default.
-            _inventory_command(cfg, remote),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - argv is structured and shell=False is the default.
+                _inventory_command(cfg, remote),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError as exc:
+            errors.append(f"{requested_scope or '.'}: {type(exc).__name__}: {exc}")
+            continue
         if completed.returncode != 0:
-            detail = completed.stderr.strip() or completed.stdout.strip() or f"rsync exited {completed.returncode}"
+            detail = (
+                completed.stderr.strip()
+                or completed.stdout.strip()
+                or f"rsync exited {completed.returncode}"
+            )
             errors.append(f"{requested_scope or '.'}: {detail}")
             continue
         prefix = requested_scope.rstrip("/")
         for entry in parse_rsync_list_only(completed.stdout, prefix=prefix):
             entries[entry.relative_path] = entry
 
+    ordered = tuple(entries[path] for path in sorted(entries))
     if errors:
         return RsyncInventory(
-            entries=tuple(entries[path] for path in sorted(entries)),
+            entries=ordered,
             scope=scopes,
             complete=False,
             error="; ".join(errors),
         )
-    return RsyncInventory(
-        entries=tuple(entries[path] for path in sorted(entries)),
-        scope=scopes,
-        complete=True,
-    )
+    return RsyncInventory(entries=ordered, scope=scopes, complete=True)
 
 
 __all__ = [

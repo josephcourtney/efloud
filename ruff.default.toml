@@ -128,6 +128,13 @@ respect-gitignore = true
   ]
 
   [lint.per-file-ignores]
+    # These are intentionally broad semantic facades/stores. Splitting them solely
+    # to satisfy a method-count rule would weaken the repository boundary. Dataset
+    # imports stay lazy in Repository to keep that higher-level API out of the core
+    # repository module's import-time dependency graph.
+    "src/efloud/repository.py" = ["PLR0904", "D105", "PLC0415"]
+    "src/efloud/sqlite_metadata.py" = ["PLR0904"]
+
     "tests/**/*.py" = [
       "ANN202",  # Missing return type annotation for private function
       "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed in `renderable`
@@ -146,7 +153,6 @@ respect-gitignore = true
       "S404",    # `subprocess` module is possibly insecure
       "S603",    # `subprocess` call: check for execution of untrusted
       "SLF001",  # Private member accessed
-      "PLC0415", # `import` should be at the top-level of a file
       "INP001",  # File is part of an implicit namespace package. Add an `__init__.py`.
     ]
 

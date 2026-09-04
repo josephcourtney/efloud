@@ -77,7 +77,7 @@ class Engine:
         recorder = RepositorySyncRecorder(self.repository, self.config)
         try:
             sync_result = await legacy_sync(self.config)
-            recorder.import_result(sync_result)
+            await recorder.import_result(sync_result)
         except BaseException:
             recorder.finish(ok=False)
             raise

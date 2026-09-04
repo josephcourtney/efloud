@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from efloud.models import EngineConfig, ManifestError, NormalizedManifest
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
+    from efloud.repository_models import ArtifactObservation
 
 
 def repository_exists(cfg: EngineConfig) -> bool:
@@ -50,92 +51,121 @@ def _materialized_path(repository: Repository, content_id: ContentId) -> str | N
     return preferred[0].path
 
 
+def _base_source_entry(
+    source: SourceDefinition,
+    operation_payload: JsonObject | None,
+) -> JsonObject:
+    return {
+        "source_id": source.id,
+        "kind": source.kind.value,
+        "url": source.url,
+        "ok": operation_payload is None or operation_payload.get("status") == "success",
+        "repository_backed": True,
+    }
+
+
+def _add_operation(entry: JsonObject, operation_payload: JsonObject | None) -> None:
+    if operation_payload is None:
+        return
+    entry["operation"] = operation_payload
+    if operation_payload.get("status") != "failed":
+        return
+    details = json_mapping_or_none(operation_payload.get("details"))
+    if details is not None and isinstance(details.get("error"), str):
+        entry["error"] = details["error"]
+
+
+def _http_freshness(
+    state: ArtifactObservation,
+    snapshot_payload: JsonObject | None,
+) -> JsonObject:
+    freshness: JsonObject = {"fetched_at_unix": state.observed_at}
+    if state.upstream_version is not None:
+        freshness["etag"] = state.upstream_version
+    if state.upstream_modified_at is not None:
+        freshness["upstream_modified_at_unix"] = state.upstream_modified_at
+    if snapshot_payload is None:
+        return freshness
+    evidence = json_mapping_or_none(snapshot_payload.get("evidence"))
+    if evidence is None:
+        return freshness
+    for key in ("etag", "last_modified", "status_code"):
+        value = evidence.get(key)
+        if not isinstance(value, bool) and isinstance(value, str | int):
+            freshness[key] = value
+    return freshness
+
+
+def _add_http_state(
+    repository: Repository,
+    entry: JsonObject,
+    state: ArtifactObservation | ArtifactAbsence | None,
+    snapshot_payload: JsonObject | None,
+) -> None:
+    if isinstance(state, ArtifactAbsence):
+        entry["absent"] = True
+        return
+    if state is None:
+        return
+    entry["observation_id"] = str(state.observation_id)
+    entry["content_id"] = str(state.content_id)
+    destination = _materialized_path(repository, state.content_id)
+    if destination is not None:
+        entry["dest"] = destination
+    entry["freshness"] = _http_freshness(state, snapshot_payload)
+
+
 def _http_entry(
     repository: Repository,
     source: SourceDefinition,
     snapshot_payload: JsonObject | None,
     operation_payload: JsonObject | None,
 ) -> JsonObject:
-    state = repository.latest_state(f"source:{source.id}")
-    entry: JsonObject = {
-        "source_id": source.id,
-        "kind": source.kind.value,
-        "url": source.url,
-        "ok": operation_payload is None or operation_payload.get("status") == "success",
-        "repository_backed": True,
-    }
-    if state is not None and not isinstance(state, ArtifactAbsence):
-        entry["observation_id"] = str(state.observation_id)
-        entry["content_id"] = str(state.content_id)
-        destination = _materialized_path(repository, state.content_id)
-        if destination is not None:
-            entry["dest"] = destination
-        freshness: JsonObject = {"fetched_at_unix": state.observed_at}
-        if state.upstream_version is not None:
-            freshness["etag"] = state.upstream_version
-        if state.upstream_modified_at is not None:
-            freshness["upstream_modified_at_unix"] = state.upstream_modified_at
-        if snapshot_payload is not None:
-            evidence = snapshot_payload.get("evidence")
-            if isinstance(evidence, dict):
-                for key in ("etag", "last_modified", "status_code"):
-                    value = evidence.get(key)
-                    if isinstance(value, bool):
-                        continue
-                    if isinstance(value, str | int):
-                        freshness[key] = value
-        entry["freshness"] = freshness
-    elif isinstance(state, ArtifactAbsence):
-        entry["absent"] = True
-    if operation_payload is not None:
-        entry["operation"] = operation_payload
-        if operation_payload.get("status") == "failed":
-            details = operation_payload.get("details")
-            if isinstance(details, dict) and isinstance(details.get("error"), str):
-                entry["error"] = details["error"]
+    entry = _base_source_entry(source, operation_payload)
+    _add_http_state(
+        repository,
+        entry,
+        repository.latest_state(f"source:{source.id}"),
+        snapshot_payload,
+    )
+    _add_operation(entry, operation_payload)
     return entry
 
 
+def _add_rsync_snapshot(entry: JsonObject, snapshot_payload: JsonObject | None) -> None:
+    if snapshot_payload is None:
+        return
+    entry["snapshot"] = snapshot_payload
+    entry["scope"] = snapshot_payload.get("scope", [])
+    entry["complete"] = snapshot_payload.get("complete", False)
+    evidence = json_mapping_or_none(snapshot_payload.get("evidence"))
+    if evidence is None:
+        return
+    entry["reconciliation_complete"] = evidence.get("reconciliation_complete") is True
+    for key in (
+        "inventory_entry_count",
+        "ingested_file_count",
+        "reused_content_count",
+        "absence_count",
+    ):
+        value = evidence.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            entry[key] = value
+
+
 def _rsync_entry(
-    repository: Repository,
     source: SourceDefinition,
     cfg: EngineConfig,
     snapshot_payload: JsonObject | None,
     operation_payload: JsonObject | None,
 ) -> JsonObject:
-    entry: JsonObject = {
-        "source_id": source.id,
-        "kind": source.kind.value,
-        "url": source.url,
-        "ok": operation_payload is None or operation_payload.get("status") == "success",
-        "repository_backed": True,
-    }
+    entry = _base_source_entry(source, operation_payload)
     if source.local_subpath is not None:
         entry["local"] = str(Path(cfg.root) / cfg.mirrors_dir / source.local_subpath)
     if source.mirror_mode is not None:
         entry["mode"] = source.mirror_mode.value
-    if snapshot_payload is not None:
-        entry["snapshot"] = snapshot_payload
-        entry["scope"] = snapshot_payload.get("scope", [])
-        entry["complete"] = snapshot_payload.get("complete", False)
-        evidence = snapshot_payload.get("evidence")
-        if isinstance(evidence, dict):
-            entry["reconciliation_complete"] = evidence.get("reconciliation_complete") is True
-            for key in (
-                "inventory_entry_count",
-                "ingested_file_count",
-                "reused_content_count",
-                "absence_count",
-            ):
-                value = evidence.get(key)
-                if isinstance(value, int) and not isinstance(value, bool):
-                    entry[key] = value
-    if operation_payload is not None:
-        entry["operation"] = operation_payload
-        if operation_payload.get("status") == "failed":
-            details = operation_payload.get("details")
-            if isinstance(details, dict) and isinstance(details.get("error"), str):
-                entry["error"] = details["error"]
+    _add_rsync_snapshot(entry, snapshot_payload)
+    _add_operation(entry, operation_payload)
     return entry
 
 
@@ -153,7 +183,7 @@ def repository_source_entry(
     if kind in {"HTTP", "REST"}:
         return _http_entry(repository, source, snapshot_payload, operation_payload)
     if kind == "RSYNC":
-        return _rsync_entry(repository, source, cfg, snapshot_payload, operation_payload)
+        return _rsync_entry(source, cfg, snapshot_payload, operation_payload)
     entry: JsonObject = {
         "source_id": source.id,
         "kind": kind,
@@ -217,7 +247,6 @@ def repository_manifest(
     run_id: RunId | str | None = None,
 ) -> NormalizedManifest:
     """Serialize current repository state into the legacy normalized manifest shape."""
-
     http: dict[str, JsonObject] = {}
     rsync: dict[str, JsonObject] = {}
     derived: dict[str, JsonObject] = {}
@@ -262,7 +291,6 @@ def write_repository_manifest(
     run_id: RunId | str | None = None,
 ) -> tuple[NormalizedManifest, Path]:
     """Atomically publish the canonical compatibility manifest from repository state."""
-
     manifest = repository_manifest(repository, cfg=cfg, run_id=run_id)
     path = Path(cfg.root) / cfg.log_dir / cfg.manifest_filename
     path.parent.mkdir(parents=True, exist_ok=True)

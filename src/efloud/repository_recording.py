@@ -11,6 +11,7 @@ from efloud.json_types import JsonMapping, JsonObject, json_mapping_or_none
 from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
+from efloud.repository_derived import import_derived_results
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId, TreeEntry
 from efloud.rsync_reconciliation import reconcile_rsync_inventory
 from efloud.transport.rsync import RsyncMirrorConfig
@@ -98,6 +99,8 @@ class RepositorySyncRecorder:
         results = result.manifest.get("results", {})
         http_results = results.get("http", {}) if isinstance(results, dict) else {}
         rsync_results = results.get("rsync", {}) if isinstance(results, dict) else {}
+        derived_results = results.get("derived", {}) if isinstance(results, dict) else {}
+
         for source in self.config.sources:
             if source.kind in {SourceKind.HTTP, SourceKind.REST}:
                 entry = http_results.get(source.id) if isinstance(http_results, dict) else None
@@ -115,7 +118,26 @@ class RepositorySyncRecorder:
                     continue
                 await self._import_rsync_source(source, mapping)
                 continue
+            if source.kind is SourceKind.REST_BASE:
+                continue
             self.skipped_source_ids.append(source.id)
+
+        derived_mapping = json_mapping_or_none(derived_results)
+        handled_collection_sources: set[str] = set()
+        if derived_mapping is not None:
+            imported = import_derived_results(
+                self.repository,
+                config=self.config,
+                run_id=self.run_id,
+                started_at=self.started_at,
+                derived_results=derived_mapping,
+            )
+            self.observations.extend(imported.observations)
+            handled_collection_sources.update(imported.handled_source_ids)
+
+        for source in self.config.sources:
+            if source.kind is SourceKind.REST_BASE and source.id not in handled_collection_sources:
+                self.skipped_source_ids.append(source.id)
 
     def _import_http_source(self, source: SourceDefinition, entry: JsonMapping) -> None:
         operation_id = self._start_source_operation(source)

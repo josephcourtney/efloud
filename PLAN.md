@@ -2,469 +2,699 @@
 
 Purpose:
 
-- describe the staged implementation plan for the v2 `efloud` architecture
-- sequence work so current functionality stays usable throughout the migration
-- define concrete deliverables, dependencies, and acceptance criteria for each
-  phase
+- sequence implementation of the repository-centered architecture in `DESIGN.md`
+- preserve current acquisition behavior while moving authority from mirrors and
+  JSON manifests into the repository
+- define phase boundaries that leave the package runnable and testable after
+  each migration step
+- provide a clear integration path for downstream users such as BVP
 
 Rules:
 
-- preserve existing user-visible behavior unless a phase explicitly introduces a
-  compatibility layer or deprecation path
-- prefer incremental internal replacement over a one-shot rewrite
-- validate each phase with deterministic tests before starting the next phase
-- keep manifests, query behavior, and local storage inspectable during the
-  migration
+- `DESIGN.md` is authoritative for architecture and invariants; this file defines
+  implementation order
+- prefer replacement and deletion of obsolete mechanisms over permanent dual
+  abstractions
+- keep existing HTTP, REST, collection/fanout, and `rsync` acquisition working
+  throughout the migration
+- do not make existing mirror or manifest state destructive during migration
+- preserve deterministic behavior and test each phase before depending on it
+- add compatibility exports where needed, but do not let compatibility formats
+  remain authoritative internally
 
 ## Strategy
 
-The redesign should be delivered as a sequence of internal extractions followed
-by public API improvements. The priority order is:
+The migration is organized around one change in authority:
 
-1. introduce seams inside the current engine without breaking behavior
-2. move planning and execution responsibilities behind typed interfaces
-3. formalize adapters, stores, policies, and domain models
-4. add the new `Engine` and `Runtime` surfaces on top of the internal seams
-5. retain current APIs through explicit compatibility modules until deprecation
+```text
+current
 
-This avoids a flag day migration and keeps the package testable after every
-step.
+transports -> files/mirrors -> manifests/state -> queries
 
-## Cross-Phase Constraints
+                         becomes
 
-These constraints apply to every phase:
+transports -> Repository -> metadata + immutable blobs
+                   |
+                   +-> queries
+                   +-> source/tree snapshots
+                   +-> datasets
+                   +-> compatibility manifests/views
+```
 
-- preserve current support for HTTP, REST, `rsync`, and derived fanout behavior
-- keep `sync(cfg)` operational until an explicit deprecation phase
-- keep current query targets working
-- keep canonical and timestamped manifest outputs available
-- keep mirror-state generation available
-- preserve deterministic file naming and metadata content where practical
-- add tests for every compatibility shim and every new subsystem boundary
+The repository must become complete and trustworthy before the old manifest and
+mirror-state mechanisms are demoted to compatibility views.
 
-## Phase 0: Baseline And Mapping (Complete)
+The implementation order is therefore:
+
+1. create only the orchestration seam needed to introduce repository recording
+   safely
+2. implement repository primitives, SQLite metadata, and content-addressed blob
+   storage
+3. make every existing acquisition path record normalized artifacts,
+   observations, provenance, and source state
+4. verify repository state against existing manifests and mirrors while both are
+   produced
+5. switch query/status and synchronization decisions to repository state
+6. formalize planning, adapters, and policies around the now-stable repository
+   contract
+7. add first-class derived artifacts, validation, immutable datasets, retention,
+   and historical/tree features
+8. remove obsolete BVP-derived and legacy efloud infrastructure after downstream
+   parity is demonstrated
+9. add optional filesystem projections and other convenience interfaces last
+
+This order deliberately avoids spending early migration effort generalizing
+manifest- or path-centric abstractions that the new design makes transitional.
+
+## Cross-Phase Invariants
+
+Every phase must preserve these constraints:
+
+- authoritative new mutation goes through a repository-facing service once that
+  service exists
+- metadata must never commit a reference to blob content that is not durably
+  available
+- content objects are immutable and identified by digest
+- repeated observation of unchanged bytes must not duplicate content
+- an observation must remain distinct from content identity
+- source-relative paths are retained as provenance/structure, not used as
+  content identity
+- no consumer-facing read API may implicitly trigger acquisition
+- partial source synchronization must never be interpreted as complete source
+  coverage
+- compatibility manifests, mirrors, and caches may be regenerated from
+  authoritative state once cutover occurs
+- the default implementation remains local and service-free
+- alternate storage implementations are enabled by semantic interfaces, not by
+  weakening repository invariants
+
+## Phase 0: Freeze The Compatibility Perimeter
 
 Objective:
 
-- document the current architecture and define the compatibility perimeter
+- establish the exact behavior that must survive the authority migration
 
 Work:
 
-- map current modules to future subsystem homes
-- list current public exports and usage patterns
-- list current manifest fields, query targets, and status payload expectations
-- identify behavior that must remain stable through v2
+- retain regression coverage for current HTTP, REST, collection/fanout, and
+  `rsync` acquisition
+- inventory the current canonical/timestamped manifest fields, mirror-state
+  fields, source-result lookups, query targets, index outputs, and status payloads
+- identify every place where current code treats a filesystem path, manifest
+  entry, or mirror-state record as authoritative
+- identify current user-visible source layouts that must remain available as
+  compatibility materializations
+- record current behavior for targeted syncs, partial `rsync` path syncs,
+  unchanged sources, failures, and derived fanout
 
 Deliverables:
 
-- updated `DESIGN.md`
-- this implementation plan
-- a written compatibility inventory for existing exports and manifest/query
-  shapes
+- compatibility inventory in tests or focused documentation
+- characterization fixtures for the authority boundaries being replaced
 
 Acceptance criteria:
 
-- current architecture is described well enough to review migration work against
-- compatibility expectations are explicit before implementation starts
+- every current authoritative read/write path has a planned repository-backed
+  replacement
+- representative current outputs can detect migration drift
+- no retained source data must be moved or deleted to start the migration
 
-## Phase 1: Introduce Internal Runtime Seams
+## Phase 1: Introduce The Minimal Runtime Seam
 
 Objective:
 
-- split the current monolithic sync path into explicit internal orchestration
-  boundaries without changing behavior
+- make current synchronization injectable enough to add repository recording
+  without further enlarging `sync.py`
 
 Work:
 
-- introduce an internal `Runtime` type that can execute a sync request
-- extract planner and executor interfaces, initially backed by behavior
-  equivalent to the current orchestration path
-- move current manifest recording and mirror-state updates behind dedicated
-  helper objects or services
-- keep `sync(cfg)` as the primary public entrypoint, internally delegating to
-  the runtime
-
-Suggested module work:
-
-- create `src/efloud/runtime.py` or the eventual v2 package equivalents
-- reduce direct orchestration responsibility in `src/efloud/sync.py`
-- keep manifest and state write behavior unchanged
+- extract manifest payload shaping from `sync.py`
+- add a small `Runtime` coordinator responsible for phase sequencing
+- make `sync(cfg)` delegate to the runtime while preserving `SyncResult`
+- introduce an internal operation-result/ingestion boundary through which
+  successful acquisition results can later be committed to a repository
+- do not yet build the full planner/executor/adapter architecture
 
 Acceptance criteria:
 
-- `sync(cfg)` still produces the same practical outputs
-- tests covering current sync, manifest, and state behavior still pass
-- runtime seams exist and can be extended without editing the public API
+- caller-visible `sync(cfg)` behavior and current files/manifests are unchanged
+- `sync.py` no longer owns manifest-entry shaping
+- runtime sequencing can accept a repository recorder without transport-specific
+  code knowing about SQLite
+- existing sync and transport tests remain unchanged or require only seam-level
+  updates
 
 Risks:
 
-- over-extraction that moves code without clarifying responsibility
-- accidentally changing manifest content while refactoring internals
+- over-extracting abstractions before repository semantics are known
+- accidentally making a temporary runtime interface public
 
-## Phase 2: Source Model And Compatibility Builders
+## Phase 2: Define Repository Primitives And Storage Contracts
 
 Objective:
 
-- introduce explicit source-spec types while preserving the current config path
+- establish the stable semantic boundary that all later work uses
 
 Work:
 
-- add new source-spec classes such as `HttpSource`, `RestSource`,
-  `RsyncSource`, and `RestCollectionSource`
-- define a compatibility builder that lowers current `SourceDefinition` values
-  into the new source model
-- retain current `SourceKind` and `SourceDefinition` as compatibility-facing
-  types during the transition
-- add alias and role behavior to the new source model
+- define strongly typed identifiers and records for:
+  - `SourceId`
+  - `ArtifactKey`
+  - `ContentId`
+  - `ObservationId`
+  - `RunId`
+  - `OperationId`
+  - logical artifacts
+  - content objects
+  - observations
+  - provenance edges/records
+  - materializations
+- define repository-facing `MetadataStore` and `BlobStore` protocols around
+  efloud operations rather than arbitrary CRUD
+- define a `Repository` facade that coordinates the stores
+- define transaction boundaries and failure semantics before transport code uses
+  the repository
+- keep protocol-specific metadata in structured JSON mappings
 
-Suggested compatibility rules:
+Design constraints:
 
-- existing `SourceDefinition(kind=...)` usage remains valid
-- new source classes produce semantically equivalent behavior
-- source identifiers remain stable across both APIs
+- paths are not artifact identity
+- `ContentId` defaults to SHA-256 over exact bytes
+- observations reference logical artifact and content identities
+- repository methods express semantic operations such as ingest, observe, open,
+  and query rather than `write_path()`
 
 Acceptance criteria:
 
-- current tests for source resolution, aliases, and policy dispatch still pass
-- new source classes can represent all currently supported source cases
-- current configuration can be translated into the new runtime source registry
+- models can represent repeated unchanged observations, multiple sources sharing
+  identical content, and derived output with multiple inputs
+- repository contracts do not import HTTP, `rsync`, REST, or BVP-specific types
+- identity canonicalization has deterministic unit tests
 
-Risks:
-
-- constructor churn that makes the API harder rather than simpler
-- semantic mismatch between `REST_BASE` fanout behavior and collection sources
-
-## Phase 3: Operation And Planning Model
+## Phase 3: Implement SQLite Metadata And Filesystem Blob Storage
 
 Objective:
 
-- make planning explicit and deterministic
+- create the first authoritative repository backend
 
 Work:
 
-- introduce `SyncRequest`, `SyncPlan`, `PlanningDecision`, and `Operation`
-- define the initial operation kinds required to express current behavior
-- implement a default planner that reproduces the current sync flow through
-  planned operations
-- add dry-run support based on real planning output rather than transport
-  branching
+- implement `SQLiteMetadataStore`
+- implement `FilesystemBlobStore` with portable content-addressed layout
+- introduce an explicit schema version and migration mechanism from the first
+  committed schema
+- enable foreign-key enforcement and relational uniqueness constraints
+- implement atomic blob installation:
+  1. write/acquire temporary bytes
+  2. calculate digest and byte size
+  3. atomically install or reuse the immutable blob
+  4. commit metadata referencing the installed blob
+- tolerate orphaned unreferenced blobs after interrupted operations; never
+  tolerate committed metadata pointing at missing blobs
+- implement basic repository open/close, content open, artifact history, and
+  observation lookup APIs
 
-Initial operation coverage:
+Initial metadata entities should cover at least:
 
-- HTTP fetch
-- REST fetch
-- `rsync` full mirror
-- `rsync` path mirror
-- derived task execution
-- index build where configured
-- manifest/state bookkeeping operations if needed for observability
+```text
+sources
+runs
+operations
+logical_artifacts
+content_objects
+observations
+provenance_edges
+materializations
+```
 
 Acceptance criteria:
 
-- planner output is deterministic for the same request and planning state
-- dry-run uses the plan and does not require duplicated orchestration logic
-- operation dependency ordering is explicit and test-covered
+- identical bytes are physically stored once
+- repeated ingestion creates distinct observations when requested
+- interrupted writes cannot create metadata references to absent blobs
+- relational constraints reject invalid references and duplicate identities
+- repository data survives reopen and is deterministic under fixture inputs
 
-Risks:
-
-- defining operation kinds too loosely, leading to untyped `inputs` blobs
-- baking storage details into operation payloads too early
-
-## Phase 4: Protocol Adapter Registry
+## Phase 4: Dual-Record Existing HTTP And REST Acquisition
 
 Objective:
 
-- move transport-specific behavior behind adapter dispatch
+- prove the repository against simple existing acquisition paths while current
+  manifests remain available
 
 Work:
 
+- assign stable logical artifact keys to existing HTTP and REST source outputs
+- record runs and operations through the repository
+- normalize successful HTTP/REST results into:
+  - content objects
+  - observations
+  - acquisition provenance
+  - transport metadata such as URL, ETag, Last-Modified, response status, and
+    retrieval timing when available
+- continue producing current files and manifests during this phase
+- compare repository-derived facts against the legacy manifest after each test
+  run
+- record unchanged HTTP observations without duplicating content where the
+  source was actually checked
+
+Acceptance criteria:
+
+- HTTP and REST syncs populate repository history without changing current user
+  behavior
+- the repository can answer current-content and observation-history questions
+  without reading the JSON manifest
+- legacy manifest and repository records agree on source, destination/content,
+  success, and relevant freshness facts
+
+## Phase 5: Model File Trees And Convert `rsync`
+
+Objective:
+
+- make large mirrored file trees first-class repository history rather than an
+  opaque mirror root plus later filesystem scans
+
+Work:
+
+- define source snapshot coverage explicitly:
+  - complete source/tree observation
+  - partial path/subtree observation
+  - failed/incomplete observation
+- implement file-tree entry and tree-snapshot persistence
+- assign logical artifact keys independently from source-relative paths while
+  retaining every source-relative path needed to reconstruct the source tree
+- modify the `rsync` integration so changed/new files produce individual
+  observations and removed files are represented explicitly when coverage makes
+  absence meaningful
+- build immutable tree snapshots or equivalent canonical Merkle-style tree state
+  from observed entries
+- reuse unchanged content and unchanged tree structure across snapshots
+- preserve current native mirror layout as a compatibility materialization
+  during migration
+- eliminate the need for a later generic mirror rescan merely to discover files
+  efloud itself just acquired
+
+Performance requirements:
+
+- do not hash unchanged large trees blindly when trustworthy prior state and
+  transport change evidence can avoid it
+- support incremental tree-snapshot construction
+- retain periodic full integrity verification as a separate operation
+
+Acceptance criteria:
+
+- a full tree sync can reconstruct the source-relative tree from repository state
+- a partial path sync records scope and cannot imply absence outside that scope
+- one changed file does not duplicate all unchanged file contents
+- repeated unchanged syncs produce history without duplicating blobs
+- repository state can reproduce the information currently needed from
+  mirror-state and mirror-presence scans
+
+## Phase 6: Migrate Collections And Derived Outputs To The Artifact Model
+
+Objective:
+
+- eliminate special result families that bypass ordinary artifact/provenance
+  semantics
+
+Work:
+
+- generalize `REST_BASE` into a collection model with explicit:
+  - enumeration
+  - item identity
+  - per-item retrieval
+  - reconciliation/coverage
+  - logical artifact naming
+- make collection enumeration itself record sufficient source-snapshot evidence
+- record every collection item through ordinary observation/content semantics
+- convert derived-task outputs to ordinary artifacts with:
+  - stable task identity and version
+  - exact input observations
+  - normalized parameters
+  - output observations
+  - provenance edges
+- convert persistent semantic indexes into specialized derived artifacts
+- reserve the term cache for disposable acceleration state
+
+Acceptance criteria:
+
+- fanout/collection behavior no longer requires a separate provenance or storage
+  model
+- derived output staleness can be determined from recorded input identities
+- current `RestBaseFanoutTask` behavior remains expressible through the new model
+
+## Phase 7: Make Repository State Authoritative
+
+Objective:
+
+- cut internal reads over from merged manifests, mirror-state files, and mirror
+  rescans to repository queries
+
+Work:
+
+- move source-result resolution onto repository queries
+- move current-state/freshness lookup onto observations and source snapshots
+- move status and integrity summaries onto repository state
+- make canonical and timestamped JSON manifests serializers/exports of repository
+  state rather than independent databases
+- make mirror-state output a compatibility/exported view where it remains useful
+- generate compatibility materialized mirror layouts from repository state when
+  practical
+- add an import/adoption path for existing repositories:
+  - read current manifest/mirror state
+  - hash/import existing files without modifying the source tree
+  - create observations and source snapshots conservatively
+  - never invent provenance that legacy state cannot support
+
+Cutover rule:
+
+- after this phase, new code must not use the compatibility manifest as its
+  source of truth
+
+Acceptance criteria:
+
+- deleting only generated compatibility manifests does not lose authoritative
+  repository state
+- targeted syncs require no manifest-merge algorithm to remember untouched
+  artifacts
+- current query/status behavior can be generated from repository state
+- an existing efloud store can be adopted without destructive relocation
+
+## Phase 8: Formalize Planner, Executor, Adapters, And Policies
+
+Objective:
+
+- complete the orchestration architecture around the now-stable repository
+  contract
+
+Work:
+
+- define `SyncRequest`, `SyncPlan`, `PlanningDecision`, and typed operations
+- implement deterministic planning from source definitions plus repository state
+- make dry-run use the same plan as execution
 - define `ProtocolAdapter` and `ProtocolAdapterRegistry`
-- implement built-in adapters for:
-  - HTTP files
-  - REST JSON files
+- move protocol-specific work behind adapters for:
+  - HTTP
+  - REST
   - `rsync`
-  - REST collection fanout
-- move protocol-specific planning and execution logic out of the engine core
-- make operation-to-adapter resolution explicit
-
-Migration notes:
-
-- the initial adapters may wrap existing transport helpers directly
-- keep transport modules reusable; do not duplicate HTTP or `rsync` logic
+  - collections
+- define structured refresh decisions rather than bare booleans
+- separate source-refresh policy from deterministic derived invalidation
+- add explicit bounded concurrency and operation dependencies
+- retain the small `Engine` facade over the composed runtime
 
 Acceptance criteria:
 
-- adding a new protocol no longer requires editing the engine orchestration core
-- current source kinds can all be handled through adapter dispatch
-- adapter planning and execution paths are individually testable
+- adding a new source protocol does not require editing repository semantics or
+  engine orchestration branching
+- planner output is deterministic for the same repository state and request
+- execution dependencies and concurrency limits are explicit and testable
+- current refresh behavior remains representable without transport-specific
+  policy leaking into the engine core
 
-Risks:
-
-- scattering shared behavior between adapters without a clear base contract
-- moving too much policy logic into adapters
-
-## Phase 5: Store Abstractions
+## Phase 9: Add Validation As Repository Evidence
 
 Objective:
 
-- separate artifact, metadata, and state persistence concerns
+- unify integrity, encoding validation, and pluggable domain validation without
+  coupling efloud to domain semantics
 
 Work:
 
-- introduce `ArtifactStore`, `MetadataStore`, and `StateStore`
-- add optional `IndexStore` and `CacheStore`
-- implement filesystem-backed defaults that preserve current on-disk behavior as
-  closely as practical
-- move manifest writing behind the metadata store
-- move mirror-state read and write behavior behind the state store
-
-Compatibility requirements:
-
-- default local paths must remain queryable
-- canonical and timestamped manifests must still exist unless explicitly
-  deprecated later
-- mirror-state compatibility with current readers must be preserved
+- add validation records keyed by content identity plus validator
+  identity/version
+- implement storage-integrity validation against content digest
+- move generic gzip/JSON/container checks into reusable validators where useful
+- define a domain-validator extension contract
+- cache validation evidence when both content and validator identities are
+  unchanged
+- expose validation through repository and query APIs
 
 Acceptance criteria:
 
-- the runtime no longer writes directly to storage primitives outside store
-  interfaces
-- query and status helpers can obtain the information they need through store
-  abstractions
-- filesystem-backed defaults remain inspectable on disk
+- unchanged content is not needlessly revalidated by the same validator version
+- validation failures never mutate stored content
+- domain libraries can contribute validators without efloud depending on them
 
-Risks:
-
-- losing straightforward filesystem semantics in the name of abstraction
-- breaking current query/status helpers that assume direct paths
-
-## Phase 6: Metadata, Artifact, And Provenance Records
+## Phase 10: Implement Immutable Datasets And Temporal Resolution
 
 Objective:
 
-- make artifact identity and provenance first-class
+- provide the generic immutable-data boundary required by downstream consumers
+  such as BVP
 
 Work:
 
-- introduce `ArtifactRef`, `ArtifactRecord`, and `ProvenanceRecord`
-- record operation outputs in the metadata store
-- connect derived artifacts and indexes to the same artifact/provenance model
-- teach the query layer to expose logical artifact identity alongside physical
-  storage details
+- implement `DatasetDefinition`, resolved dataset manifests, and
+  `ImmutableDataset`
+- start with a deliberately small selection language:
+  - exact observation
+  - latest observation
+  - latest observation before a timestamp
+  - selection by source/tag/role/namespace where repository metadata supports it
+- freeze selectors to exact observation and content identities
+- define deterministic canonical dataset identity
+- also expose content-equivalence identity when useful
+- implement temporal consistency policies including:
+  - explicit time basis
+  - required complete snapshots
+  - maximum observation skew where requested
+- provide read-only artifact lookup/open/verify APIs
+- implement deterministic dataset export metadata
 
 Acceptance criteria:
 
-- fetched artifacts, derived outputs, and indexes all have consistent metadata
-  records
-- query responses can show both logical identity and storage location when
-  applicable
-- provenance is rich enough to debug how an artifact was produced
+- resolving the same exact membership yields the same dataset identity
+- local blob paths or repository root relocation do not affect dataset identity
+- a frozen dataset never changes when newer observations are ingested
+- temporal resolution never infers absence from incomplete source coverage
+- a consumer can operate offline using only an immutable dataset and repository
+  bytes
 
-Risks:
+Downstream integration gate:
 
-- dual-writing incompatible metadata during the migration
-- creating records that are too generic to be useful
+- reproduce the behavior of BVP's current `bvp-catalog` manifest/verification
+  interface using efloud datasets before BVP removes its transitional catalog
 
-## Phase 7: Decision-Based Policy System
+## Phase 11: Retention, Reachability, And Garbage Collection
 
 Objective:
 
-- replace boolean refresh decisions with structured decision objects
+- make historical retention safe under immutable datasets and provenance
+  dependencies
 
 Work:
 
-- define `RefreshDecision` and `RefreshPolicy`
-- implement a layered default refresh policy that covers:
-  - explicit refresh
-  - missing outputs
-  - previous failure
-  - TTL expiry
-  - dependency changes
-  - skip or revalidate fallback
-- define source-level policy hints
-- add retention, naming, and optional validation policy interfaces
-
-Compatibility path:
-
-- adapt current `DefaultSyncPolicy` and `RoleDrivenSyncPolicy` semantics into the
-  new decision model
-- preserve current refresh flags on compatibility config objects
+- define retention policy over observations/references rather than filesystem
+  paths
+- implement reachability from:
+  - immutable datasets
+  - retained observations
+  - retained source snapshots
+  - derived artifacts and provenance ancestors
+- implement dry-run GC reports
+- add configurable grace periods
+- delete metadata references transactionally before/with safe blob collection as
+  appropriate
+- never collect content referenced by an immutable dataset
 
 Acceptance criteria:
 
-- planner decisions include machine-readable policy reasoning
-- current refresh behavior remains representable
-- `rsync` path selection remains supported through policy decisions
+- GC cannot invalidate a retained dataset
+- dry-run explains every proposed deletion
+- orphan blobs from interrupted ingestion can eventually be collected safely
+- retention tests cover shared content referenced by multiple artifacts/datasets
 
-Risks:
-
-- turning policy objects into orchestration objects
-- losing simple default behavior under too many policy knobs
-
-## Phase 8: Derived Tasks And Indexes As Planned Work
+## Phase 12: Git And Additional Source Types
 
 Objective:
 
-- integrate derived tasks and indexes into the planner instead of running them
-  as post-sync side effects
+- demonstrate that the repository model generalizes beyond the original
+  HTTP/REST/`rsync` cases
 
 Work:
 
-- define dependency-aware derived task and index interfaces
-- plan derived and index operations through the planner
-- add explicit reconciliation semantics for collection-like outputs
-- keep current fanout behavior available through a REST collection adapter or
-  compatibility layer
+- implement a first-class `GitSource`/adapter
+- record repository URL, ref/commit, tree/blob identity, and path provenance
+- map selected Git files into ordinary logical artifacts and observations
+- use the same source-snapshot and dataset mechanisms as other protocols
+- evaluate additional collection/listing adapters only from concrete use cases
 
 Acceptance criteria:
 
-- derived work and indexes are included in the sync plan with dependencies
-- rebuild behavior is requestable and test-covered
-- deletion or tombstone behavior for collection outputs is explicit
+- Git acquisition requires no repository-schema special case beyond
+  source-specific metadata
+- Git-derived datasets can mix freely with artifacts acquired through other
+  protocols
 
-Risks:
-
-- breaking current `RestBaseFanoutTask` workflows without a migration shim
-- mixing planner dependencies with runtime storage traversal in ad hoc ways
-
-## Phase 9: Query Service
+## Phase 13: Simplify Public APIs And Remove Transitional Infrastructure
 
 Objective:
 
-- move querying onto a dedicated service over typed targets and stores
+- leave one canonical implementation path after repository parity is proven
 
 Work:
 
-- define `QueryTarget` for root, source, artifact, store, index, and run targets
-- implement `QueryService`
-- keep current query target forms valid
-- add artifact and run queries without regressing current source locator support
+- make the new `Engine`/`Repository` APIs the preferred public surface
+- retain or deprecate `sync(cfg)` according to compatibility policy, but ensure it
+  delegates to the canonical runtime
+- remove obsolete manifest-merge state machinery from internal control flow
+- remove generic mirror-presence rescans made redundant by repository records
+- remove duplicate cache/status/provenance abstractions superseded by repository
+  concepts
+- move remaining compatibility serializers into an explicit compatibility area
+- update source models so protocol-specific fields live with their source types
+- reduce exports to stable semantic interfaces rather than implementation stores
 
 Acceptance criteria:
 
-- existing query calls continue to work
-- query results expose both logical and physical perspectives when available
-- new query target kinds are individually tested
+- there is one canonical ingestion path and one authoritative state model
+- no current internal feature depends on a legacy JSON manifest as a database
+- compatibility code is isolated and removable
+- package/module boundaries correspond to real responsibilities rather than
+  migration history
 
-Risks:
-
-- leaking store internals into query payloads
-- regressing current `source:<id>#/pointer` behavior
-
-## Phase 10: Events, Locks, And Concurrency Controls
+## Phase 14: Optional Views And Portability Utilities
 
 Objective:
 
-- add explicit observability and execution coordination
+- restore filesystem convenience without weakening repository authority
 
 Work:
 
-- define `Event` and `EventBus`
-- emit events for planning, execution, artifact materialization, failures, and
-  completion
-- introduce a lock manager with a filesystem lock default
-- implement executor concurrency configuration including bounded parallelism and
-  per-adapter or per-source limits
+- provide native read-only materialization/checkouts for source snapshots or
+  datasets
+- use hardlinks/reflinks only as optional optimizations; fall back to copies
+- optionally provide a read-only virtual filesystem projection where supported
+- allow useful projections such as:
+  - current source tree
+  - a source tree as of a timestamp
+  - an immutable dataset
+  - all observations/versions of one artifact
+- ensure all projections resolve immutable repository content and cannot mutate
+  authoritative state
+- add portable dataset export/import if demanded by downstream workflows
 
 Acceptance criteria:
 
-- one-root-at-a-time sync safety is explicit
-- parallel execution respects dependencies
-- events are emitted through a consistent interface
+- deleting a disposable view does not affect repository correctness
+- modifying a copied checkout cannot mutate repository content
+- virtual/native views are optional dependencies/utilities, not required for
+  repository or dataset use
 
-Risks:
+## Testing Strategy
 
-- making events mandatory for normal use
-- introducing concurrency before operation dependencies are mature
+The migration requires several complementary test layers.
 
-## Phase 11: Public Engine API
+### Repository Model Tests
 
-Objective:
+Cover:
 
-- expose the new top-level `Engine` and composed `Runtime` surfaces
+- identity canonicalization
+- content deduplication
+- repeated unchanged observations
+- transaction failure/recovery
+- provenance edges
+- relational constraints
+- source-snapshot coverage
+- tree snapshot identity
+- dataset identity and immutability
+- reachability/GC
 
-Work:
+### Transport Integration Tests
 
-- implement Tier 1 `Engine`
-- implement Tier 2 configurable `Engine`
-- expose Tier 3 `Runtime`
-- add builders or adapters from current config objects to the new API
-- update package exports and documentation
+For each adapter, verify:
 
-Compatibility path:
+```text
+upstream fixture
+    -> operation
+    -> repository records
+    -> expected content/provenance/snapshot
+```
 
-- keep `sync(cfg)` available as a wrapper over the runtime
-- keep current exported config and source types until a later deprecation phase
+Transport tests should not assert repository internals that are not part of the
+semantic contract.
 
-Acceptance criteria:
+### Compatibility Tests
 
-- ordinary users can use the new `Engine` without understanding runtime internals
-- advanced users can compose a custom runtime
-- compatibility wrappers are tested and documented
+Until cleanup is complete, verify that repository state can reproduce supported:
 
-Risks:
+- canonical/timestamped manifests
+- source query results
+- status summaries
+- mirror-state information that remains public
+- derived fanout behavior
 
-- exposing an `Engine` facade before internal seams are stable
-- accidentally creating two divergent orchestration implementations
+Compatibility tests should become deletion targets rather than permanent reasons
+to preserve obsolete internals.
 
-## Phase 12: Deprecation And Cleanup
+### Property And Failure Tests
 
-Objective:
+Add focused property/fault tests for high-value invariants:
 
-- remove obsolete internals only after the replacement architecture is proven
+- content identity depends only on bytes
+- dataset identity is independent of local repository path
+- a failed metadata transaction cannot expose unavailable content
+- partial source coverage cannot prove absence outside its scope
+- retained datasets protect all required content from GC
 
-Work:
+### Scale Tests
 
-- identify modules now serving only compatibility roles
-- move manifest compatibility logic into a dedicated `compat` package
-- deprecate legacy configuration and orchestration surfaces with explicit user
-  guidance
-- remove dead branching and duplicate implementations
+Use synthetic large-tree fixtures to characterize:
 
-Acceptance criteria:
+- `rsync` ingestion overhead
+- incremental snapshot construction
+- SQLite query/index behavior
+- directory/file cardinality scaling
+- repeated observation storage growth
 
-- deprecated paths have clear replacements
-- compatibility remains explicit until the project chooses a removal release
-- the codebase has one canonical orchestration path
+Do not optimize tree/chunk representation beyond whole-file content addressing
+until measurements demonstrate a need.
 
-## Testing Plan
+## Migration Of Existing Data
 
-Testing must evolve with the architecture. Required test layers:
+Existing efloud/BVP mirrors may be large and expensive to reacquire. The
+migration must therefore support conservative adoption.
 
-- unit tests for source models, operations, policy decisions, and adapters
-- component tests for planner and executor integration
-- compatibility tests for legacy `sync(cfg)` and manifest/query behavior
-- regression tests for derived fanout and `rsync` path sync behavior
-- query/status tests covering both old and new target forms
+The adoption workflow should:
 
-Special focus areas:
+1. inspect legacy manifests/state when available
+2. enumerate known materialized files
+3. hash/import or safely reuse their bytes in the blob store
+4. record only provenance that can actually be established
+5. mark source-snapshot completeness conservatively
+6. verify repository records against existing files
+7. leave legacy data untouched until the user explicitly chooses cleanup
 
-- manifest compatibility
-- deterministic planning output
-- artifact provenance recording
-- dry-run semantics
-- concurrency safety
+No migration step should require redownloading an unchanged corpus merely to
+enter the new repository model.
 
-## Documentation Plan
+## Documentation During Migration
 
-At each major phase:
+- update `STATUS.md` as the active phase changes
+- keep `TODO.md` limited to the immediate tranche within the current phase
+- update `README.md` when public setup or usage changes
+- update `DESIGN.md` only when intended architecture changes
+- keep compatibility/deprecation guidance explicit when old and new surfaces
+  temporarily coexist
 
-- update `README.md` only when user-facing behavior changes
-- keep `DESIGN.md` aligned with the intended architecture
-- update this plan to reflect completed, active, and deferred phases
-- add ADRs for irreversible design decisions that materially constrain future
-  work
+## Completion Criteria
 
-## Exit Criteria For The Migration
+The repository-centered migration is complete when:
 
-The v2 migration is complete when:
-
-- the runtime owns planning, execution, storage, policy, and query composition
-- built-in protocol behavior is adapter-driven
-- artifacts and provenance are first-class
-- derived work and indexes are dependency-aware planned operations
-- the new `Engine` is the preferred public API
-- compatibility surfaces for current functionality are either retained
-  intentionally or explicitly deprecated
-- the test suite covers both the new architecture and the supported legacy
-  compatibility path
+- SQLite metadata plus immutable content-addressed blobs are authoritative
+- every acquisition protocol emits normalized observations and provenance
+- file-tree sources preserve reconstructable historical source structure and
+  explicit coverage
+- query/status/sync decisions use repository state rather than merged manifests
+- derived artifacts and persistent semantic indexes use ordinary artifact
+  provenance
+- immutable datasets provide the read-only reproducibility boundary
+- retention and GC respect dataset/provenance reachability
+- planning and protocol behavior are adapter-driven and deterministic
+- legacy manifests/mirrors are compatibility views rather than databases
+- existing repositories can be adopted without destructive reacquisition
+- downstream consumers such as BVP no longer need their own generic catalog,
+  provenance, integrity, or source-store infrastructure
+- optional filesystem projections remain convenience utilities over immutable
+  repository state

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
+from efloud.json_types import json_mapping_or_none
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
@@ -11,7 +13,7 @@ from efloud.repository_compat import repository_manifest
 from efloud.repository_derived import import_derived_results
 from efloud.repository_models import SourceId
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 class DerivedTask:
@@ -19,11 +21,14 @@ class DerivedTask:
     repository_version = "1"
     repository_input_source_ids = ("http",)
 
-    def repository_parameters(self):
+    @staticmethod
+    def repository_parameters():
         return {"kind": "fixture"}
 
-    async def run(self, *, sync_root, manifest, sources):
+    @staticmethod
+    async def run(*, sync_root, manifest, sources):
         del sync_root, manifest, sources
+        await asyncio.sleep(0)
         return {}
 
 
@@ -83,8 +88,10 @@ def test_manifest_is_reconstructed_from_repository_state(tmp_path: Path) -> None
 
         manifest = repository_manifest(repository, cfg=config, run_id=run_id)
         http = manifest["results"]["http"]["http"]
+        freshness = json_mapping_or_none(http.get("freshness"))
+        assert freshness is not None
         assert http["content_id"] == str(observation.content_id)
-        assert http["freshness"]["etag"] == '"v1"'
+        assert freshness["etag"] == '"v1"'
         assert manifest["results"]["derived"]["summary"] == {"ok": True, "count": 1}
         assert manifest["started_at_unix"] == 100
         assert manifest["finished_at_unix"] == 104

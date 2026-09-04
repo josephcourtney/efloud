@@ -9,7 +9,7 @@ from efloud.repository import Repository
 from efloud.repository_models import SourceId, TreeEntry
 from efloud.status import collect_status_payload, source_status_rows_from_repository
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 def test_http_source_query_uses_repository_without_manifest_or_materialization(tmp_path: Path) -> None:

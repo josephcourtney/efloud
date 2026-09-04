@@ -9,49 +9,43 @@ Rules:
 
 ## Current Focus
 
-Rsync transport observability for large mirrors is materially improved. The
-immediate follow-up is to finish splitting `sync.py` orchestration seams
-(manifest/runtime/policy boundaries), and to decide whether path-discovery and
-transport telemetry should be generalized beyond the current PDB-heavy rsync
-paths.
+The repository-centered architecture is now being implemented. Immutable content
+identity and the filesystem blob-store foundation are present; the immediate
+next step is to land the SQLite metadata/repository layer and route existing
+acquisition results through it without breaking compatibility outputs.
 
 ## Current State Summary
 
-Alpha transport behavior is materially stronger than the previous baseline.
-Rsync now retries transient connect failures, emits live diagnostics during
-connect stalls, supports explicit daemon ports end-to-end, handles large PDB
-mmCIF syncs via shard-prefiltered path updates, and now surfaces more useful
-runtime indexing telemetry during long-running file-list phases. Developer
-workflow ergonomics also improved through a more composable `just` interface
-for lint, format, test, docs, complexity, and coverage commands. `sync(cfg)`
-remains monolithic; no Runtime, Planner, Executor, or adapter abstractions
-exist yet.
+Implemented so far:
 
-Recent:
-- rsync file-list/indexing progress now emits periodic heartbeat updates and
-  warns much sooner when the transport remains in `receiving file list`
-- rsync runtime telemetry now has hooks for richer local activity reporting
-  during long-running transfers
-- developer task recipes were consolidated into flag-driven `just` commands for
-  linting, formatting, testing, docs, complexity, and coverage
-- `just fix` now runs the fast test subset by default
-- artifact path canonicalization now normalizes resolved paths more consistently
+- stable typed identifiers for sources, artifacts, content, observations, runs,
+  operations, snapshots, trees, and datasets
+- immutable artifact-observation/content records
+- deterministic ID canonicalization
+- portable SHA-256 content-addressed filesystem blob storage
+- atomic blob installation and content verification
 
-Known gaps:
-- `sync.py` still combines orchestration, path-preparation policy, and manifest shaping in one module
-- remote bucket discovery currently runs per sync invocation and is not cached across runs
-- compact shard progress currently exists only for `pdb_mmcif`; no equivalent aggregation path exists yet for other high-cardinality rsync sources
-- `_kind_name` helper remains duplicated in `status.py` and `source_results.py`
-- `ManifestRecorder` in `sync.py` is not behind a formal interface
-- no protocol adapters; transport dispatch is inline branching in `sync.py`
-- rsync indexing telemetry is still transport-specific and not yet reflected in higher-level normalized status summaries
+Still pending in the current implementation tranche:
+
+- SQLite metadata persistence
+- Repository service facade
+- source/tree snapshots and materialization records
+- immutable dataset API
+- Engine integration with the existing sync pipeline
+- repository-focused tests and public exports
+
+Legacy transport, manifest, mirror-state, query, and status behavior remains
+unchanged at this point.
+
+## Validation Notes
+
+The new primitive modules were syntax-checked and their content-addressed storage
+behavior was exercised locally. The full repository gate cannot be run in the
+current environment because the repository cannot be cloned and lint/type
+dependencies cannot be downloaded.
 
 ## Continuity Notes
 
-Next pass should extract manifest payload building from `sync.py`, then isolate
-source/path preparation policy behind a small helper boundary. If remote bucket
-listing remains a measurable cost, introduce a short-TTL local cache for
-`pdb_mmcif` bucket discovery keyed by remote root and port.
-observability continues to matter operationally, promote rsync transport
-telemetry into a small reusable runtime-status abstraction instead of leaving it
-entirely transport-local.
+Continue the current implementation tranche before starting transport-native
+repository commits. The next commit should add SQLite metadata and the semantic
+Repository API, followed by dataset and Engine compatibility integration.

@@ -9,6 +9,7 @@ import httpx
 
 from efloud.derived import DerivedTask
 from efloud.fs import atomic_write_bytes, atomic_write_text, safe_json_dump
+from efloud.json_types import JsonObject
 from efloud.transport.http import HttpCache, HttpCacheConfig
 
 if TYPE_CHECKING:
@@ -51,14 +52,7 @@ def two_char_bucket(item_id: str, *, suffix: str = ".json") -> Path:
 
 @dataclass(frozen=True)
 class RestBaseFanoutTask(DerivedTask):
-    """
-    Reusable REST_BASE fanout task.
-
-    This closes the biggest gap between `bvp-resources` and `efloud`: a
-    first-class, generic materialization pattern for sources whose true output
-    is a collection of derived per-item artifacts rather than a single fetched
-    file.
-    """
+    """Materialize a REST collection as stable per-item artifacts."""
 
     name: str
     source_id: str
@@ -74,6 +68,21 @@ class RestBaseFanoutTask(DerivedTask):
     timeout_seconds: float = 60.0
     retries: int = 5
     request_headers: Mapping[str, str] | None = None
+    repository_version: str = "1"
+    repository_input_source_ids: tuple[str, ...] = ()
+
+    def repository_parameters(self) -> JsonObject:
+        return {
+            "source_id": self.source_id,
+            "base_url": self.base_url,
+            "dest_subdir": self.dest_subdir,
+            "response_mode": self.response_mode,
+            "refresh": self.refresh,
+            "concurrency": self.concurrency,
+            "timeout_seconds": self.timeout_seconds,
+            "retries": self.retries,
+            "request_headers": dict(self.request_headers or {}),
+        }
 
     async def run(
         self,
@@ -133,6 +142,10 @@ class RestBaseFanoutTask(DerivedTask):
                 "refresh": self.refresh,
                 "response_mode": self.response_mode,
                 "concurrency": self.concurrency,
+            },
+            "enumeration": {
+                "complete": True,
+                "item_count": len(items),
             },
             "entries": statuses,
             "ok": ok_n,
@@ -198,6 +211,7 @@ async def _materialize_fanout_item(
                 "request": request,
                 "dest": str(dest),
                 "item_id": item.item_id,
+                "metadata": dict(item.metadata or {}),
             }
     except (httpx.HTTPError, OSError, TypeError, ValueError) as exc:
         return {

@@ -8,45 +8,44 @@ Rules:
 - Remove completed items before committing.
 - Prefer concrete references and explicit acceptance criteria.
 
-## 1. Land repository-native query and public read APIs
+## 1. Record collection and derived outputs as repository artifacts
 
-Files: `src/efloud/repository_query.py`, `src/efloud/__init__.py`, query-focused tests
+Files: `src/efloud/fanout.py`, `src/efloud/derived.py`, `src/efloud/repository_recording.py`, tests
 
-- expose artifact, observation, source-snapshot/tree, and dataset reads without consulting sync manifests
-- support locator evaluation directly against immutable blob content
-- export `Repository`, `Engine`, dataset selectors/types, repository identities, and the repository query service from the package API
-- keep legacy `query_target()` behavior intact during this cutover
+- import successful `REST_BASE` / fanout item outputs as logical artifact observations
+- preserve per-item request metadata and materialization paths
+- represent deterministic derived outputs with input observation provenance instead of treating them as opaque manifest payloads
+- record failed/missing collection items without inventing content observations
 
-Acceptance: focused tests cover present/absent artifact state, exact observation lookup, snapshot/tree lookup, dataset membership, and blob-backed locator evaluation.
+Acceptance: a fanout/derived run can be reopened from `metadata.sqlite` and its item artifacts, content, producer operation, inputs, and source snapshot can be inspected without reading a sync manifest.
 
-## 2. Move source/run/status inspection onto repository metadata
+## 2. Generate compatibility manifests and state from repository records
 
-Files: `src/efloud/metadata_store.py`, `src/efloud/sqlite_metadata.py`, repository query/status modules, tests
+Files: `src/efloud/manifest.py`, `src/efloud/state.py`, `src/efloud/repository_compat.py`, `src/efloud/query.py`, `src/efloud/status.py`, tests
 
-- add read methods for sources, runs, operations, source snapshots, and materializations needed by status/reporting
-- make new source/run/status payloads derive from SQLite repository state
-- retain compatibility manifest/status functions until parity is demonstrated
+- derive HTTP/REST, reconciled rsync, and collection/derived compatibility facts from repository metadata
+- preserve required legacy payload shapes while making SQLite/blob state authoritative
+- generate mirror/tree integrity facts from recorded source snapshots rather than rescanning mirrors where equivalent repository data exists
+- retain read fallback only for repositories that predate repository metadata
 
-Acceptance: representative source and run status can be produced after reopening the repository with no manifest or mirror-state read.
+Acceptance: representative compatibility manifests/status/query payloads can be regenerated after deleting canonical manifest and mirror-state files.
 
-## 3. Implement authoritative rsync reconciliation
+## 3. Remove remaining read-side manifest/mirror authority
 
-Files: `src/efloud/transport/rsync.py`, repository ingestion/reconciliation modules, tests
+Files: source-result, resolve, health, store-inspection, summary, and compatibility modules; tests
 
-- obtain an explicit enumeration for the covered rsync scope
-- reconcile that enumeration against prior repository state
-- emit content observations for changed/new files and absence observations only when coverage proves deletion
-- create complete snapshots for fully enumerated scopes and scoped incomplete snapshots otherwise
-- avoid unconditional full-tree rehashing of unchanged files
+- route current-state reads through repository APIs whenever repository metadata exists
+- identify and delete duplicate source-result/state logic made obsolete by repository projections
+- keep legacy-file import/migration explicit rather than silently mixing two sources of truth
 
-Acceptance: tests cover addition, modification, unchanged content, deletion, partial-scope sync, failed/incomplete enumeration, and repeated sync deduplication.
+Acceptance: no normal read path for an initialized repository requires canonical JSON manifests or `.mirror_meta.json` for authoritative artifact/source state.
 
-## 4. Switch compatibility outputs to repository-derived views
+## 4. Run and repair the full repository quality gate
 
-Files: manifest/state/query/status compatibility modules and tests
+Files: repository-wide as required
 
-- generate canonical manifest/state facts from repository records where equivalent data exists
-- verify parity against current compatibility fixtures
-- remove any remaining read-side assumption that mirrors or JSON manifests are authoritative
+- run formatting/lint, static typing, import contracts, focused repository tests, and full pytest suite
+- repair any issues introduced during the repository migration
+- verify SQLite v1→v2 migration and compatibility fallback fixtures
 
-Acceptance: repository state is sufficient to reproduce required compatibility outputs for HTTP/REST and reconciled rsync fixtures.
+Acceptance: the normal project quality gate passes from a clean checkout.

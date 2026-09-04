@@ -4,22 +4,21 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from efloud.reconciliation import PreviousInventoryItem, ReconciliationDecision, reconcile_inventory
-from efloud.repository_models import (
-    ArtifactKey,
-    ArtifactObservation,
-    ObservationId,
-    OperationId,
-    RunId,
-    SourceId,
-    TreeEntry,
-)
+from efloud.reconciliation import PreviousInventoryItem, reconcile_inventory
+from efloud.repository_models import ArtifactKey, SourceId, TreeEntry
 from efloud.transport.rsync_inventory import rsync_change_token, rsync_source_inventory
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
+    from efloud.reconciliation import ReconciliationDecision
     from efloud.repository import Repository
-    from efloud.repository_models import SourceSnapshot
+    from efloud.repository_models import (
+        ArtifactObservation,
+        ObservationId,
+        OperationId,
+        RunId,
+        SourceSnapshot,
+    )
     from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
 

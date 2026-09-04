@@ -3,16 +3,51 @@ from __future__ import annotations
 from importlib.metadata import version
 
 from efloud.artifacts import build_path_index, canonical_path, sha256_hex, verify_gzip
+from efloud.blob_store import BlobStore, FilesystemBlobStore
+from efloud.datasets import (
+    DatasetDefinition,
+    DatasetManifest,
+    DatasetSelection,
+    DatasetSelector,
+    ExactObservation,
+    ImmutableDataset,
+    Latest,
+    LatestAll,
+    LatestBefore,
+)
+from efloud.engine import Engine, EngineSyncResult
 from efloud.fanout import FanoutItem, RestBaseFanoutTask, two_char_bucket
 from efloud.health import MirrorHealthSummary, build_mirror_health_summary
 from efloud.indexing import IndexDefinition, IndexRegistry, IndexStatus, JsonTtlIndex
 from efloud.manifest import load_latest_manifest, merge_manifests, normalize_manifest
 from efloud.materialization import http_dest_for_source_url, http_dests_for_source_urls
+from efloud.metadata_store import DatasetMemberRecord, DatasetRecord, MetadataStore
 from efloud.models import EngineConfig
 from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
 from efloud.query import query_target, root_payload, source_payload, store_payload
 from efloud.query_targets import QueryTarget, parse_query_target
 from efloud.registry import MirrorMode, SourceDefinition, SourceKind
+from efloud.repository import Repository
+from efloud.repository_models import (
+    ArtifactAbsence,
+    ArtifactKey,
+    ArtifactObservation,
+    ArtifactState,
+    ContentId,
+    ContentRef,
+    DatasetId,
+    ObservationId,
+    OperationId,
+    ProvenanceEdge,
+    RunId,
+    SnapshotId,
+    SourceId,
+    SourceSnapshot,
+    TreeEntry,
+    TreeId,
+    ValidationResult,
+)
+from efloud.repository_query import RepositoryQueryService, repository_query
 from efloud.resolve import (
     manifest_entry_for_source_aliasable,
     manifest_http_dest_for_url,
@@ -29,6 +64,7 @@ from efloud.source_results import (
     manifest_section_for_kind,
     source_status_hint,
 )
+from efloud.sqlite_metadata import SQLiteMetadataStore
 from efloud.state import MirrorState, MirrorStateNode
 from efloud.status import collect_status_payload, derived_summary, source_status_rows
 from efloud.store_inspection import (
@@ -55,34 +91,70 @@ __version__ = version("efloud")
 
 __all__ = [
     "AliasMap",
+    "ArtifactAbsence",
+    "ArtifactKey",
+    "ArtifactObservation",
+    "ArtifactState",
+    "BlobStore",
+    "ContentId",
+    "ContentRef",
+    "DatasetDefinition",
+    "DatasetId",
+    "DatasetManifest",
+    "DatasetMemberRecord",
+    "DatasetRecord",
+    "DatasetSelection",
+    "DatasetSelector",
     "DefaultSyncPolicy",
+    "Engine",
     "EngineConfig",
+    "EngineSyncResult",
+    "ExactObservation",
     "FanoutItem",
+    "FilesystemBlobStore",
     "HttpCache",
     "HttpCacheConfig",
     "HttpFetchResult",
+    "ImmutableDataset",
     "IndexDefinition",
     "IndexRegistry",
     "IndexStatus",
     "JsonTtlIndex",
+    "Latest",
+    "LatestAll",
+    "LatestBefore",
+    "MetadataStore",
     "MirrorHealthSummary",
     "MirrorMode",
     "MirrorState",
     "MirrorStateNode",
+    "ObservationId",
     "OpResult",
+    "OperationId",
+    "ProvenanceEdge",
     "QueryTarget",
+    "Repository",
+    "RepositoryQueryService",
     "RestBaseFanoutTask",
     "RoleDrivenSyncPolicy",
     "RsyncCommandConfig",
     "RsyncMirror",
     "RsyncMirrorConfig",
+    "RunId",
+    "SQLiteMetadataStore",
+    "SnapshotId",
     "SourceAliasResolver",
     "SourceDefinition",
+    "SourceId",
     "SourceKind",
+    "SourceSnapshot",
     "StoreMetadataProvider",
     "StorePathKind",
     "StoreSpec",
     "SyncResult",
+    "TreeEntry",
+    "TreeId",
+    "ValidationResult",
     "__version__",
     "build_mirror_health_summary",
     "build_path_index",
@@ -113,6 +185,7 @@ __all__ = [
     "parse_query_target",
     "query_target",
     "rel_to_root",
+    "repository_query",
     "root_payload",
     "sha256_hex",
     "source_by_id_or_alias",

@@ -18,6 +18,14 @@ from efloud.transport.rsync import RsyncMirrorConfig
 from efloud.transport.rsync_inventory import enumerate_rsync
 
 
+@dataclass(frozen=True, slots=True)
+class _HttpFreshness:
+    observed_at: float
+    etag: str | None
+    last_modified: str | None
+    status_code: int | None
+
+
 def _source_definition_payload(source: SourceDefinition) -> JsonObject:
     payload: JsonObject = {
         "description": source.description,
@@ -61,6 +69,53 @@ def _number(value: object, fallback: float) -> float:
     return fallback
 
 
+def _result_sections(result: SyncResult) -> tuple[JsonMapping, JsonMapping, JsonMapping]:
+    results = json_mapping_or_none(result.manifest.get("results")) or {}
+    return (
+        json_mapping_or_none(results.get("http")) or {},
+        json_mapping_or_none(results.get("rsync")) or {},
+        json_mapping_or_none(results.get("derived")) or {},
+    )
+
+
+def _http_freshness(entry: JsonMapping, *, fallback: float) -> _HttpFreshness:
+    freshness = json_mapping_or_none(entry.get("freshness")) or {}
+    etag_value = freshness.get("etag")
+    modified_value = freshness.get("last_modified")
+    status_value = freshness.get("status_code")
+    return _HttpFreshness(
+        observed_at=_number(freshness.get("fetched_at_unix"), fallback),
+        etag=etag_value if isinstance(etag_value, str) else None,
+        last_modified=modified_value if isinstance(modified_value, str) else None,
+        status_code=(
+            status_value
+            if isinstance(status_value, int) and not isinstance(status_value, bool)
+            else None
+        ),
+    )
+
+
+def _http_metadata(source: SourceDefinition, freshness: _HttpFreshness) -> JsonObject:
+    metadata: JsonObject = {
+        "transport": source.kind.value,
+        "compatibility_import": True,
+    }
+    if freshness.status_code is not None:
+        metadata["status_code"] = freshness.status_code
+    return metadata
+
+
+def _http_snapshot_evidence(freshness: _HttpFreshness) -> JsonObject:
+    evidence: JsonObject = {}
+    if freshness.etag is not None:
+        evidence["etag"] = freshness.etag
+    if freshness.last_modified is not None:
+        evidence["last_modified"] = freshness.last_modified
+    if freshness.status_code is not None:
+        evidence["status_code"] = freshness.status_code
+    return evidence
+
+
 @dataclass(slots=True)
 class RepositorySyncRecorder:
     repository: Repository
@@ -71,13 +126,14 @@ class RepositorySyncRecorder:
     skipped_source_ids: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
-        source_ids: list[SourceId] = []
-        for source in self.config.sources:
-            source_id = self.repository.register_source(
+        """Register configured sources and open the repository run."""
+        source_ids = [
+            self.repository.register_source(
                 SourceId(source.id),
                 _source_definition_payload(source),
             )
-            source_ids.append(source_id)
+            for source in self.config.sources
+        ]
         self.run_id = self.repository.start_run(
             source_ids=source_ids,
             started_at=self.started_at,
@@ -96,50 +152,50 @@ class RepositorySyncRecorder:
     async def import_result(self, result: SyncResult) -> None:
         if self.config.dry_run:
             return
-        results = result.manifest.get("results", {})
-        http_results = results.get("http", {}) if isinstance(results, dict) else {}
-        rsync_results = results.get("rsync", {}) if isinstance(results, dict) else {}
-        derived_results = results.get("derived", {}) if isinstance(results, dict) else {}
+        http_results, rsync_results, derived_results = _result_sections(result)
+        await self._import_configured_sources(http_results, rsync_results)
+        handled_collections = self._import_derived_results(derived_results)
+        self._mark_unhandled_collections(handled_collections)
+        self._import_manifest_errors(result)
 
+    async def _import_configured_sources(
+        self,
+        http_results: JsonMapping,
+        rsync_results: JsonMapping,
+    ) -> None:
         for source in self.config.sources:
             if source.kind in {SourceKind.HTTP, SourceKind.REST}:
-                entry = http_results.get(source.id) if isinstance(http_results, dict) else None
-                mapping = json_mapping_or_none(entry)
+                mapping = json_mapping_or_none(http_results.get(source.id))
                 if mapping is None:
                     self.skipped_source_ids.append(source.id)
-                    continue
-                self._import_http_source(source, mapping)
-                continue
-            if source.kind is SourceKind.RSYNC:
-                entry = rsync_results.get(source.id) if isinstance(rsync_results, dict) else None
-                mapping = json_mapping_or_none(entry)
+                else:
+                    self._import_http_source(source, mapping)
+            elif source.kind is SourceKind.RSYNC:
+                mapping = json_mapping_or_none(rsync_results.get(source.id))
                 if mapping is None:
                     self.skipped_source_ids.append(source.id)
-                    continue
-                await self._import_rsync_source(source, mapping)
-                continue
-            if source.kind is SourceKind.REST_BASE:
-                continue
-            self.skipped_source_ids.append(source.id)
-
-        derived_mapping = json_mapping_or_none(derived_results)
-        handled_collection_sources: set[str] = set()
-        if derived_mapping is not None:
-            imported = import_derived_results(
-                self.repository,
-                config=self.config,
-                run_id=self.run_id,
-                started_at=self.started_at,
-                derived_results=derived_mapping,
-            )
-            self.observations.extend(imported.observations)
-            handled_collection_sources.update(imported.handled_source_ids)
-
-        for source in self.config.sources:
-            if source.kind is SourceKind.REST_BASE and source.id not in handled_collection_sources:
+                else:
+                    await self._import_rsync_source(source, mapping)
+            elif source.kind is not SourceKind.REST_BASE:
                 self.skipped_source_ids.append(source.id)
 
-        self._import_manifest_errors(result)
+    def _import_derived_results(self, derived_results: JsonMapping) -> set[str]:
+        imported = import_derived_results(
+            self.repository,
+            config=self.config,
+            run_id=self.run_id,
+            started_at=self.started_at,
+            derived_results=derived_results,
+        )
+        self.observations.extend(imported.observations)
+        return set(imported.handled_source_ids)
+
+    def _mark_unhandled_collections(self, handled_source_ids: set[str]) -> None:
+        self.skipped_source_ids.extend(
+            source.id
+            for source in self.config.sources
+            if source.kind is SourceKind.REST_BASE and source.id not in handled_source_ids
+        )
 
     def _import_manifest_errors(self, result: SyncResult) -> None:
         raw_errors = result.manifest.get("errors", [])
@@ -172,11 +228,7 @@ class RepositorySyncRecorder:
             source_text = source_value if isinstance(source_value, str) else None
             source_id = SourceId(source_text) if source_text in known_source_ids else None
             name_value = error_mapping.get("name")
-            subject = (
-                name_value
-                if isinstance(name_value, str) and name_value
-                else source_text or phase
-            )
+            subject = name_value if isinstance(name_value, str) and name_value else source_text or phase
             key = (phase, subject, source_text if source_id is not None else None)
             if key in existing_keys:
                 continue
@@ -223,45 +275,28 @@ class RepositorySyncRecorder:
             )
             return
 
-        freshness = json_mapping_or_none(entry.get("freshness")) or {}
-        observed_at = _number(freshness.get("fetched_at_unix"), self.started_at)
-        etag = freshness.get("etag")
-        last_modified = freshness.get("last_modified")
-        status_code = freshness.get("status_code")
-        metadata: JsonObject = {
-            "transport": source.kind.value,
-            "compatibility_import": True,
-        }
-        if isinstance(status_code, int) and not isinstance(status_code, bool):
-            metadata["status_code"] = status_code
+        freshness = _http_freshness(entry, fallback=self.started_at)
         observation = self.repository.ingest_path(
             f"source:{source.id}",
             Path(destination),
             run_id=self.run_id,
             operation_id=operation_id,
             source_id=SourceId(source.id),
-            observed_at=observed_at,
+            observed_at=freshness.observed_at,
             upstream_locator=source.url,
-            upstream_modified_at=_http_modified_timestamp(last_modified),
-            upstream_version=etag if isinstance(etag, str) else None,
+            upstream_modified_at=_http_modified_timestamp(freshness.last_modified),
+            upstream_version=freshness.etag,
             media_type="application/json" if source.kind is SourceKind.REST else None,
-            metadata=metadata,
+            metadata=_http_metadata(source, freshness),
             materialization_kind="compatibility-http",
         )
         self.observations.append(observation.observation_id)
-        evidence: JsonObject = {}
-        if isinstance(etag, str):
-            evidence["etag"] = etag
-        if isinstance(last_modified, str):
-            evidence["last_modified"] = last_modified
-        if isinstance(status_code, int) and not isinstance(status_code, bool):
-            evidence["status_code"] = status_code
         self.repository.record_source_snapshot(
             source_id=SourceId(source.id),
             run_id=self.run_id,
             complete=True,
-            observed_at=observed_at,
-            evidence=evidence,
+            observed_at=freshness.observed_at,
+            evidence=_http_snapshot_evidence(freshness),
         )
         self.repository.finish_operation(operation_id, status="success", details={})
 

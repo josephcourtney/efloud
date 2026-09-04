@@ -2,11 +2,23 @@ from pathlib import Path
 
 import pytest
 
+from efloud.json_types import JsonMapping, JsonValue, json_mapping_or_none
 from efloud.repository import Repository
 from efloud.repository_models import SourceId
 from efloud.repository_query import RepositoryQueryService
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+
+
+def _mapping(value: JsonValue | None) -> JsonMapping:
+    mapping = json_mapping_or_none(value)
+    assert mapping is not None
+    return mapping
+
+
+def _array(value: JsonValue | None) -> list[JsonValue]:
+    assert isinstance(value, list)
+    return value
 
 
 def test_source_and_run_status_survive_reopen_without_manifests(tmp_path: Path) -> None:
@@ -50,15 +62,22 @@ def test_source_and_run_status_survive_reopen_without_manifests(tmp_path: Path) 
     with Repository(tmp_path) as reopened:
         query = RepositoryQueryService(reopened)
         source_payload = query.query("source:source-a")
-        assert source_payload["source"]["source_id"] == "source-a"
-        assert source_payload["latest_snapshot"]["snapshot_id"] == str(snapshot.snapshot_id)
-        assert source_payload["operations"][0]["status"] == "success"
+        source_record = _mapping(source_payload.get("source"))
+        latest_snapshot = _mapping(source_payload.get("latest_snapshot"))
+        source_operations = _array(source_payload.get("operations"))
+        assert source_record["source_id"] == "source-a"
+        assert latest_snapshot["snapshot_id"] == str(snapshot.snapshot_id)
+        assert _mapping(source_operations[0])["status"] == "success"
 
         run_payload = query.query(f"run:{run}")
-        assert run_payload["run"]["status"] == "success"
-        assert run_payload["run"]["metadata"] == {"purpose": "test"}
-        assert run_payload["operations"][0]["operation_id"] == str(operation)
+        run_record = _mapping(run_payload.get("run"))
+        run_operations = _array(run_payload.get("operations"))
+        assert run_record["status"] == "success"
+        assert run_record["metadata"] == {"purpose": "test"}
+        assert _mapping(run_operations[0])["operation_id"] == str(operation)
 
         root_payload = query.query("root")
-        assert root_payload["sources"][0]["source_id"] == "source-a"
-        assert root_payload["recent_runs"][0]["run_id"] == str(run)
+        sources = _array(root_payload.get("sources"))
+        recent_runs = _array(root_payload.get("recent_runs"))
+        assert _mapping(sources[0])["source_id"] == "source-a"
+        assert _mapping(recent_runs[0])["run_id"] == str(run)

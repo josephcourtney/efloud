@@ -6,8 +6,10 @@ from typing import Protocol
 
 from efloud.json_types import JsonObject
 from efloud.repository_models import (
+    ArtifactAbsence,
     ArtifactKey,
     ArtifactObservation,
+    ArtifactState,
     ContentId,
     ContentRef,
     DatasetId,
@@ -86,6 +88,8 @@ class MetadataStore(Protocol):
         provenance_edges: Iterable[ProvenanceEdge] = (),
     ) -> None: ...
 
+    def record_absence(self, absence: ArtifactAbsence) -> None: ...
+
     def record_materialization(
         self,
         *,
@@ -100,6 +104,13 @@ class MetadataStore(Protocol):
     def observation(self, observation_id: ObservationId) -> ArtifactObservation | None: ...
 
     def observations_for(self, artifact_key: ArtifactKey) -> tuple[ArtifactObservation, ...]: ...
+
+    def latest_state(
+        self,
+        artifact_key: ArtifactKey,
+        *,
+        before: float | None = None,
+    ) -> ArtifactState | None: ...
 
     def latest_observation(
         self,

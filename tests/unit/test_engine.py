@@ -39,7 +39,7 @@ def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.Mon
                             "freshness": {
                                 "fetched_at_unix": 123.0,
                                 "status_code": 200,
-                                "etag": "\"v1\"",
+                                "etag": '"v1"',
                             },
                         }
                     },
@@ -58,7 +58,7 @@ def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.Mon
         observation = engine.repository.latest_observation("source:example")
         assert observation is not None
         assert observation.observed_at == 123.0
-        assert observation.upstream_version == "\"v1\""
+        assert observation.upstream_version == '"v1"'
         with engine.repository.open_content(observation.content_id) as stream:
             assert stream.read() == b"payload"
         snapshot = engine.repository.latest_source_snapshot("example")
@@ -98,3 +98,115 @@ def test_engine_leaves_rsync_for_incremental_tree_migration(
         result = asyncio.run(engine.sync())
         assert result.skipped_source_ids == ("mirror",)
         assert engine.repository.artifact_keys() == ()
+
+
+def test_engine_records_rsync_changed_files_without_claiming_reconciliation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mirror_root = tmp_path / "mirrors" / "mirror"
+    changed = mirror_root / "aa" / "entry.txt"
+    changed.parent.mkdir(parents=True)
+    changed.write_bytes(b"version one")
+    source = SourceDefinition(
+        id="mirror",
+        description="Mirror",
+        url="rsync://example.test/module",
+        kind=SourceKind.RSYNC,
+        local_subpath="mirror",
+    )
+    config = EngineConfig(root=tmp_path, sources=[source])
+
+    async def fake_sync(_config: EngineConfig) -> SyncResult:
+        return SyncResult(
+            ok=True,
+            root=tmp_path,
+            manifest_path=None,
+            manifest={
+                "version": 1,
+                "root": str(tmp_path),
+                "results": {
+                    "http": {},
+                    "rsync": {
+                        "mirror": {
+                            "ok": True,
+                            "local": str(mirror_root),
+                            "request": {"paths": ["aa/"]},
+                            "results": {
+                                "aa/": {
+                                    "status": "success",
+                                    "updated": ["aa/entry.txt"],
+                                }
+                            },
+                        }
+                    },
+                    "derived": {},
+                },
+                "errors": [],
+            },
+        )
+
+    monkeypatch.setattr(engine_module, "legacy_sync", fake_sync)
+    with Engine.from_config(config) as engine:
+        result = asyncio.run(engine.sync())
+        assert result.skipped_source_ids == ()
+        observation = engine.repository.latest_observation("source:mirror:path:aa/entry.txt")
+        assert observation is not None
+        assert observation.source_path == "aa/entry.txt"
+        with engine.repository.open_content(observation.content_id) as stream:
+            assert stream.read() == b"version one"
+        snapshot = engine.repository.latest_source_snapshot("mirror")
+        assert snapshot is not None
+        assert snapshot.complete is False
+        assert snapshot.scope == ("aa/",)
+        assert snapshot.evidence["reconciliation_complete"] is False
+        assert snapshot.tree_id is not None
+        assert engine.repository.tree_entries(snapshot.tree_id)[0].relative_path == "aa/entry.txt"
+
+
+def test_engine_does_not_infer_rsync_deletion_from_legacy_mirror(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mirror_root = tmp_path / "mirrors" / "mirror"
+    mirror_root.mkdir(parents=True)
+    source = SourceDefinition(
+        id="mirror",
+        description="Mirror",
+        url="rsync://example.test/module",
+        kind=SourceKind.RSYNC,
+        local_subpath="mirror",
+    )
+    config = EngineConfig(root=tmp_path, sources=[source])
+
+    async def fake_sync(_config: EngineConfig) -> SyncResult:
+        return SyncResult(
+            ok=True,
+            root=tmp_path,
+            manifest_path=None,
+            manifest={
+                "version": 1,
+                "root": str(tmp_path),
+                "results": {
+                    "http": {},
+                    "rsync": {
+                        "mirror": {
+                            "ok": True,
+                            "local": str(mirror_root),
+                            "request": {"paths": None},
+                            "results": {"update": {"status": "success", "updated": ["deleting stale.txt"]}},
+                        }
+                    },
+                    "derived": {},
+                },
+                "errors": [],
+            },
+        )
+
+    monkeypatch.setattr(engine_module, "legacy_sync", fake_sync)
+    with Engine.from_config(config) as engine:
+        asyncio.run(engine.sync())
+        assert engine.repository.latest_state("source:mirror:path:stale.txt") is None
+        snapshot = engine.repository.latest_source_snapshot("mirror")
+        assert snapshot is not None
+        assert snapshot.complete is False

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, BinaryIO, Protocol
 from efloud.json_types import JsonObject
 from efloud.metadata_store import DatasetMemberRecord, DatasetRecord
 from efloud.repository_models import (
+    ArtifactAbsence,
     ArtifactKey,
     ArtifactObservation,
     DatasetId,
@@ -44,11 +45,11 @@ class Latest:
     artifact_key: ArtifactKey | str
 
     def resolve(self, repository: Repository) -> tuple[ArtifactObservation, ...]:
-        observation = repository.latest_observation(self.artifact_key)
-        if observation is None:
-            msg = f"No observation for artifact: {self.artifact_key}"
+        state = repository.latest_state(self.artifact_key)
+        if state is None or isinstance(state, ArtifactAbsence):
+            msg = f"Artifact is absent: {self.artifact_key}"
             raise KeyError(msg)
-        return (observation,)
+        return (state,)
 
     def to_dict(self) -> JsonObject:
         return {"kind": "latest", "artifact_key": str(self.artifact_key)}
@@ -60,11 +61,11 @@ class LatestBefore:
     timestamp: float
 
     def resolve(self, repository: Repository) -> tuple[ArtifactObservation, ...]:
-        observation = repository.latest_observation(self.artifact_key, before=self.timestamp)
-        if observation is None:
-            msg = f"No observation for artifact {self.artifact_key} at or before {self.timestamp}"
+        state = repository.latest_state(self.artifact_key, before=self.timestamp)
+        if state is None or isinstance(state, ArtifactAbsence):
+            msg = f"Artifact is absent at or before {self.timestamp}: {self.artifact_key}"
             raise KeyError(msg)
-        return (observation,)
+        return (state,)
 
     def to_dict(self) -> JsonObject:
         return {
@@ -81,9 +82,9 @@ class LatestAll:
     def resolve(self, repository: Repository) -> tuple[ArtifactObservation, ...]:
         selected: list[ArtifactObservation] = []
         for artifact_key in repository.artifact_keys():
-            observation = repository.latest_observation(artifact_key, before=self.before)
-            if observation is not None:
-                selected.append(observation)
+            state = repository.latest_state(artifact_key, before=self.before)
+            if state is not None and not isinstance(state, ArtifactAbsence):
+                selected.append(state)
         return tuple(selected)
 
     def to_dict(self) -> JsonObject:
@@ -196,7 +197,9 @@ def resolve_dataset(
         for observation in selection.selector.resolve(repository):
             resolved.append((observation, selection.role))
 
-    resolved.sort(key=lambda item: (str(item[0].artifact_key), item[1] or "", str(item[0].observation_id)))
+    resolved.sort(
+        key=lambda item: (str(item[0].artifact_key), item[1] or "", str(item[0].observation_id))
+    )
     seen: set[str] = set()
     members: list[DatasetMemberRecord] = []
     for observation, role in resolved:

@@ -8,8 +8,10 @@ from pathlib import Path
 from efloud.json_types import JsonObject
 from efloud.metadata_store import DatasetMemberRecord, DatasetRecord
 from efloud.repository_models import (
+    ArtifactAbsence,
     ArtifactKey,
     ArtifactObservation,
+    ArtifactState,
     ContentId,
     ContentRef,
     DatasetId,
@@ -25,7 +27,7 @@ from efloud.repository_models import (
     ValidationResult,
 )
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -79,6 +81,19 @@ CREATE INDEX IF NOT EXISTS observations_artifact_time
     ON observations(artifact_key, observed_at DESC, observation_id DESC);
 CREATE INDEX IF NOT EXISTS observations_source_time
     ON observations(source_id, observed_at DESC, observation_id DESC);
+CREATE TABLE IF NOT EXISTS artifact_absences (
+    observation_id TEXT PRIMARY KEY,
+    artifact_key TEXT NOT NULL REFERENCES logical_artifacts(artifact_key),
+    source_id TEXT REFERENCES sources(source_id),
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    observed_at REAL NOT NULL,
+    source_path TEXT,
+    upstream_locator TEXT,
+    metadata_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS artifact_absences_artifact_time
+    ON artifact_absences(artifact_key, observed_at DESC, observation_id DESC);
 CREATE TABLE IF NOT EXISTS provenance_edges (
     output_observation_id TEXT NOT NULL REFERENCES observations(observation_id),
     input_observation_id TEXT NOT NULL REFERENCES observations(observation_id),
@@ -178,12 +193,12 @@ class SQLiteMetadataStore:
 
     def _initialize_schema(self) -> None:
         current = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
-        if current not in {0, _SCHEMA_VERSION}:
+        if current not in {0, 1, _SCHEMA_VERSION}:
             msg = f"Unsupported efloud metadata schema version: {current}"
             raise RuntimeError(msg)
         with self._connection:
             self._connection.executescript(_SCHEMA)
-            self._connection.execute("PRAGMA user_version = 1")
+            self._connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     def close(self) -> None:
         self._connection.close()
@@ -201,7 +216,7 @@ class SQLiteMetadataStore:
     def start_run(self, run_id: RunId, *, started_at: float, metadata: JsonObject) -> None:
         with self._connection:
             self._connection.execute(
-                "INSERT INTO runs(run_id, started_at, status, metadata_json) VALUES (?, ?, 'running', ?)",
+                "INSERT INTO runs(run_id,started_at,status,metadata_json) VALUES(?, ?, 'running',?>)",
                 (str(run_id), started_at, _dump(metadata)),
             )
 
@@ -212,7 +227,7 @@ class SQLiteMetadataStore:
                 (finished_at, status, str(run_id)),
             )
             if cursor.rowcount != 1:
-                msg = f"Unknown run: {run_id}"
+                msg = f"Unknown run identifier: {run_id}"
                 raise KeyError(msg)
 
     def start_operation(
@@ -230,413 +245,259 @@ class SQLiteMetadataStore:
             self._connection.execute(
                 """
                 INSERT INTO operations(
-                    operation_id, run_id, source_id, kind, subject, started_at,
-                    status, parameters_json, details_json
-                ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, '{}')
-                """,
-                (
-                    str(operation_id),
-                    str(run_id),
-                    str(source_id) if source_id is not None else None,
-                    kind,
-                    subject,
-                    started_at,
-                    _dump(parameters),
-                ),
-            )
+                    operation_id, run_id, source_id, kind, subject,
+                    started_at, status, parameters_json, details_json
+                ) VALUES (?, ?, ?, ?, ?, ?, 	Ü[›š[™ÉËË	ÞßIÊBˆˆˆ‹ˆ
+ˆÝŠÜ\˜][Û—ÚY
+KˆÝŠ[—ÚY
+KˆÝŠÛÝ\˜ÙWÚY
+HYˆÛÝ\˜ÙWÚY\È›Ý›Û™H[ÙH›Û™KˆÚ[™ˆÝXš™XÝˆÝ\YØ]ˆÙ[\
+\˜[Y]\œÊKˆ
+Kˆ
+B‚ˆYˆš[š\ÚÛÜ\˜][ÛŠˆÙ[‹ˆÜ\˜][Û—ÚYˆÜ\˜][Û’Yˆ
+‹ˆš[š\ÚYØ]ˆ›Ø]ˆÝ]\ÎˆÝ‹ˆ]Z[ÎˆœÛÛ“Øš™XÝˆ
+HOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÝ\œÛÜˆHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆTUHÜ\˜][ÛœÂˆÑUš[š\ÚYØ]HËÝ]\ÈHË]Z[×ÚœÛÛˆHÂˆÒT‘HÜ\˜][Û—ÚYHÂˆˆˆ‹ˆ
+š[š\ÚYØ]Ý]\ËÙ[\
+]Z[ÊKÝŠÜ\˜][Û—ÚY
+JKˆ
+BˆYˆÝ\œÛÜ‹œ›ÝØÛÝ[OHN‚ˆ\ÙÈHˆ•[šÛ›ÝÛˆÜ\˜][ÛˆY[YšY\ŽˆÛÜ\˜][Û—ÚYH‚ˆ˜Z\ÙHÙ^Q\œ›ÜŠ\ÙÊB‚ˆYˆÙ[œÝ\™WÛÙÚXØ[Ø\Y˜XÝ
+Ù[‹\Y˜XÝÚÙ^Nˆ\Y˜XÝÙ^JHOˆ›Û™N‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ’S”ÑT•ÔˆQÓ“Ô‘HS•ÈÙÚXØ[Ø\Y˜XÝÊ\Y˜XÝÚÙ^JHSQTÊÊH‚ˆˆ
+ÝŠ\Y˜XÝÚÙ^JK
+Kˆ
+B‚ˆYˆÙ[œÝ\™WØÛÛ[
+Ù[‹ÛÛ[ˆÛÛ[™YŠHOˆ›Û™N‚ˆ^\Ý[™ÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ”ÑSPÕž]WÜÚ^™KÝÜ˜YÙWÚÙ^KYYXWÝ\H”“ÓHÛÛ[ÛØš™XÝÈÒT‘HÛÛ[ÚYHÈ‹ˆ
+ÝŠÛÛ[˜ÛÛ[ÚY
+K
+Kˆ
+K™™]ÚÛ™J
+BˆYˆ^\Ý[™È\È›Û™N‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•S•ÈÛÛ[ÛØš™XÝÊÛÛ[ÚYž]WÜÚ^™KÝÜ˜YÙWÚÙ^KYYXWÝ\JBˆSQTÈ
+ËËËÊBˆˆˆ‹ˆ
+ÝŠÛÛ[˜ÛÛ[ÚY
+KÛÛ[˜ž]WÜÚ^™KÛÛ[œÝÜ˜YÙWÚÙ^KÛÛ[›YYXWÝ\JKˆ
+Bˆ™]\›‚ˆYˆ
+ˆ[
+^\Ý[™ÖÈ˜ž]WÜÚ^™H—JHOHÛÛ[˜ž]WÜÚ^™BˆÜˆ^\Ý[™ÖÈœÝÜ˜YÙWÚÙ^H—HOHÛÛ[œÝÜ˜YÙWÚÙ^Bˆ
+N‚ˆ\ÙÈHˆÛÛ™›XÝ[™ÈÛÛ[™XÛÜ™›ÜˆØÛÛ[˜ÛÛ[ÚYH‚ˆ˜Z\ÙH˜[YQ\œ›ÜŠ\ÙÊB‚ˆYˆ™XÛÜ™ÛØœÙ\˜][Û—Ø[™JˆÙ[‹ˆ
+‹ˆÛÛ[ˆÛÛ[™Y‹ˆØœÙ\˜][ÛŽˆ\Y˜XÝØœÙ\˜][Û‹ˆ›Ý™[˜[˜ÙWÙYÙ\Îˆ]\˜X›VÔ›Ý™[˜[˜ÙQYÙWHH
 
-    def finish_operation(
-        self,
-        operation_id: OperationId,
-        *,
-        finished_at: float,
-        status: str,
-        details: JsonObject,
-    ) -> None:
-        with self._connection:
-            cursor = self._connection.execute(
-                """
-                UPDATE operations
-                SET finished_at = ?, status = ?, details_json = ?
-                WHERE operation_id = ?
-                """,
-                (finished_at, status, _dump(details), str(operation_id)),
-            )
-            if cursor.rowcount != 1:
-                msg = f"Unknown operation: {operation_id}"
-                raise KeyError(msg)
+Kˆ
+HOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—Ù[œÝ\™WÛÙÚXØ[Ø\Y˜XÝ
+ØœÙ\˜][Û‹˜\Y˜XÝÚÙ^JBˆÙ[‹—Ù[œÝ\™WØÛÛ[
+ÛÛ[
+BˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•S•ÈØœÙ\˜][ÛœÊˆØœÙ\˜][Û—ÚY\Y˜XÝÚÙ^KÛÛ[ÚYÛÝ\˜ÙWÚY[—ÚYÜ\˜][Û—ÚYˆØœÙ\™YØ]ÛÝ\˜ÙWÜ]\Ý™X[WÛØØ]Ü‹\Ý™X[WÛ[ÙYšYYØ]ˆ\Ý™X[WÝ™\œÚ[Û‹YYXWÝ\KY]Y]WÚœÛÛ‚ˆ
+HSQTÈ
+ËËËËËËËËËËËËÊBˆˆˆ‹ˆ
+ˆÝŠØœÙ\˜][Û‹›ØœÙ\˜][Û—ÚY
+KˆÝŠØœÙ\˜][Û‹˜\Y˜XÝÚÙ^JKˆÝŠØœÙ\˜][Û‹˜ÛÛ[ÚY
+KˆÝŠØœÙ\˜][Û‹œÛÝ\˜ÙWÚY
+HYˆØœÙ\˜][Û‹œÛÝ\˜ÙWÚY\È›Ý›Û™H[ÙH›Û™KˆÝŠØœÙ\˜][Û‹œ[—ÚY
+KˆÝŠØœÙ\˜][Û‹›Ü\˜][Û—ÚY
+KˆØœÙ\˜][Û‹›ØœÙ\™YØ]ˆØœÙ\˜][Û‹œÛÝ\˜ÙWÜ]ˆØœÙ\˜][Û‹\Ý™X[WÛØØ]Ü‹ˆØœÙ\˜][Û‹\Ý™X[WÛ[ÙYšYYØ]ˆØœÙ\˜][Û‹\Ý™X[WÝ™\œÚ[Û‹ˆØœÙ\˜][Û‹›YYXWÝ\KˆÙ[\
+ØœÙ\˜][Û‹›Y]Y]JKˆ
+Kˆ
+Bˆ›ÜˆYÙH[ˆ›Ý™[˜[˜ÙWÙYÙ\Î‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•ÔˆQÓ“Ô‘HS•È›Ý™[˜[˜ÙWÙYÙ\ÊˆÝ]]ÛØœÙ\˜][Û—ÚY[œ]ÛØœÙ\˜][Û—ÚY™[][ÛœÚ\ˆ
+HSQTÈ
+ËËÊBˆˆˆ‹ˆ
+ˆÝŠYÙK›Ý]]ÛØœÙ\˜][Û—ÚY
+KˆÝŠYÙKš[œ]ÛØœÙ\˜][Û—ÚY
+KˆYÙKœ™[][ÛœÚ\ˆ
+Kˆ
+B‚ˆYˆ™XÛÜ™ØXœÙ[˜ÙJÙ[‹XœÙ[˜ÙNˆ\Y˜XÝXœÙ[˜ÙJHOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—Ù[œÝ\™WÛÙÚXØ[Ø\Y˜XÝ
+XœÙ[˜ÙK˜\Y˜XÝÚÙ^JBˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•S•È\Y˜XÝØXœÙ[˜Ù\ÊˆØœÙ\˜][Û—ÚY\Y˜XÝÚÙ^KÛÝ\˜ÙWÚY[—ÚYÜ\˜][Û—ÚYˆØœÙ\™YØ]ÛÝ\˜ÙWÜ]\Ý™X[WÛØØ]Ü‹Y]Y]WÚœÛÛ‚ˆ
+HSQTÈ
+ËËËËËËËËÊBˆˆˆ‹ˆ
+ˆÝŠXœÙ[˜ÙK›ØœÙ\˜][Û—ÚY
+KˆÝŠXœÙ[˜ÙK˜\Y˜XÝÚÙ^JKˆÝŠXœÙ[˜ÙKœÛÝ\˜ÙWÚY
+HYˆXœÙ[˜ÙKœÛÝ\˜ÙWÚY\È›Ý›Û™H[ÙH›Û™KˆÝŠXœÙ[˜ÙKœ[—ÚY
+KˆÝŠXœÙ[˜ÙK›Ü\˜][Û—ÚY
+KˆXœÙ[˜ÙK›ØœÙ\™YØ]ˆXœÙ[˜ÙKœÛÝ\˜ÙWÜ]ˆXœÙ[˜ÙK\Ý™X[WÛØØ]Ü‹ˆÙ[\
+XœÙ[˜ÙK›Y]Y]JKˆ
+Kˆ
+B‚ˆYˆ™XÛÜ™ÛX]\šX[^˜][ÛŠˆÙ[‹ˆ
+‹ˆÛÛ[ÚYˆÛÛ[YˆÚ[™ˆÝ‹ˆ]ˆÝ‹ˆY]Y]NˆœÛÛ“Øš™XÝˆ
+HOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•ÔˆQÓ“Ô‘HS•ÈX]\šX[^˜][ÛœÊÛÛ[ÚYÚ[™]Y]Y]WÚœÛÛŠBˆSQTÈ
+ËËËÊBˆˆˆ‹ˆ
+ÝŠÛÛ[ÚY
+KÚ[™]Ù[\
+Y]Y]JJKˆ
+B‚ˆYˆ™XÛÜ™Ý˜[Y][ÛŠÙ[‹™\Ý[ˆ˜[Y][Û”™\Ý[
+HOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•ÜˆYÛ›Ü™H[È˜[Y][ÛœÊˆÛÛ[ÚY˜[Y]Ü‹˜[Y]Ü—Ý™\œÚ[Û‹ÚXÚÙYØ]Ý]\Ë]Z[×ÚœÛÛ‚ˆ
+HSQTÈ
+ËËËËËÊBˆˆˆ‹ˆ
+ˆÝŠ™\Ý[˜ÛÛ[ÚY
+Kˆ™\Ý[˜[Y]Ü‹ˆ™\Ý[˜[Y]Ü—Ý™\œÚ[Û‹ˆ™\Ý[˜ÚXÚÙYØ]ˆ™\Ý[œÝ]\ËˆÙ[\
+™\Ý[™]Z[ÊKˆ
+Kˆ
+B‚ˆÝ]XÛY]ÙˆYˆÛØœÙ\˜][Û—Ùœ›ÛWÜ›ÝÊ›ÝÎˆÜ[]LË”›ÝÊHOˆ\Y˜XÝØœÙ\˜][ÛŽ‚ˆÛÝ\˜ÙWÜ˜]ÈH›ÝÖÈœÛÝ\˜ÙWÚY—Bˆ™]\›ˆ\Y˜XÝØœÙ\˜][ÛŠˆØœÙ\˜][Û—ÚYSØœÙ\˜][Û’Y
+›ÝÖÈ›ØœÙ\˜][Û—ÚY—JKˆ\Y˜XÝÚÙ^OP\Y˜XÝÙ^J›ÝÖÈ˜\Y˜XÝÚÙ^H—JKˆÛÛ[ÚYPÛÛ[Y
+›ÝÖÈ˜ÛÛ[ÚY—JKˆÛÝ\˜ÙWÚYTÛÝ\˜ÙRY
+ÛÝ\˜ÙWÜ˜]ÊHYˆÛÝ\˜ÙWÜ˜]È\È›Ý›Û™H[ÙH›Û™Kˆ[—ÚYT[’Y
+›ÝÖÈœ[—ÚY—JKˆÜ\˜][Û—ÚYSÜ\˜][Û’Y
+›ÝÖÈ›Ü\˜][Û—ÚY—JKˆØœÙ\™YØ]Y›Ø]
+›ÝÖÈ›ØœÙ\™YØ]—JKˆÛÝ\˜ÙWÜ]\›ÝÖÈœÛÝ\˜ÙWÜ]—Kˆ\Ý™X[WÛØØ]Ü\›ÝÖÈ\Ý™X[WÛØØ]Üˆ—Kˆ\Ý™X[WÛ[ÙYšYYØ]Jˆ›Ø]
+›ÝÖÈ\Ý™X[WÛ[ÙYšYYØ]—JHYˆ›ÝÖÈ\Ý™X[WÛ[ÙYšYYØ]—H\È›Ý›Û™H[ÙH›Û™Bˆ
+Kˆ\Ý™X[WÝ™\œÚ[Û\›ÝÖÈ\Ý™X[WÝ™\œÚ[Ûˆ—KˆYYXWÝ\O\›ÝÖÈ›YYXWÝ\H—KˆY]Y]OWÛØYÛØš™XÝ
+›ÝÖÈ›Y]Y]WÚœÛÛˆ—JKˆ
+B‚ˆÝ]XÛY]ÙˆYˆØXœÙ[˜ÙWÙœ›ÛWÜ›ÝÊ›ÝÎˆÜ[]LË”›ÝÊHOˆ\Y˜XÝXœÙ[˜ÙN‚ˆÛÝ\˜ÙWÜ˜]ÈH›ÝÖÈœÛÝ\˜ÙWÚY—Bˆ™]\›ˆ\Y˜XÝXœÙ[˜ÙJˆØœÙ\˜][Û—ÚYSØœÙ\˜][Û’Y
+›ÝÖÈ›ØœÙ\˜][Û—ÚY—JKˆ\Y˜XÝÚÙ^OP\Y˜XÝÙ^J›ÝÖÈ˜\Y˜XÝÚÙ^H—JKˆÛÝ\˜ÙWÚYTÛÝ\˜ÙRY
+ÛÝ\˜ÙWÜ˜]ÊHYˆÛÝ\˜ÙWÜ˜]È\È›Ý›Û™H[ÙH›Û™Kˆ[—ÚYT[’Y
+›ÝÖÈœ[—ÚY—JKˆÜ\˜][Û—ÚYSÜ\˜][Û’Y
+›ÝÖÈ›Ü\˜][Û—ÚY—JKˆØœÙ\™YØ]Y›Ø]
+›ÝÖÈ›ØœÙ\™YØ]—JKˆÛÝ\˜ÙWÜ]\›ÝÖÈœÛÝ\˜ÙWÜ]—Kˆ\Ý™X[WÛØØ]Ü\›ÝÖÈ\Ý™X[WÛØØ]Üˆ—KˆY]Y]OWÛØYÛØš™XÝ
+›ÝÖÈ›Y]Y]WÚœÛÛˆ—JKˆ
+B‚ˆYˆØœÙ\˜][ÛŠÙ[‹ØœÙ\˜][Û—ÚYˆØœÙ\˜][Û’Y
+HOˆ\Y˜XÝØœÙ\˜][Ûˆ›Û™N‚ˆ›ÝÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ”ÑSPÕ
+ˆ”“ÓHØœÙ\˜][ÛœÈÒT‘HØœÙ\˜][Û—ÚYHÈ‹
+ÝŠØœÙ\˜][Û—ÚY
+K
+Bˆ
+K™™]ÚÛ™J
+Bˆ™]\›ˆ›Û™HYˆ›ÝÈ\È›Û™H[ÙHÙ[‹—ÛØœÙ\˜][Û—Ùœ›ÛWÜ›ÝÊ›ÝÊB‚ˆYˆØœÙ\˜][Ûœ×Ù›ÜŠÙ[‹\Y˜XÝÚÙ^Nˆ\Y˜XÝÙ^JHOˆ\VÐ\Y˜XÝØœÙ\˜][Û‹‹‹—N‚ˆ›ÝÜÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆÑSPÕ
+ˆ”“ÓHØœÙ\˜][ÛœÂˆÒT‘H\Y˜XÝÚÙ^HHÂˆÔ‘Tˆ–HØœÙ\™YØ]TÐËØœÙ\˜][Û—ÚYTÐÂˆˆˆ‹ˆ
+ÝŠ\Y˜XÝÚÙ^JK
+Kˆ
+K™™]Ú[
 
-    def record_observation_bundle(
-        self,
-        *,
-        content: ContentRef,
-        observation: ArtifactObservation,
-        provenance_edges: Iterable[ProvenanceEdge] = (),
-    ) -> None:
-        edges = tuple(provenance_edges)
-        with self._connection:
-            existing = self._connection.execute(
-                "SELECT byte_size, storage_key FROM content_objects WHERE content_id = ?",
-                (str(content.content_id),),
-            ).fetchone()
-            if existing is not None and (
-                int(existing["byte_size"]) != content.byte_size
-                or existing["storage_key"] != content.storage_key
-            ):
-                msg = f"Conflicting content record for {content.content_id}"
-                raise ValueError(msg)
-            self._connection.execute(
-                """
-                INSERT OR IGNORE INTO content_objects(content_id, byte_size, storage_key, media_type)
-                VALUES (?, ?, ?, ?)
-                """,
-                (str(content.content_id), content.byte_size, content.storage_key, content.media_type),
-            )
-            self._connection.execute(
-                "INSERT OR IGNORE INTO logical_artifacts(artifact_key) VALUES (?)",
-                (str(observation.artifact_key),),
-            )
-            self._connection.execute(
-                """
-                INSERT INTO observations(
-                    observation_id, artifact_key, content_id, source_id, run_id,
-                    operation_id, observed_at, source_path, upstream_locator,
-                    upstream_modified_at, upstream_version, media_type, metadata_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(observation.observation_id),
-                    str(observation.artifact_key),
-                    str(observation.content_id),
-                    str(observation.source_id) if observation.source_id is not None else None,
-                    str(observation.run_id),
-                    str(observation.operation_id),
-                    observation.observed_at,
-                    observation.source_path,
-                    observation.upstream_locator,
-                    observation.upstream_modified_at,
-                    observation.upstream_version,
-                    observation.media_type,
-                    _dump(observation.metadata),
-                ),
-            )
-            self._connection.executemany(
-                """
-                INSERT INTO provenance_edges(
-                    output_observation_id, input_observation_id, relationship
-                ) VALUES (?, ?, ?)
-                """,
-                [
-                    (
-                        str(edge.output_observation_id),
-                        str(edge.input_observation_id),
-                        edge.relationship,
-                    )
-                    for edge in edges
-                ],
-            )
+Bˆ™]\›ˆ\JÙ[‹—ÛØœÙ\˜][Û—Ùœ›ÛWÜ›ÝÊ›ÝÊH›Üˆ›ÝÈ[ˆ›ÝÜÊB‚ˆYˆ]\ÝÜÝ]JˆÙ[‹\Y˜XÝÚÙ^Nˆ\Y˜XÝÙ^K
+‹™Y›Ü™Nˆ›Ø]›Û™HH›Û™Bˆ
+HOˆ\Y˜XÝÝ]H›Û™N‚ˆ\˜[\Îˆ\ÝÛØš™XÝHHÜÝŠ\Y˜XÝÚÙ^JWBˆØœÙ\˜][Û—ÝÚ\™HH˜\Y˜XÝÚÙ^HHÈ‚ˆXœÙ[˜ÙWÝÚ\™HH˜\Y˜XÝÚÙ^HHÈ‚ˆYˆ™Y›Ü™H\È›Ý›Û™N‚ˆØœÙ\˜][Û—ÝÚ\™H
+ÏHˆS‘ØœÙ\™YØ]HÈ‚ˆXœÙ[˜ÙWÝÚ\™H
+ÏHˆS‘ØœÙ\™YØ]HÈ‚ˆ\˜[\Ë˜\[™
+™Y›Ü™JBˆ]Y\žHHˆˆˆ‚ˆÑSPÕ
+‹	ØÛÛ[	ÈTÈÝ]WÚÚ[™”“ÓJˆÑSPÕ
+‹“Õ×Ó•SP‘TŠ
+HÕ‘Tˆ
+Ô‘Tˆ–HØœÙ\™YØ]TÐËØœÙ\˜][Û—ÚYTÐÊH\È›šÂˆ”“ÓHØœÙ\˜][ÛœÈÒT‘HÛØœÙ\˜][Û—ÝÚ\™_Bˆ
+HÒT‘H›šÈHBˆS’SÓˆSˆÑSPÕ
+‹	ØXœÙ[	ÈTÈÝ]WÚÚ[™”“ÓH
+ˆÑSPÕ
+‹“Õ×Ó•SP‘TŠ
+HÕ‘Tˆ
+Ô‘Tˆ–HØœÙ\™YØ]TÐËØœÙ\˜][Û—ÚYTÐÊH\È›šÂˆ”“ÓH\Y˜XÝØXœÙ[˜Ù\ÈÒT‘HØXœÙ[˜ÙWÝÚ\™_Bˆ
+HÒT‘H›šÈHBˆÔ‘Tˆ–HØœÙ\™YØ]TÐËØœÙ\˜][Û—ÚYTÐÂˆSRUBˆˆˆ‚ˆ]Y\žWÜ\˜[\Îˆ\VÛØš™XÝ‹‹—BˆYˆ™Y›Ü™H\È›Û™N‚ˆ]Y\žWÜ\˜[\ÈH
+\˜[\ÖÌK\˜[\ÖÌJBˆ[ÙN‚ˆ]Y\žWÜ\˜[\ÈH
+\˜[\ÖÌK\˜[\ÖÌWK\˜[\ÖÌK\˜[\ÖÌWJBˆ›ÝÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]J]Y\žK]Y\žWÜ\˜[\ÊK™™]ÚÛ™J
+BˆYˆ›ÝÈ\È›Û™N‚ˆ™]\›ˆ›Û™BˆYˆ›ÝÖÈœÝ]WÚÚ[™—HOH˜XœÙ[Ž‚ˆ™]\›ˆÙ[‹—ØXœÙ[˜ÙWÙœ›ÛWÜ›ÝÊ›ÝÊBˆ™]\›ˆÙ[‹—ÛØœÙ\˜][Û—Ùœ›ÛWÜ›ÝÊ›ÝÊB‚ˆYˆ]\ÝÛØœÙ\˜][ÛŠˆÙ[‹\Y˜XÝÚÙ^Nˆ\Y˜XÝÙ^K
+‹™Y›Ü™Nˆ›Ø]›Û™HH›Û™Bˆ
+HOˆ\Y˜XÝØœÙ\˜][Ûˆ›Û™N‚ˆ\˜[\Îˆ\ÝÛØš™XÝHHÜÝŠ\Y˜XÝÚÙ^JWBˆÚ\™HH˜\Y˜XÝÚÙ^HHÈ‚ˆYˆ™Y›Ü™H\È›Ý›Û™N‚ˆÚ\™H
+ÏHˆS‘ØœÙ\™YØ]HÈ‚ˆ\˜[\Ë˜\[™
+™Y›Ü™JBˆ›ÝÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆ”ÑSPÕ
+ˆ”“ÓHØœÙ\˜][ÛœÈÒT‘HÝÚ\™_H‚ˆ“Ô‘Tˆ–HØœÙ\™YØ]TÐËØœÙ\˜][Û—ÚYTÐÈSRUH‹ˆ\J\˜[\ÊKˆ
+K™™]ÚÛ™J
+Bˆ™]\›ˆ›Û™HYˆ›ÝÈ\È›Û™H[ÙHÙ[‹—ÛØœÙ\˜][Û—Ùœ›ÛWÜ›ÝÊ›ÝÊB‚ˆYˆÛÛ[
+Ù[‹ÛÛ[ÚYˆÛÛ[Y
+HOˆÛÛ[™Yˆ›Û™N‚ˆ›ÝÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ”ÑSPÕ
+ˆ”“ÓHÛÛ[ÛØš™XÝÈÒT‘HÛÛ[ÚYHÈ‹
+ÝŠÛÛ[ÚY
+K
+Bˆ
+K™™]ÚÛ™J
+BˆYˆ›ÝÈ\È›Û™N‚ˆ™]\›ˆ›Û™Bˆ™]\›ˆÛÛ[™YŠˆÛÛ[ÚYPÛÛ[Y
+›ÝÖÈ˜ÛÛ[ÚY—JKˆž]WÜÚ^™OZ[
+›ÝÖÈ˜ž]WÜÚ^™H—JKˆÝÜ˜YÙWÚÙ^O\›ÝÖÈœÝÜ˜YÙWÚÙ^H—KˆYYXWÝ\O\›ÝÖÈ›YYXWÝ\H—Kˆ
+B‚ˆYˆ\Y˜XÝÚÙ^\ÊÙ[ŠHOˆ\VÐ\Y˜XÝÙ^K‹‹—N‚ˆ›ÝÜÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ”ÑSPÕ\Y˜XÝÚÙ^H”“ÓHÙÚXØ[Ø\Y˜XÝÈÔ‘Tˆ–H\Y˜XÝÚÙ^H‚ˆ
+K™™]Ú[
 
-    def record_materialization(
-        self,
-        *,
-        content_id: ContentId,
-        kind: str,
-        path: str,
-        metadata: JsonObject,
-    ) -> None:
-        with self._connection:
-            self._connection.execute(
-                """
-                INSERT INTO materializations(content_id, kind, path, metadata_json)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(content_id, kind, path)
-                DO UPDATE SET metadata_json = excluded.metadata_json
-                """,
-                (str(content_id), kind, path, _dump(metadata)),
-            )
+Bˆ™]\›ˆ\J\Y˜XÝÙ^J›ÝÖÈ˜\Y˜XÝÚÙ^H—JH›Üˆ›ÝÈ[ˆ›ÝÜÊB‚ˆYˆ™XÛÜ™Ý™YJÙ[‹™YWÚYˆ™YRY[šY\Îˆ]\˜X›VÕ™YQ[žWK
+‹Ü™X]YØ]ˆ›Ø]
+HOˆ›Û™N‚ˆÜ™\™YH\JÛÜY
+[šY\ËÙ^O[[X™H[žNˆ[žKœ™[]]™WÜ]
+JBˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ’S”ÑT•ÔˆQÓ“Ô‘HS•È™YWÜÛ˜\ÚÝÊ™YWÚYÜ™X]YØ]
+HSQTÈ
+ËÊH‚ˆ
+ÝŠ™YWÚY
+KÜ™X]YØ]
+Kˆ
+Bˆ^\Ý[™×ØÛÝ[H[
+ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ”ÑSPÕÓÕS•
 
-    def record_validation(self, result: ValidationResult) -> None:
-        with self._connection:
-            self._connection.execute(
-                """
-                INSERT OR REPLACE INTO validations(
-                    content_id, validator, validator_version, checked_at, status, details_json
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(result.content_id),
-                    result.validator,
-                    result.validator_version,
-                    result.checked_at,
-                    result.status,
-                    _dump(result.details),
-                ),
-            )
+ŠH”“ÓH™YWÙ[šY\ÈÒT‘H™YWÚYHÈ‹ˆ
+ÝŠ™YWÚY
+K
+Kˆ
+K™™]ÚÛ™J
+VÌBˆ
+BˆYˆ^\Ý[™×ØÛÝ[›Ý[ˆÌ[ŠÜ™\™Y
+_N‚ˆ\ÙÈHˆÛÛ™›XÝ[™È™YH™XÛÜ™›ÜˆÝ™YWÚYH‚ˆ˜Z\ÙH˜[YQ\œ›ÜŠ\ÙÊBˆYˆ^\Ý[™×ØÛÝ[OH‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ][X[žJˆˆˆ‚ˆS”ÑT•S•È™YWÙ[šY\Êˆ™YWÚY™[]]™WÜ]Ú[™ÛÛ[ÚYž]WÜÚ^™K\™Ù]Y]Y]WÚœÛÛ‚ˆ
+HSQTÈ
+ËËËËËËÊBˆˆˆ‹ˆÂˆ
+ˆÝŠ™YWÚY
+Kˆ[žKœ™[]]™WÜ]ˆ[žKšÚ[™ˆÝŠ[žK˜ÛÛ[ÚY
+HYˆ[žK˜ÛÛ[ÚY\È›Ý›Û™H[ÙH›Û™Kˆ[žK˜ž]WÜÚ^™Kˆ[žK\™Ù]ˆÙ[\
+[žK›Y]Y]JKˆ
+Bˆ›Üˆ[žH[ˆÜ™\™YˆKˆ
+B‚ˆYˆ™YWÙ[šY\ÊÙ[‹™YWÚYˆ™YRY
+HOˆ\VÕ™YQ[žK‹‹—N‚ˆ›ÝÜÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ”ÑSPÕ
+ˆ”“ÓH™YWÙ[šY\ÈÒT‘H™YWÚYHÈÔ‘Tˆ–H™[]]™WÜ]‹ˆ
+ÝŠ™YWÚY
+K
+Kˆ
+K™™]Ú[
 
-    @staticmethod
-    def _observation_from_row(row: sqlite3.Row) -> ArtifactObservation:
-        source_raw = row["source_id"]
-        return ArtifactObservation(
-            observation_id=ObservationId(row["observation_id"]),
-            artifact_key=ArtifactKey(row["artifact_key"]),
-            content_id=ContentId(row["content_id"]),
-            source_id=SourceId(source_raw) if source_raw is not None else None,
-            run_id=RunId(row["run_id"]),
-            operation_id=OperationId(row["operation_id"]),
-            observed_at=float(row["observed_at"]),
-            source_path=row["source_path"],
-            upstream_locator=row["upstream_locator"],
-            upstream_modified_at=(
-                float(row["upstream_modified_at"])
-                if row["upstream_modified_at"] is not None
-                else None
-            ),
-            upstream_version=row["upstream_version"],
-            media_type=row["media_type"],
-            metadata=_load_object(row["metadata_json"]),
-        )
-
-    def observation(self, observation_id: ObservationId) -> ArtifactObservation | None:
-        row = self._connection.execute(
-            "SELECT * FROM observations WHERE observation_id = ?",
-            (str(observation_id),),
-        ).fetchone()
-        return None if row is None else self._observation_from_row(row)
-
-    def observations_for(self, artifact_key: ArtifactKey) -> tuple[ArtifactObservation, ...]:
-        rows = self._connection.execute(
-            """
-            SELECT * FROM observations
-            WHERE artifact_key = ?
-            ORDER BY observed_at, observation_id
-            """,
-            (str(artifact_key),),
-        ).fetchall()
-        return tuple(self._observation_from_row(row) for row in rows)
-
-    def latest_observation(
-        self,
-        artifact_key: ArtifactKey,
-        *,
-        before: float | None = None,
-    ) -> ArtifactObservation | None:
-        if before is None:
-            row = self._connection.execute(
-                """
-                SELECT * FROM observations
-                WHERE artifact_key = ?
-                ORDER BY observed_at DESC, observation_id DESC
-                LIMIT 1
-                """,
-                (str(artifact_key),),
-            ).fetchone()
-        else:
-            row = self._connection.execute(
-                """
-                SELECT * FROM observations
-                WHERE artifact_key = ? AND observed_at <= ?
-                ORDER BY observed_at DESC, observation_id DESC
-                LIMIT 1
-                """,
-                (str(artifact_key), before),
-            ).fetchone()
-        return None if row is None else self._observation_from_row(row)
-
-    def content(self, content_id: ContentId) -> ContentRef | None:
-        row = self._connection.execute(
-            "SELECT * FROM content_objects WHERE content_id = ?",
-            (str(content_id),),
-        ).fetchone()
-        if row is None:
-            return None
-        return ContentRef(
-            content_id=ContentId(row["content_id"]),
-            byte_size=int(row["byte_size"]),
-            storage_key=row["storage_key"],
-            media_type=row["media_type"],
-        )
-
-    def artifact_keys(self) -> tuple[ArtifactKey, ...]:
-        rows = self._connection.execute(
-            "SELECT artifact_key FROM logical_artifacts ORDER BY artifact_key"
-        ).fetchall()
-        return tuple(ArtifactKey(row["artifact_key"]) for row in rows)
-
-    def record_tree(self, tree_id: TreeId, entries: Iterable[TreeEntry], *, created_at: float) -> None:
-        ordered = tuple(sorted(entries, key=lambda entry: entry.relative_path))
-        with self._connection:
-            self._connection.execute(
-                "INSERT OR IGNORE INTO tree_snapshots(tree_id, created_at) VALUES (?, ?)",
-                (str(tree_id), created_at),
-            )
-            existing_count = int(
-                self._connection.execute(
-                    "SELECT COUNT(*) FROM tree_entries WHERE tree_id = ?",
-                    (str(tree_id),),
-                ).fetchone()[0]
-            )
-            if existing_count not in {0, len(ordered)}:
-                msg = f"Conflicting tree record for {tree_id}"
-                raise ValueError(msg)
-            if existing_count == 0:
-                self._connection.executemany(
-                    """
-                    INSERT INTO tree_entries(
-                        tree_id, relative_path, kind, content_id, byte_size, target, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            str(tree_id),
-                            entry.relative_path,
-                            entry.kind,
-                            str(entry.content_id) if entry.content_id is not None else None,
-                            entry.byte_size,
-                            entry.target,
-                            _dump(entry.metadata),
-                        )
-                        for entry in ordered
-                    ],
-                )
-
-    def tree_entries(self, tree_id: TreeId) -> tuple[TreeEntry, ...]:
-        rows = self._connection.execute(
-            "SELECT * FROM tree_entries WHERE tree_id = ? ORDER BY relative_path",
-            (str(tree_id),),
-        ).fetchall()
-        return tuple(
-            TreeEntry(
-                relative_path=row["relative_path"],
-                kind=row["kind"],
-                content_id=ContentId(row["content_id"]) if row["content_id"] is not None else None,
-                byte_size=int(row["byte_size"]) if row["byte_size"] is not None else None,
-                target=row["target"],
-                metadata=_load_object(row["metadata_json"]),
-            )
-            for row in rows
-        )
-
-    def record_source_snapshot(self, snapshot: SourceSnapshot) -> None:
-        with self._connection:
-            self._connection.execute(
-                """
-                INSERT INTO source_snapshots(
-                    snapshot_id, source_id, run_id, observed_at, complete,
-                    tree_id, scope_json, evidence_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(snapshot.snapshot_id),
-                    str(snapshot.source_id),
-                    str(snapshot.run_id),
-                    snapshot.observed_at,
-                    int(snapshot.complete),
-                    str(snapshot.tree_id) if snapshot.tree_id is not None else None,
-                    _dump(list(snapshot.scope)),
-                    _dump(snapshot.evidence),
-                ),
-            )
-
-    @staticmethod
-    def _source_snapshot_from_row(row: sqlite3.Row) -> SourceSnapshot:
-        tree_raw = row["tree_id"]
-        return SourceSnapshot(
-            snapshot_id=SnapshotId(row["snapshot_id"]),
-            source_id=SourceId(row["source_id"]),
-            run_id=RunId(row["run_id"]),
-            observed_at=float(row["observed_at"]),
-            complete=bool(row["complete"]),
-            tree_id=TreeId(tree_raw) if tree_raw is not None else None,
-            scope=_load_string_tuple(row["scope_json"]),
-            evidence=_load_object(row["evidence_json"]),
-        )
-
-    def source_snapshot(self, snapshot_id: SnapshotId) -> SourceSnapshot | None:
-        row = self._connection.execute(
-            "SELECT * FROM source_snapshots WHERE snapshot_id = ?",
-            (str(snapshot_id),),
-        ).fetchone()
-        return None if row is None else self._source_snapshot_from_row(row)
-
-    def latest_source_snapshot(self, source_id: SourceId) -> SourceSnapshot | None:
-        row = self._connection.execute(
-            """
-            SELECT * FROM source_snapshots
-            WHERE source_id = ?
-            ORDER BY observed_at DESC, snapshot_id DESC
-            LIMIT 1
-            """,
-            (str(source_id),),
-        ).fetchone()
-        return None if row is None else self._source_snapshot_from_row(row)
-
-    def record_dataset(self, record: DatasetRecord) -> None:
-        with self._connection:
-            self._connection.execute(
-                """
-                INSERT INTO datasets(
-                    dataset_id, content_identity, created_at, definition_json, metadata_json
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    str(record.dataset_id),
-                    record.content_identity,
-                    record.created_at,
-                    _dump(record.definition),
-                    _dump(record.metadata),
-                ),
-            )
-            self._connection.executemany(
-                """
-                INSERT INTO dataset_members(
-                    dataset_id, artifact_key, observation_id, role, ordinal
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        str(record.dataset_id),
-                        str(member.artifact_key),
-                        str(member.observation_id),
-                        member.role,
-                        ordinal,
-                    )
-                    for ordinal, member in enumerate(record.members)
-                ],
-            )
-
-    def dataset(self, dataset_id: DatasetId) -> DatasetRecord | None:
-        row = self._connection.execute(
-            "SELECT * FROM datasets WHERE dataset_id = ?",
-            (str(dataset_id),),
-        ).fetchone()
-        if row is None:
-            return None
-        member_rows = self._connection.execute(
-            """
-            SELECT dm.artifact_key, dm.observation_id, dm.role, o.content_id
-            FROM dataset_members AS dm
-            JOIN observations AS o ON o.observation_id = dm.observation_id
-            WHERE dm.dataset_id = ?
-            ORDER BY dm.ordinal
-            """,
-            (str(dataset_id),),
-        ).fetchall()
-        return DatasetRecord(
-            dataset_id=DatasetId(row["dataset_id"]),
-            content_identity=row["content_identity"],
-            created_at=float(row["created_at"]),
-            definition=_load_object(row["definition_json"]),
-            metadata=_load_object(row["metadata_json"]),
-            members=tuple(
-                DatasetMemberRecord(
-                    artifact_key=ArtifactKey(member["artifact_key"]),
-                    observation_id=ObservationId(member["observation_id"]),
-                    content_id=ContentId(member["content_id"]),
-                    role=member["role"],
-                )
-                for member in member_rows
-            ),
-        )
-
-
-__all__ = ["SQLiteMetadataStore"]
+Bˆ™]\›ˆ\Jˆ™YQ[žJˆ™[]]™WÜ]\›ÝÖÈœ™[]]™WÜ]—KˆÚ[™\›ÝÖÈšÚ[™—KˆÛÛ[ÚYPÛÛ[Y
+›ÝÖÈ˜ÛÛ[ÚY—JHYˆ›ÝÖÈ˜ÛÛ[ÚY—H\È›Ý›Û™H[ÙH›Û™Kˆž]WÜÚ^™OZ[
+›ÝÖÈ˜ž]WÜÚ^™H—JHYˆ›ÝÖÈ˜ž]WÜÚ^™H—H\È›Ý›Û™H[ÙH›Û™Kˆ\™Ù]\›ÝÖÈ\™Ù]—KˆY]Y]OWÛØYÛØš™XÝ
+›ÝÖÈ›Y]Y]WÚœÛÛˆ—JKˆ
+Bˆ›Üˆ›ÝÈ[ˆ›ÝÜÂˆ
+B‚ˆYˆ™XÛÜ™ÜÛÝ\˜ÙWÜÛ˜\ÚÝ
+Ù[‹Û˜\ÚÝˆÛÝ\˜ÙTÛ˜\ÚÝ
+HOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•S•ÈÛÝ\˜ÙWÜÛ˜\ÚÝÊˆÛ˜\ÚÝÚYÛÝ\˜ÙWÚY[—ÚYØœÙ\™YØ]ÛÛ\]Kˆ™YWÚYØÛÜWÚœÛÛ‹]šY[˜ÙWÚœÛÛ‚ˆ
+HSQTÈ
+ËËËËËËËÊBˆˆˆ‹ˆ
+ˆÝŠÛ˜\ÚÝœÛ˜\ÚÝÚY
+KˆÝŠÛ˜\ÚÝœÛÝ\˜ÙWÚY
+KˆÝŠÛ˜\ÚÝœ[—ÚY
+KˆÛ˜\ÚÝ›ØœÙ\™YØ]ˆ[
+Û˜\ÚÝ˜ÛÛ\]JKˆÝŠÛ˜\ÚÝ™YWÚY
+HYˆÛ˜\ÚÝ™YWÚY\È›Ý›Û™H[ÙH›Û™KˆÙ[\
+\Ý
+Û˜\ÚÝœØÛÜJJKˆÙ[\
+Û˜\ÚÝ™]šY[˜ÙJKˆ
+Kˆ
+B‚ˆÝ]XÛY]ÙˆYˆÜÛÝ\˜ÙWÜÛ˜\ÚÝÙœ›ÛWÜ›ÝÊ›ÝÎˆÜ[]LË”›ÝÊHOˆÛÝ\˜ÙTÛ˜\ÚÝ‚ˆ™YWÜ˜]ÈH›ÝÖÈ™YWÚY—Bˆ™]\›ˆÛÝ\˜ÙTÛ˜\ÚÝ
+ˆÛ˜\ÚÝÚYTÛ˜\ÚÝY
+›ÝÖÈœÛ˜\ÚÝÚY—JKˆÛÝ\˜ÙWÚYTÛÝ\˜ÙRY
+›ÝÖÈœÛÝ\˜ÙWÚY—JKˆ[—ÚYT[’Y
+›ÝÖÈœ[—ÚY—JKˆØœÙ\™YØ]Y›Ø]
+›ÝÖÈ›ØœÙ\™YØ]—JKˆÛÛ\]OX›ÛÛ
+›ÝÖÈ˜ÛÛ\]H—JKˆ™YWÚYU™YRY
+™YWÜ˜]ÊHYˆ™YWÜ˜]È\È›Ý›Û™H[ÙH›Û™KˆØÛÜOWÛØYÜÝš[™×Ý\J›ÝÖÈœØÛÜWÚœÛÛˆ—JKˆ]šY[˜ÙOWÛØYÛØš™XÝ
+›ÝÖÈ™]šY[˜ÙWÚœÛÛˆ—JKˆ
+B‚ˆYˆÛÝ\˜ÙWÜÛ˜\ÚÝ
+Ù[‹Û˜\ÚÝÚYˆÛ˜\ÚÝY
+HOˆÛÝ\˜ÙTÛ˜\ÚÝ›Û™N‚ˆ›ÝÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ”ÑSPÕ
+ˆ”“ÓHÛÝ\˜ÙWÜÛ˜\ÚÝÈÒT‘HÛ˜\ÚÝÚYHÈ‹ˆ
+ÝŠÛ˜\ÚÝÚY
+K
+Kˆ
+K™™]ÚÛ™J
+Bˆ™]\›ˆ›Û™HYˆ›ÝÈ\È›Û™H[ÙHÙ[‹—ÜÛÝ\˜ÙWÜÛ˜\ÚÝÙœ›ÛWÜ›ÝÊ›ÝÊB‚ˆYˆ]\ÝÜÛÝ\˜ÙWÜÛ˜\ÚÝ
+Ù[‹ÛÝ\˜ÙWÚYˆÛÝ\˜ÙRY
+HOˆÛÝ\˜ÙTÛ˜\ÚÝ›Û™N‚ˆ›ÝÈHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆÑSPÕ
+ˆ”“ÓHÛÝ\˜ÙWÜÛ˜\ÚÝÂˆÒT‘HÛÝ\˜ÙWÚYHÂˆÔ‘Tˆ–HØœÙ\™YØ]TÐËÛ˜\ÚÝÚYTÐÂˆSRUBˆˆˆ‹ˆ
+ÝŠÛÝ\˜ÙWÚY
+K
+Kˆ
+K™™]ÚÛ™J
+Bˆ™]\›ˆ›Û™HYˆ›ÝÈ\È›Û™H[ÙHÙ[‹—ÜÛÝ\˜ÙWÜÛ˜\ÚÝÙœ›ÛWÜ›ÝÊ›ÝÊB‚ˆYˆ™XÛÜ™Ù]\Ù]
+Ù[‹™XÛÜ™ˆ]\Ù]™XÛÜ™
+HOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•S•ÈÛÝ\˜Ù\ÊÛÝ\˜ÙWÚYYš[š][Û—ÚœÛÛŠHSQTÈ
+ËÊBˆˆˆ‹ˆ
+ÝŠÛÝ\˜ÙWÚY
+KÙ[\
+Yš[š][ÛŠJKˆ
+B‚ˆYˆÝ\Ü[ŠÙ[‹[—ÚYˆ[’Y
+‹Ý\YØ]ˆ›Ø]Y]Y]NˆœÛÛ“Øš™XÝ
+HOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ’S”ÑT•S•È[œÊ[—ÚYÝ\YØ]Ý]\ËY]Y]WÚœÛÛŠHSQTÊËË	Ü[›š[™ÉËÏŠH‹ˆ
+ÝŠ[—ÚY
+KÝ\YØ]Ù[\
+Y]Y]JJKˆ
+B‚ˆYˆš[š\ÚÜ[ŠÙ[‹[—ÚYˆ[’Y
+‹š[š\ÚYØ]ˆ›Ø]Ý]\ÎˆÝŠHOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÝ\œÛÜˆHÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆ•TUH[œÈÑUš[š\ÚYØ]HËÝ]\ÈHÈÒT‘H[—ÚYHÈ‹ˆ
+š[š\ÚYØ]Ý]\ËÝŠ[—ÚY
+JKˆ
+BˆYˆÝ\œÛÜ‹œ›ÝØÛÝ[OHN‚ˆ\ÙÈHˆ•[šÛ›ÝÛˆ[ˆY[YšY\ŽˆÜ[—ÚYH‚ˆ˜Z\ÙHÙ^Q\œ›ÜŠ\ÙÊB‚ˆYˆÝ\ÛÜ\˜][ÛŠˆÙ[‹ˆÜ\˜][Û—ÚYˆÜ\˜][Û’Yˆ
+‹ˆ[—ÚYˆ[’YˆÛÝ\˜ÙWÚYˆÛÝ\˜ÙRY›Û™KˆÚ[™ˆÝ‹ˆÝXš™XÝˆÝ‹ˆÝ\YØ]ˆ›Ø]ˆ\˜[Y]\œÎˆœÛÛ“Øš™XÝˆ
+HOˆ›Û™N‚ˆÚ]Ù[‹—ØÛÛ›™XÝ[ÛŽ‚ˆÙ[‹—ØÛÛ›™XÝ[Û‹™^XÝ]Jˆˆˆ‚ˆS”ÑT•S•ÈÜ\˜][ÛœÊˆÜ\˜][Û—ÚY[—ÚYÛÝ\˜ÙWÚYÚ[™ÝXš™XÝˆÝ\YØ]Ý]\Ë\˜[Y]\œ×ÚœÛÛ‹]Z[×ÚœÛÛ‚ˆ
+HSQTÈ
+ËËËËËËw'Vææ–ærrÂòÂw·Òr¢"""À¢€¢7G"†÷W&F–öåö–B’À¢7G"‡'Våö–B’À¢7G"‡6÷W&6Uö–B’–b6÷W&6Uö–B—2æ÷BæöæRVÇ6RæöæRÀ¢¶–æBÀ¢7V&¦V7BÀ¢7F'FVEöBÀ¢öGV×‡&ÖWFW'2’À¢’À¢ ¢FVbf–æ—6…ö÷W&F–öâ€¢6VÆbÀ¢÷W&F–öåö–C¢÷W&F–öä–BÀ¢¢À¢f–æ—6†VEöC¢fÆöBÀ¢7FGW3¢7G"À¢FWF–Ç3¢§6öäö&¦V7BÀ¢’ÓâæöæS ¢v—F‚6VÆbåö6öææV7F–öã ¢7W'6÷"Ò6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢UDDR÷W&F–öç0¢4UBf–æ—6†VEöBÒòÂ7FGW2ÒòÂFWF–Ç5ö§6öâÒð¢t„U$R÷W&F–öåö–BÒð¢"""À¢†f–æ—6†VEöBÂ7FGW2ÂöGV×†FWF–Ç2’Â7G"†÷W&F–öåö–B’’À¢¢–b7W'6÷"ç&÷v6÷VçBÒ ¢×6rÒb%Væ¶æ÷vâ÷W&F–öâ–FVçF–f–W#¢¶÷W&F–öåö–GÒ ¢&—6R¶W”W'&÷"†×6r ¢FVböVç7W&UöÆöv–6Åö'F–f7B‡6VÆbÂ'F–f7Eö¶W“¢'F–f7D¶W’’ÓâæöæS ¢6VÆbåö6öææV7F–öâæW†V7WFR€¢$”å4U%Bõ"”täõ$R”åDòÆöv–6Åö'F–f7G2†'F–f7Eö¶W’’dÅTU2ƒò’ ¢À¢‡7G"†'F–f7Eö¶W’’Â’À¢ ¢FVböVç7W&Uö6öçFVçB‡6VÆbÂ6öçFVçC¢6öçFVçE&Vb’ÓâæöæS ¢W†—7F–ærÒ6VÆbåö6öææV7F–öâæW†V7WFR€¢%4TÄT5B'—FU÷6—¦RÂ7F÷&vUö¶W’ÂÖVF–÷G—Re$ôÒ6öçFVçEöö&¦V7G2t„U$R6öçFVçEö–BÒò"À¢‡7G"†6öçFVçBæ6öçFVçEö–B’Â’À¢’æfWF6†öæR‚¢–bW†—7F–ær—2æöæS ¢6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢”å4U%B”åDò6öçFVçEöö&¦V7G2†6öçFVçEö–BÂ'—FU÷6—¦RÂ7F÷&vUö¶W’ÂÖVF–÷G—R¢dÅTU2ƒòÂòÂòÂò¢"""À¢‡7G"†6öçFVçBæ6öçFVçEö–B’Â6öçFVçBæ'—FU÷6—¦RÂ6öçFVçBç7F÷&vUö¶W’Â6öçFVçBæÖVF–÷G—R’À¢¢&WGW&à¢–b€¢–çB†W†—7F–æu²&'—FU÷6—¦R%Ò’Ò6öçFVçBæ'—FU÷6—¦P¢÷"W†—7F–æu²'7F÷&vUö¶W’%ÒÒ6öçFVçBç7F÷&vUö¶W¢“ ¢×6rÒb$6öæfÆ–7F–ær6öçFVçB&V6÷&Bf÷"¶6öçFVçBæ6öçFVçEö–GÒ ¢&—6RfÇVTW'&÷"†×6r ¢FVb&V6÷&Eöö'6W'fF–öåö'VæFÆR€¢6VÆbÀ¢¢À¢6öçFVçC¢6öçFVçE&VbÀ¢ö'6W'fF–öã¢'F–f7Dö'6W'fF–öâÀ¢&÷fVææ6UöVFvW3¢—FW&&ÆUµ&÷fVææ6TVFvUÒÒ‚’À¢’ÓâæöæS ¢v—F‚6VÆbåö6öææV7F–öã ¢6VÆbåöVç7W&UöÆöv–6Åö'F–f7B†ö'6W'fF–öâæ'F–f7Eö¶W’¢6VÆbåöVç7W&Uö6öçFVçB†6öçFVçB¢6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢”å4U%B”åDòö'6W'fF–öç2€¢ö'6W'fF–öåö–BÂ'F–f7Eö¶W’Â6öçFVçEö–BÂ6÷W&6Uö–BÂ'Våö–BÂ÷W&F–öåö–BÀ¢ö'6W'fVEöBÂ6÷W&6U÷F‚ÂW7G&VÕöÆö6F÷"ÂW7G&VÕöÖöF–f–VEöBÀ¢W7G&VÕ÷fW'6–öâÂÖVF–÷G—RÂÖWFFFö§6öà¢’dÅTU2ƒòÂòÂòÂòÂòÂòÂòÂòÂòÂòÂòÂòÂò¢"""À¢€¢7G"†ö'6W'fF–öâæö'6W'fF–öåö–B’À¢7G"†ö'6W'fF–öâæ'F–f7Eö¶W’’À¢7G"†ö'6W'fF–öâæ6öçFVçEö–B’À¢7G"†ö'6W'fF–öâç6÷W&6Uö–B’–bö'6W'fF–öâç6÷W&6Uö–B—2æ÷BæöæRVÇ6RæöæRÀ¢7G"†ö'6W'fF–öâç'Våö–B’À¢7G"†ö'6W'fF–öâæ÷W&F–öåö–B’À¢ö'6W'fF–öâæö'6W'fVEöBÀ¢ö'6W'fF–öâç6÷W&6U÷F‚À¢ö'6W'fF–öâçW7G&VÕöÆö6F÷"À¢ö'6W'fF–öâçW7G&VÕöÖöF–f–VEöBÀ¢ö'6W'fF–öâçW7G&VÕ÷fW'6–öâÀ¢ö'6W'fF–öâæÖVF–÷G—RÀ¢öGV×†ö'6W'fF–öâæÖWFFF’À¢’À¢¢f÷"VFvR–â&÷fVææ6UöVFvW3 ¢6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢”å4U%Bõ"”täõ$R”åDò&÷fVææ6UöVFvW2€¢÷WGWEöö'6W'fF–öåö–BÂ–çWEöö'6W'fF–öåö–BÂ&VÆF–öç6†— ¢’dÅTU2ƒòÂòÂò¢"""À¢€¢7G"†VFvRæ÷WGWEöö'6W'fF–öåö–B’À¢7G"†VFvRæ–çWEöö'6W'fF–öåö–B’À¢VFvRç&VÆF–öç6†—À¢’À¢ ¢FVb&V6÷&Eö'6Væ6R‡6VÆbÂ'6Væ6S¢'F–f7D'6Væ6R’ÓâæöæS ¢v—F‚6VÆbåö6öææV7F–öã ¢6VÆbåöVç7W&UöÆöv–6Åö'F–f7B†'6Væ6Ræ'F–f7Eö¶W’¢6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢”å4U%B”åDò'F–f7Eö'6Væ6W2€¢ö'6W'fF–öåö–BÂ'F–f7Eö¶W’Â6÷W&6Uö–BÂ'Våö–BÂ÷W&F–öåö–BÀ¢ö'6W'fVEöBÂ6÷W&6U÷F‚ÂW7G&VÕöÆö6F÷"ÂÖWFFFö§6öà¢’dÅTU2ƒòÂòÂòÂòÂòÂòÂòÂòÂò¢"""À¢€¢7G"†'6Væ6Ræö'6W'fF–öåö–B’À¢7G"†'6Væ6Ræ'F–f7Eö¶W’’À¢7G"†'6Væ6Rç6÷W&6Uö–B’–b'6Væ6Rç6÷W&6Uö–B—2æ÷BæöæRVÇ6RæöæRÀ¢7G"†'6Væ6Rç'Våö–B’À¢7G"†'6Væ6Ræ÷W&F–öåö–B’À¢'6Væ6Ræö'6W'fVEöBÀ¢'6Væ6Rç6÷W&6U÷F‚À¢'6Væ6RçW7G&VÕöÆö6F÷"À¢öGV×†'6Væ6RæÖWFFF’À¢’À¢ ¢FVb&V6÷&EöÖFW&–Æ—¦F–öâ€¢6VÆbÀ¢¢À¢6öçFVçEö–C¢6öçFVçD–BÀ¢¶–æC¢7G"À¢Fƒ¢7G"À¢ÖWFFF¢§6öäö&¦V7BÀ¢’ÓâæöæS ¢v—F‚6VÆbåö6öææV7F–öã ¢6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢”å4U%Bõ"”täõ$R”åDòÖFW&–Æ—¦F–öç2†6öçFVçEö–BÂ¶–æBÂF‚ÂÖWFFFö§6öâ¢dÅTU2ƒòÂòÂòÂò¢"""À¢‡7G"†6öçFVçEö–B’Â¶–æBÂF‚ÂöGV×†ÖWFFF’’À¢ ¢FVb&V6÷&E÷fÆ–FF–öâ‡6VÆbÂ&W7VÇC¢fÆ–FF–öå&W7VÇB’ÓâæöæS ¢v—F‚6VÆbåö6öææV7F–öã ¢6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢”å4U%B÷"–væ÷&R–çFòfÆ–FF–öç2€¢6öçFVçEö–BÂfÆ–FF÷"ÂfÆ–FF÷%÷fW'6–öâÂ6†V6¶VEöBÂ7FGW2ÂFWF–Ç5ö§6öà¢’dÅTU2ƒòÂòÂòÂòÂòÂò¢"""À¢€¢7G"‡&W7VÇBæ6öçFVçEö–B’À¢&W7VÇBçfÆ–FF÷"À¢&W7VÇBçfÆ–FF÷%÷fW'6–öâÀ¢&W7VÇBæ6†V6¶VEöBÀ¢&W7VÇBç7FGW2À¢öGV×‡&W7VÇBæFWF–Ç2’À¢’À¢ ¢7FF–6ÖWF†ö@¢FVböö'6W'fF–öåög&öÕ÷&÷r‡&÷s¢7Æ—FS2å&÷r’Óâ'F–f7Dö'6W'fF–öã ¢6÷W&6U÷&rÒ&÷u²'6÷W&6Uö–B%Ð¢&WGW&â'F–f7Dö'6W'fF–öâ€¢ö'6W'fF–öåö–CÔö'6W'fF–öä–B‡&÷u²&ö'6W'fF–öåö–B%Ò’À¢'F–f7Eö¶W“Ô'F–f7D¶W’‡&÷u²&'F–f7Eö¶W’%Ò’À¢6öçFVçEö–CÔ6öçFVçD–B‡&÷u²&6öçFVçEö–B%Ò’À¢6÷W&6Uö–CÕ6÷W&6T–B‡6÷W&6U÷&r’–b6÷W&6U÷&r—2æ÷BæöæRVÇ6RæöæRÀ¢'Våö–CÕ'Vä–B‡&÷u²''Våö–B%Ò’À¢÷W&F–öåö–CÔ÷W&F–öä–B‡&÷u²&÷W&F–öåö–B%Ò’À¢ö'6W'fVEöCÖfÆöB‡&÷u²&ö'6W'fVEöB%Ò’À¢6÷W&6U÷Fƒ×&÷u²'6÷W&6U÷F‚%ÒÀ¢W7G&VÕöÆö6F÷#×&÷u²'W7G&VÕöÆö6F÷"%ÒÀ¢W7G&VÕöÖöF–f–VEöCÒ€¢fÆöB‡&÷u²'W7G&VÕöÖöF–f–VEöB%Ò’–b&÷u²'W7G&VÕöÖöF–f–VEöB%Ò—2æ÷BæöæRVÇ6RæöæP¢’À¢W7G&VÕ÷fW'6–öã×&÷u²'W7G&VÕ÷fW'6–öâ%ÒÀ¢ÖVF–÷G—S×&÷u²&ÖVF–÷G—R%ÒÀ¢ÖWFFFÕöÆöEöö&¦V7B‡&÷u²&ÖWFFFö§6öâ%Ò’À¢ ¢7FF–6ÖWF†ö@¢FVbö'6Væ6Uög&öÕ÷&÷r‡&÷s¢7Æ—FS2å&÷r’Óâ'F–f7D'6Væ6S ¢6÷W&6U÷&rÒ&÷u²'6÷W&6Uö–B%Ð¢&WGW&â'F–f7D'6Væ6R€¢ö'6W'fF–öåö–CÔö'6W'fF–öä–B‡&÷u²&ö'6W'fF–öåö–B%Ò’À¢'F–f7Eö¶W“Ô'F–f7D¶W’‡&÷u²&'F–f7Eö¶W’%Ò’À¢6÷W&6Uö–CÕ6÷W&6T–B‡6÷W&6U÷&r’–b6÷W&6U÷&r—2æ÷BæöæRVÇ6RæöæRÀ¢'Våö–CÕ'Vä–B‡&÷u²''Våö–B%Ò’À¢÷W&F–öåö–CÔ÷W&F–öä–B‡&÷u²&÷W&F–öåö–B%Ò’À¢ö'6W'fVEöCÖfÆöB‡&÷u²&ö'6W'fVEöB%Ò’À¢6÷W&6U÷Fƒ×&÷u²'6÷W&6U÷F‚%ÒÀ¢W7G&VÕöÆö6F÷#×&÷u²'W7G&VÕöÆö6F÷"%ÒÀ¢ÖWFFFÕöÆöEöö&¦V7B‡&÷u²&ÖWFFFö§6öâ%Ò’À¢ ¢FVbö'6W'fF–öâ‡6VÆbÂö'6W'fF–öåö–C¢ö'6W'fF–öä–B’Óâ'F–f7Dö'6W'fF–öâÂæöæS ¢&÷rÒ6VÆbåö6öææV7F–öâæW†V7WFR€¢%4TÄT5B¢e$ôÒö'6W'fF–öç2t„U$Rö'6W'fF–öåö–BÒò"Â‡7G"†ö'6W'fF–öåö–B’Â¢’æfWF6†öæR‚¢&WGW&âæöæR–b&÷r—2æöæRVÇ6R6VÆbåöö'6W'fF–öåög&öÕ÷&÷r‡&÷r ¢FVbö'6W'fF–öç5öf÷"‡6VÆbÂ'F–f7Eö¶W“¢'F–f7D¶W’’ÓâGWÆU´'F–f7Dö'6W'fF–öâÂââåÓ ¢&÷w2Ò6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢4TÄT5B¢e$ôÒö'6W'fF–öç0¢t„U$R'F–f7Eö¶W’Òð¢õ$DU"%’ö'6W'fVEöB42Âö'6W'fF–öåö–B40¢"""À¢‡7G"†'F–f7Eö¶W’’Â’À¢’æfWF6†ÆÂ‚¢&WGW&âGWÆR‡6VÆbåöö'6W'fF–öåög&öÕ÷&÷r‡&÷r’f÷"&÷r–â&÷w2 ¢FVbÆFW7E÷7FFR€¢6VÆbÂ'F–f7Eö¶W“¢'F–f7D¶W’Â¢Â&Vf÷&S¢fÆöBÂæöæRÒæöæP¢’Óâ'F–f7E7FFRÂæöæS ¢&×3¢Æ—7E¶ö&¦V7EÒÒ·7G"†'F–f7Eö¶W’•Ð¢ö'6W'fF–öå÷v†W&RÒ&'F–f7Eö¶W’Òò ¢'6Væ6U÷v†W&RÒ&'F–f7Eö¶W’Òò ¢–b&Vf÷&R—2æ÷BæöæS ¢ö'6W'fF–öå÷v†W&R³Ò"äBö'6W'fVEöBÃÒò ¢'6Væ6U÷v†W&R³Ò"äBö'6W'fVEöBÃÒò ¢&×2æVæB†&Vf÷&R¢VW'’Òb"" ¢4TÄT5B¢Âv6öçFVçBr27FFUö¶–æBe$ôÒ€¢4TÄT5B¢Â$õuôåTÔ$U"‚’õdU"„õ$DU"%’ö'6W'fVEöBDU42Âö'6W'fF–öåö–BDU42’2&æ°¢e$ôÒö'6W'fF–öç2t„U$R¶ö'6W'fF–öå÷v†W&WÐ¢’t„U$R&æ²Ò¢Tä”ôâÄÀ¢4TÄT5B¢Âv'6VçBr27FFUö¶–æBe$ôÒ€¢4TÄT5B¢Â$õuôåTÔ$U"‚’õdU"„õ$DU"%’ö'6W'fVEöBDU42Âö'6W'fF–öåö–BDU42’2&æ°¢e$ôÒ'F–f7Eö'6Væ6W2t„U$R¶'6Væ6U÷v†W&WÐ¢’t„U$R&æ²Ò¢õ$DU"%’ö'6W'fVEöBDU42Âö'6W'fF–öåö–BDU40¢Ä”Ô•B¢"" ¢VW'•÷&×3¢GWÆU¶ö&¦V7BÂââåÐ¢–b&Vf÷&R—2æöæS ¢VW'•÷&×2Ò‡&×5³ÒÂ&×5³Ò¢VÇ6S ¢VW'•÷&×2Ò‡&×5³ÒÂ&×5³ÒÂ&×5³ÒÂ&×5³Ò¢&÷rÒ6VÆbåö6öææV7F–öâæW†V7WFR‡VW'’ÂVW'•÷&×2’æfWF6†öæR‚¢–b&÷r—2æöæS ¢&WGW&âæöæP¢–b&÷u²'7FFUö¶–æB%ÒÓÒ&'6VçB# ¢&WGW&â6VÆbåö'6Væ6Uög&öÕ÷&÷r‡&÷r¢&WGW&â6VÆbåöö'6W'fF–öåög&öÕ÷&÷r‡&÷r ¢FVbÆFW7Eöö'6W'fF–öâ€¢6VÆbÂ'F–f7Eö¶W“¢'F–f7D¶W’Â¢Â&Vf÷&S¢fÆöBÂæöæRÒæöæP¢’Óâ'F–f7Dö'6W'fF–öâÂæöæS ¢&×3¢Æ—7E¶ö&¦V7EÒÒ·7G"†'F–f7Eö¶W’•Ð¢v†W&RÒ&'F–f7Eö¶W’Òò ¢–b&Vf÷&R—2æ÷BæöæS ¢v†W&R³Ò"äBö'6W'fVEöBÃÒò ¢&×2æVæB†&Vf÷&R¢&÷rÒ6VÆbåö6öææV7F–öâæW†V7WFR€¢b%4TÄT5B¢e$ôÒö'6W'fF–öç2t„U$R·v†W&WÒ ¢$õ$DU"%’ö'6W'fVEöBDU42Âö'6W'fF–öåö–BDU42Ä”Ô•B"À¢GWÆR‡&×2’À¢’æfWF6†öæR‚¢&WGW&âæöæR–b&÷r—2æöæRVÇ6R6VÆbåöö'6W'fF–öåög&öÕ÷&÷r‡&÷r ¢FVb6öçFVçB‡6VÆbÂ6öçFVçEö–C¢6öçFVçD–B’Óâ6öçFVçE&VbÂæöæS ¢&÷rÒ6VÆbåö6öææV7F–öâæW†V7WFR€¢%4TÄT5B¢e$ôÒ6öçFVçEöö&¦V7G2t„U$R6öçFVçEö–BÒò"Â‡7G"†6öçFVçEö–B’Â¢’æfWF6†öæR‚¢–b&÷r—2æöæS ¢&WGW&âæöæP¢&WGW&â6öçFVçE&Vb€¢6öçFVçEö–CÔ6öçFVçD–B‡&÷u²&6öçFVçEö–B%Ò’À¢'—FU÷6—¦SÖ–çB‡&÷u²&'—FU÷6—¦R%Ò’À¢7F÷&vUö¶W“×&÷u²'7F÷&vUö¶W’%ÒÀ¢ÖVF–÷G—S×&÷u²&ÖVF–÷G—R%ÒÀ¢ ¢FVb'F–f7Eö¶W—2‡6VÆb’ÓâGWÆU´'F–f7D¶W’ÂââåÓ ¢&÷w2Ò6VÆbåö6öææV7F–öâæW†V7WFR€¢%4TÄT5B'F–f7Eö¶W’e$ôÒÆöv–6Åö'F–f7G2õ$DU"%’'F–f7Eö¶W’ ¢’æfWF6†ÆÂ‚¢&WGW&âGWÆR„'F–f7D¶W’‡&÷u²&'F–f7Eö¶W’%Ò’f÷"&÷r–â&÷w2 ¢FVb&V6÷&E÷G&VR‡6VÆbÂG&VUö–C¢G&VT–BÂVçG&–W3¢—FW&&ÆUµG&VTVçG'•ÒÂ¢Â7&VFVEöC¢fÆöB’ÓâæöæS ¢÷&FW&VBÒGWÆR‡6÷'FVB†VçG&–W2Â¶W“ÖÆÖ&FVçG'“¢VçG'’ç&VÆF—fU÷F‚’¢v—F‚6VÆbåö6öææV7F–öã ¢6VÆbåö6öææV7F–öâæW†V7WFR€¢$”å4U%Bõ"”täõ$R”åDòG&VU÷6æ6†÷G2‡G&VUö–BÂ7&VFVEöB’dÅTU2ƒòÂò’ ¢‡7G"‡G&VUö–B’Â7&VFVEöB’À¢¢W†—7F–æuö6÷VçBÒ–çB€¢6VÆbåö6öææV7F–öâæW†V7WFR€¢%4TÄT5B4õTåB‚¢’e$ôÒG&VUöVçG&–W2t„U$RG&VUö–BÒò"À¢‡7G"‡G&VUö–B’Â’À¢’æfWF6†öæR‚•³Ð¢¢–bW†—7F–æuö6÷VçBæ÷B–â³ÂÆVâ†÷&FW&VB—Ó ¢×6rÒb$6öæfÆ–7F–ærG&VR&V6÷&Bf÷"·G&VUö–GÒ ¢&—6RfÇVTW'&÷"†×6r¢–bW†—7F–æuö6÷VçBÓÒ ¢6VÆbåö6öææV7F–öâæW†V7WFVÖç’€¢"" ¢”å4U%B”åDòG&VUöVçG&–W2€¢G&VUö–BÂ&VÆF—fU÷F‚Â¶–æBÂ6öçFVçEö–BÂ'—FU÷6—¦RÂF&vWBÂÖWFFFö§6öà¢’dÅTU2ƒòÂòÂòÂòÂòÂòÂò¢"""À¢°¢€¢7G"‡G&VUö–B’À¢VçG'’ç&VÆF—fU÷F‚À¢VçG'’æ¶–æBÀ¢7G"†VçG'’æ6öçFVçEö–B’–bVçG'’æ6öçFVçEö–B—2æ÷BæöæRVÇ6RæöæRÀ¢VçG'’æ'—FU÷6—¦RÀ¢VçG'’çF&vWBÀ¢öGV×†VçG'’æÖWFFF’À¢¢f÷"VçG'’–â÷&FW&V@¢ÒÀ¢ ¢FVbG&VUöVçG&–W2‡6VÆbÂG&VUö–C¢G&VT–B’ÓâGWÆUµG&VTVçG'’ÂââåÓ ¢&÷w2Ò6VÆbåö6öææV7F–öâæW†V7WFR€¢%4TÄT5B¢e$ôÒG&VUöVçG&–W2t„U$RG&VUö–BÒòõ$DU"%’&VÆF—fU÷F‚"À¢‡7G"‡G&VUö–B’Â’À¢’æfWF6†ÆÂ‚¢&WGW&âGWÆR€¢G&VTVçG'’€¢&VÆF—fU÷Fƒ×&÷u²'&VÆF—fU÷F‚%ÒÀ¢¶–æC×&÷u²&¶–æB%ÒÀ¢6öçFVçEö–CÔ6öçFVçD–B‡&÷u²&6öçFVçEö–B%Ò’–b&÷u²&6öçFVçEö–B%Ò—2æ÷BæöæRVÇ6RæöæRÀ¢'—FU÷6—¦SÖ–çB‡&÷u²&'—FU÷6—¦R%Ò’–b&÷u²&'—FU÷6—¦R%Ò—2æ÷BæöæRVÇ6RæöæRÀ¢F&vWC×&÷u²'F&vWB%ÒÀ¢ÖWFFFÕöÆöEöö&¦V7B‡&÷u²&ÖWFFFö§6öâ%Ò’À¢¢f÷"&÷r–â&÷w0¢ ¢FVb&V6÷&E÷6÷W&6U÷6æ6†÷B‡6VÆbÂ6æ6†÷C¢6÷W&6U6æ6†÷B’ÓâæöæS ¢v—F‚6VÆbåö6öææV7F–öã ¢6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢”å4U%B”åDò6÷W&6U÷6æ6†÷G2€¢6æ6†÷Eö–BÂ6÷W&6Uö–BÂ'Våö–BÂö'6W'fVEöBÂ6ö×ÆWFRÀ¢G&VUö–BÂ66÷Uö§6öâÂWf–FVæ6Uö§6öà¢’dÅTRƒòÂòÂòÂòÂòÂòÂòÂò¢"""À¢€¢7G"‡6æ6†÷Bç6æ6†÷Eö–B’À¢7G"‡6æ6†÷Bç6÷W&6Uö–B’À¢7G"‡6æ6†÷Bç'Våö–B’À¢6æ6†÷Bæö'6W'fVEöBÀ¢–çB‡6æ6†÷Bæ6ö×ÆWFR’À¢7G"‡6æ6†÷BçG&VUö–B’–b6æ6†÷BçG&VUö–B—2æ÷BæöæRVÇ6RæöæRÀ¢öGV×†Æ—7B‡6æ6†÷Bç66÷R’’À¢öGV×‡6æ6†÷BæWf–FVæ6R’À¢’À¢ ¢7FF–6ÖWF†ö@¢FVb÷6÷W&6U÷6æ6†÷Eög&öÕ÷&÷r‡&÷s¢7Æ—FS2å&÷r’Óâ6÷W&6U6æ6†÷C ¢G&VU÷&rÒ&÷u²'G&VUö–B%Ð¢&WGW&â6÷W&6U6æ6†÷B€¢6æ6†÷Eö–CÕ6æ6†÷D–B‡&÷u²'6æ6†÷Eö–B%Ò’À¢6÷W&6Uö–CÕ6÷W&6T–B‡&÷u²'6÷W&6Uö–B%Ò’À¢'Våö–CÕ'Vä–B‡&÷u²''Våö–B%Ò’À¢ö'6W'fVEöCÖfÆöB‡&÷u²&ö'6W'fVEöB%Ò’À¢6ö×ÆWFSÖ&ööÂ‡&÷u²&6ö×ÆWFR%Ò’À¢G&VUö–CÕG&VT–B‡G&VU÷&r’–bG&VU÷&r—2æ÷BæöæRVÇ6RæöæRÀ¢66÷SÕöÆöE÷7G&–æu÷GWÆR‡&÷u²'66÷Uö§6öâ%Ò’À¢Wf–FVæ6SÕöÆöEöö&¦V7B‡&÷u²&Wf–FVæ6Uö§6öâ%Ò’À¢ ¢FVb6÷W&6U÷6æ6†÷B‡6VÆbÂ6æ6†÷Eö–C¢6æ6†÷D–B’Óâ6÷W&6U6æ6†÷BÂæöæS ¢&÷rÒ6VÆbåö6öææV7F–öâæW†V7WFR€¢%4TÄT5B¢e$ôÒ6÷W&6U÷6æ6†÷G2t„U$R6æ6†÷Eö–BÒò"À¢‡7G"‡6æ6†÷Eö–B’Â’À¢’æfWF6†öæR‚¢&WGW&âæöæR–b&÷r—2æöæRVÇ6R6VÆbå÷6÷W&6U÷6æ6†÷Eög&öÕ÷&÷r‡&÷r ¢FVbÆFW7E÷6÷W&6U÷6æ6†÷B‡6VÆbÂ6÷W&6Uö–C¢6÷W&6T–B’Óâ6÷W&6U6æ6†÷BÂæöæS ¢&÷rÒ6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢4TÄT5B¢e$ôÒ6÷W&6U÷6æ6†÷G0¢t„U$R6÷W&6Uö–BÒð¢õ$DU"%’ö'6W'fVEöBDU42Â6æ6†÷Eö–BDU40¢Ä”Ô•B¢"""À¢‡7G"‡6÷W&6Uö–B’Â’À¢’æfWF6†öæR‚¢&WGW&âæöæR–b&÷r—2æöæRVÇ6R6VÆbå÷6÷W&6U÷6æ6†÷Eög&öÕ÷&÷r‡&÷r ¢FVb&V6÷&EöFF6WB‡6VÆbÂ&V6÷&C¢FF6WE&V6÷&B’ÓâæöæS ¢v—F‚6VÆbåö6öææV7F–öã ¢6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢”å4U%B”åDòFF6WG2€¢FF6WEö–BÂ6öçFVçEö–FVçF—G’Â7&VFVEöBÂFVf–æ—F–öåö§6öâÂÖWFFFö§6öà¢’dÅTU2ƒòÂòÂòÂòÂò¢"""À¢€¢7G"‡&V6÷&BæFF6WEö–B’À¢&V6÷&Bæ6öçFVçEö–FVçF—G’À¢&V6÷&Bæ7&VFVEöBÀ¢öGV×‡&V6÷&BæFVf–æ—F–öâ’À¢öGV×‡&V6÷&BæÖWFFF’À¢’À¢¢6VÆbåö6öææV7F–öâæW†V7WFVÖç’€¢"" ¢”å4U%B”åDòFF6WEöÖVÖ&W'2€¢FF6WEö–BÂ'F–f7Eö¶W’Âö'6W'fF–öåö–BÂ&öÆRÂ÷&F–æÀ¢’dÅTU2ƒòÂòÂòÂòÂò¢"""À¢°¢€¢7G"‡&V6÷&BæFF6WEö–B’À¢7G"†ÖVÖ&W"æ'F–f7Eö¶W’’À¢7G"†ÖVÖ&W"æö'6W'fF–öåö–B’À¢ÖVÖ&W"ç&öÆRÀ¢÷&F–æÂÀ¢¢f÷"÷&F–æÂÂÖVÖ&W"–âVçVÖW&FR‡&V6÷&BæÖVÖ&W'2¢ÒÀ¢ ¢FVbFF6WB‡6VÆbÂFF6WEö–C¢FF6WD–B’ÓâFF6WE&V6÷&BÂæöæS ¢&÷rÒ6VÆbåö6öææV7F–öâæW†V7WFR€¢%4TÄT5B¢e$ôÒFF6WG2t„U$RFF6WEö–BÒò"À¢‡7G"†FF6WEö–B’Â’À¢’æfWF6†öæR‚¢–b&÷r—2æöæS ¢&WGW&âæöæP¢ÖVÖ&W%÷&÷w2Ò6VÆbåö6öææV7F–öâæW†V7WFR€¢"" ¢4TÄT5BFÒæ'F–f7Eö¶W’ÂFÒæö'6W'fF–öåö–BÂFÒç&öÆRÂòæ6öçFVçEö–@¢e$ôÒFF6WEöÖVÖ&W'22FÐ¢¤ô”âö'6W'fF–öç22òôâòæö'6W'fF–öåö–BÒFÒæö'6W'fF–öåö–@¢t„U$RFÒæFF6WEö–BÒð¢õ$DU"%’FÒæ÷&F–æÀ¢"""À¢‡7G"†FF6WEö–B’Â’À¢’æfWF6†ÆÂ‚¢&WGW&âFF6WE&V6÷&B€¢FF6WEö–CÔFF6WD–B‡&÷u²&FF6WEö–B%Ò’À¢6öçFVçEö–FVçF—G“×&÷u²&6öçFVçEö–FVçF—G’%ÒÀ¢7&VFVEöCÖfÆöB‡&÷u²&7&VFVEöB%Ò’À¢FVf–æ—F–öãÕöÆöEöö&¦V7B‡&÷u²&FVf–æ—F–öåö§6öâ%Ò’À¢ÖWFFFÕöÆöEöö&¦V7B‡&÷u²&ÖWFFFö§6öâ%Ò’À¢ÖVÖ&W'3×GWÆR€¢FF6WDÖVÖ&W%&V6÷&B€¢'F–f7Eö¶W“Ô'F–f7D¶W’†ÖVÖ&W%²&'F–f7Eö¶W’%Ò’À¢ö'6W'fF–öåö–CÔö'6W'fF–öä–B†ÖVÖ&W%²&ö'6W'fF–öåö–B%Ò’À¢6öçFVçEö–CÔ6öçFVçD–B†ÖVÖ&W%²&6öçFVçEö–B%Ò’À¢&öÆSÖÖVÖ&W%²'&öÆR%ÒÀ¢¢f÷"ÖVÖ&W"–âÖVÖ&W%÷&÷w0¢’À¢  ¥õöÆÅõòÒ²%5Æ—FTÖWFFF7F÷&R%Ð 

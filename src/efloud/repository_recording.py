@@ -3,13 +3,13 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from efloud.json_types import JsonMapping, JsonObject, json_mapping_or_none
 from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
-from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
+from efloud.repository_models import ObservationId, OperationId, RunId, SourceId, TreeEntry
 
 
 def _source_definition_payload(source: SourceDefinition) -> JsonObject:
@@ -92,24 +92,31 @@ class RepositorySyncRecorder:
             return
         results = result.manifest.get("results", {})
         http_results = results.get("http", {}) if isinstance(results, dict) else {}
+        rsync_results = results.get("rsync", {}) if isinstance(results, dict) else {}
         for source in self.config.sources:
-            if source.kind not in {SourceKind.HTTP, SourceKind.REST}:
-                self.skipped_source_ids.append(source.id)
+            if source.kind in {SourceKind.HTTP, SourceKind.REST}:
+                entry = http_results.get(source.id) if isinstance(http_results, dict) else None
+                mapping = json_mapping_or_none(entry)
+                if mapping is None:
+                    self.skipped_source_ids.append(source.id)
+                    continue
+                self._import_http_source(source, mapping)
                 continue
-            entry = http_results.get(source.id) if isinstance(http_results, dict) else None
-            mapping = json_mapping_or_none(entry)
-            if mapping is None:
-                self.skipped_source_ids.append(source.id)
+            if source.kind is SourceKind.RSYNC:
+                entry = rsync_results.get(source.id) if isinstance(rsync_results, dict) else None
+                mapping = json_mapping_or_none(entry)
+                if mapping is None:
+                    self.skipped_source_ids.append(source.id)
+                    continue
+                self._import_rsync_source(source, mapping)
                 continue
-            self._import_http_source(source, mapping)
+            self.skipped_source_ids.append(source.id)
 
     def _import_http_source(self, source: SourceDefinition, entry: JsonMapping) -> None:
         operation_id = self._start_source_operation(source)
         if entry.get("ok") is False:
             error = entry.get("error")
-            details: JsonObject = {
-                "error": error if isinstance(error, str) else "source acquisition failed"
-            }
+            details: JsonObject = {"error": error if isinstance(error, str) else "source acquisition failed"}
             self.repository.finish_operation(operation_id, status="failed", details=details)
             return
 
@@ -163,6 +170,136 @@ class RepositorySyncRecorder:
             evidence=evidence,
         )
         self.repository.finish_operation(operation_id, status="success", details={})
+
+    @staticmethod
+    def _rsync_scope(entry: JsonMapping) -> tuple[str, ...]:
+        request = json_mapping_or_none(entry.get("request")) or {}
+        raw_paths = request.get("paths")
+        if not isinstance(raw_paths, list):
+            return ()
+        normalized = {
+            path.strip().strip("/") + "/"
+            for path in raw_paths
+            if isinstance(path, str) and path.strip().strip("/")
+        }
+        return tuple(sorted(normalized))
+
+    @staticmethod
+    def _rsync_updated_paths(entry: JsonMapping) -> tuple[str, ...]:
+        results = json_mapping_or_none(entry.get("results")) or {}
+        paths: set[str] = set()
+        for result in results.values():
+            mapping = json_mapping_or_none(result)
+            if mapping is None or mapping.get("status") in {"failed", "timed_out"}:
+                continue
+            updated = mapping.get("updated")
+            if not isinstance(updated, list):
+                continue
+            for raw in updated:
+                if not isinstance(raw, str):
+                    continue
+                normalized = raw.strip().replace("\\", "/")
+                if normalized.startswith("deleting "):
+                    # Legacy rsync does not run with deletion reconciliation, so a
+                    # deletion-looking itemized line is not sufficient evidence for
+                    # an authoritative absence observation.
+                    continue
+                normalized = normalized.strip("/")
+                if normalized and normalized != ".mirror_meta.json":
+                    paths.add(normalized)
+        return tuple(sorted(paths))
+
+    @staticmethod
+    def _safe_local_path(root: Path, relative_path: str) -> Path | None:
+        relative = PurePosixPath(relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            return None
+        root_resolved = root.resolve()
+        candidate = root_resolved.joinpath(*relative.parts).resolve(strict=False)
+        return candidate if candidate.is_relative_to(root_resolved) else None
+
+    def _import_rsync_source(self, source: SourceDefinition, entry: JsonMapping) -> None:
+        operation_id = self._start_source_operation(source)
+        if entry.get("ok") is False:
+            error = entry.get("error")
+            details: JsonObject = {"error": error if isinstance(error, str) else "rsync acquisition failed"}
+            self.repository.finish_operation(operation_id, status="failed", details=details)
+            return
+
+        local_value = entry.get("local")
+        if not isinstance(local_value, str):
+            self.repository.finish_operation(
+                operation_id,
+                status="failed",
+                details={"error": "successful rsync result has no local mirror root"},
+            )
+            return
+        local_root = Path(local_value)
+        scope = self._rsync_scope(entry)
+        updated_paths = self._rsync_updated_paths(entry)
+        tree_entries: list[TreeEntry] = []
+        ingested = 0
+        for relative_path in updated_paths:
+            path = self._safe_local_path(local_root, relative_path)
+            if path is None or not path.exists():
+                continue
+            if path.is_symlink():
+                tree_entries.append(
+                    TreeEntry(relative_path=relative_path, kind="symlink", target=path.readlink().as_posix())
+                )
+                continue
+            if path.is_dir():
+                tree_entries.append(TreeEntry(relative_path=relative_path, kind="directory"))
+                continue
+            if not path.is_file():
+                continue
+            observation = self.repository.ingest_path(
+                f"source:{source.id}:path:{relative_path}",
+                path,
+                run_id=self.run_id,
+                operation_id=operation_id,
+                source_id=SourceId(source.id),
+                observed_at=self.started_at,
+                source_path=relative_path,
+                upstream_locator=f"{source.url.rstrip('/')}/{relative_path}",
+                metadata={"transport": "RSYNC", "compatibility_import": True},
+                materialization_kind="compatibility-rsync",
+            )
+            self.observations.append(observation.observation_id)
+            tree_entries.append(
+                TreeEntry(
+                    relative_path=relative_path,
+                    kind="file",
+                    content_id=observation.content_id,
+                    byte_size=path.stat().st_size,
+                )
+            )
+            ingested += 1
+
+        evidence: JsonObject = {
+            "transport": "RSYNC",
+            "compatibility_import": True,
+            "reconciliation_complete": False,
+            "changed_entry_count": len(updated_paths),
+            "ingested_file_count": ingested,
+        }
+        # The legacy RsyncMirror uses delete=False. Even a whole-source transfer
+        # therefore cannot establish upstream absence, so this snapshot must not
+        # claim complete source coverage.
+        self.repository.record_tree_snapshot(
+            source_id=SourceId(source.id),
+            run_id=self.run_id,
+            entries=tree_entries,
+            complete=False,
+            scope=scope,
+            observed_at=self.started_at,
+            evidence=evidence,
+        )
+        self.repository.finish_operation(
+            operation_id,
+            status="success",
+            details={"ingested_file_count": ingested, "reconciliation_complete": False},
+        )
 
     def finish(self, *, ok: bool) -> None:
         self.repository.finish_run(self.run_id, status="success" if ok else "failed")

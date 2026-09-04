@@ -10,8 +10,10 @@ from efloud.blob_store import BlobStore, FilesystemBlobStore
 from efloud.json_types import JsonObject
 from efloud.metadata_store import MetadataStore
 from efloud.repository_models import (
+    ArtifactAbsence,
     ArtifactKey,
     ArtifactObservation,
+    ArtifactState,
     ContentId,
     ContentRef,
     DatasetId,
@@ -25,6 +27,7 @@ from efloud.repository_models import (
     TreeEntry,
     TreeId,
     ValidationResult,
+    absence_id_for,
     observation_id_for,
     operation_id_for,
     run_id_for,
@@ -258,6 +261,50 @@ class Repository:
             provenance_edges=edges,
         )
         return observation
+
+    def record_absence(
+        self,
+        artifact_key: ArtifactKey | str,
+        *,
+        run_id: RunId,
+        operation_id: OperationId,
+        source_id: SourceId | str | None = None,
+        observed_at: float | None = None,
+        source_path: str | None = None,
+        upstream_locator: str | None = None,
+        metadata: JsonObject | None = None,
+    ) -> ArtifactAbsence:
+        observed = time.time() if observed_at is None else observed_at
+        normalized_key = ArtifactKey(str(artifact_key))
+        normalized_source_id = SourceId(str(source_id)) if source_id is not None else None
+        absence = ArtifactAbsence(
+            observation_id=absence_id_for(
+                artifact_key=normalized_key,
+                run_id=run_id,
+                operation_id=operation_id,
+                observed_at=observed,
+                source_path=source_path,
+                upstream_locator=upstream_locator,
+            ),
+            artifact_key=normalized_key,
+            source_id=normalized_source_id,
+            run_id=run_id,
+            operation_id=operation_id,
+            observed_at=observed,
+            source_path=source_path,
+            upstream_locator=upstream_locator,
+            metadata=metadata or {},
+        )
+        self.metadata.record_absence(absence)
+        return absence
+
+    def latest_state(
+        self,
+        artifact_key: ArtifactKey | str,
+        *,
+        before: float | None = None,
+    ) -> ArtifactState | None:
+        return self.metadata.latest_state(ArtifactKey(str(artifact_key)), before=before)
 
     def observation(self, observation_id: ObservationId | str) -> ArtifactObservation | None:
         return self.metadata.observation(ObservationId(str(observation_id)))

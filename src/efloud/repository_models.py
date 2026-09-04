@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, NewType
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
 
-
 SourceId = NewType("SourceId", str)
 ArtifactKey = NewType("ArtifactKey", str)
 ContentId = NewType("ContentId", str)
@@ -89,6 +88,40 @@ class ArtifactObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactAbsence:
+    observation_id: ObservationId
+    artifact_key: ArtifactKey
+    source_id: SourceId | None
+    run_id: RunId
+    operation_id: OperationId
+    observed_at: float
+    source_path: str | None = None
+    upstream_locator: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+
+    def to_dict(self) -> JsonObject:
+        payload: JsonObject = {
+            "observation_id": str(self.observation_id),
+            "artifact_key": str(self.artifact_key),
+            "run_id": str(self.run_id),
+            "operation_id": str(self.operation_id),
+            "observed_at": self.observed_at,
+            "absent": True,
+            "metadata": dict(self.metadata),
+        }
+        if self.source_id is not None:
+            payload["source_id"] = str(self.source_id)
+        if self.source_path is not None:
+            payload["source_path"] = self.source_path
+        if self.upstream_locator is not None:
+            payload["upstream_locator"] = self.upstream_locator
+        return payload
+
+
+type ArtifactState = ArtifactObservation | ArtifactAbsence
+
+
+@dataclass(frozen=True, slots=True)
 class ProvenanceEdge:
     output_observation_id: ObservationId
     input_observation_id: ObservationId
@@ -115,10 +148,7 @@ class TreeEntry:
     metadata: JsonObject = field(default_factory=dict)
 
     def identity_payload(self) -> JsonObject:
-        payload: JsonObject = {
-            "path": self.relative_path,
-            "kind": self.kind,
-        }
+        payload: JsonObject = {"path": self.relative_path, "kind": self.kind}
         if self.content_id is not None:
             payload["content_id"] = str(self.content_id)
         if self.byte_size is not None:
@@ -168,6 +198,7 @@ def observation_id_for(
         stable_id(
             "obs",
             {
+                "kind": "content",
                 "artifact_key": str(artifact_key),
                 "content_id": str(content_id),
                 "run_id": str(run_id),
@@ -176,7 +207,32 @@ def observation_id_for(
                 "source_path": source_path,
                 "upstream_locator": upstream_locator,
             },
-        ),
+        )
+    )
+
+
+def absence_id_for(
+    *,
+    artifact_key: ArtifactKey,
+    run_id: RunId,
+    operation_id: OperationId,
+    observed_at: float,
+    source_path: str | None,
+    upstream_locator: str | None,
+) -> ObservationId:
+    return ObservationId(
+        stable_id(
+            "obs",
+            {
+                "kind": "absence",
+                "artifact_key": str(artifact_key),
+                "run_id": str(run_id),
+                "operation_id": str(operation_id),
+                "observed_at": observed_at,
+                "source_path": source_path,
+                "upstream_locator": upstream_locator,
+            },
+        )
     )
 
 
@@ -184,12 +240,8 @@ def run_id_for(*, root: str, started_at: float, source_ids: tuple[str, ...]) -> 
     return RunId(
         stable_id(
             "run",
-            {
-                "root": root,
-                "started_at": started_at,
-                "source_ids": list(source_ids),
-            },
-        ),
+            {"root": root, "started_at": started_at, "source_ids": list(source_ids)},
+        )
     )
 
 
@@ -197,18 +249,16 @@ def operation_id_for(*, run_id: RunId, kind: str, subject: str) -> OperationId:
     return OperationId(
         stable_id(
             "op",
-            {
-                "run_id": str(run_id),
-                "kind": kind,
-                "subject": subject,
-            },
-        ),
+            {"run_id": str(run_id), "kind": kind, "subject": subject},
+        )
     )
 
 
 __all__ = [
+    "ArtifactAbsence",
     "ArtifactKey",
     "ArtifactObservation",
+    "ArtifactState",
     "ContentId",
     "ContentRef",
     "DatasetId",
@@ -222,6 +272,7 @@ __all__ = [
     "TreeEntry",
     "TreeId",
     "ValidationResult",
+    "absence_id_for",
     "canonical_json_bytes",
     "observation_id_for",
     "operation_id_for",

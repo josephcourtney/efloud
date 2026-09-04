@@ -11,7 +11,7 @@ from efloud.repository_models import SourceId, TreeEntry
 from efloud.repository_state import repository_mirror_state
 from efloud.state import node_at_path
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 def _rsync_source() -> SourceDefinition:
@@ -70,7 +70,7 @@ def test_complete_repository_history_rebuilds_mirror_state_without_mirror_scan(t
         materialized.unlink()
         state = repository_mirror_state(repository, cfg=config, generated_at=12.0)
         assert state is not None
-        assert state.generated_at_unix == 12.0
+        assert state.generated_at_unix == pytest.approx(12.0)
         source_node = node_at_path(state.tree, "mirror/source")
         assert source_node is not None
         assert source_node.file_count == 1

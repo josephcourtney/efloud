@@ -10,7 +10,7 @@ from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,6 +26,7 @@ def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.Mon
     config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,
@@ -59,7 +60,7 @@ def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.Mon
         assert len(result.observations) == 1
         observation = engine.repository.latest_observation("source:example")
         assert observation is not None
-        assert observation.observed_at == 123.0
+        assert observation.observed_at == pytest.approx(123.0)
         assert observation.upstream_version == '"v1"'
         with engine.repository.open_content(observation.content_id) as stream:
             assert stream.read() == b"payload"
@@ -83,6 +84,7 @@ def test_engine_leaves_missing_rsync_result_unrecorded(
     config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,
@@ -120,6 +122,7 @@ def test_engine_falls_back_to_rsync_delta_when_inventory_fails(
     config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,
@@ -195,6 +198,7 @@ def test_engine_authoritatively_records_rsync_inventory(
     config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,
@@ -264,6 +268,7 @@ def test_engine_does_not_infer_rsync_deletion_when_inventory_fails(
     config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,

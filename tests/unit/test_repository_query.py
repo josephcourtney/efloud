@@ -3,11 +3,23 @@ from pathlib import Path
 import pytest
 
 from efloud.datasets import DatasetDefinition, Latest
+from efloud.json_types import JsonMapping, JsonValue, json_mapping_or_none
 from efloud.repository import Repository
 from efloud.repository_models import SourceId, TreeEntry
 from efloud.repository_query import RepositoryQueryService
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
+
+
+def _mapping(value: JsonValue | None) -> JsonMapping:
+    mapping = json_mapping_or_none(value)
+    assert mapping is not None
+    return mapping
+
+
+def _array(value: JsonValue | None) -> list[JsonValue]:
+    assert isinstance(value, list)
+    return value
 
 
 def _seed(repo: Repository):
@@ -36,8 +48,9 @@ def test_artifact_query_reports_present_and_absent_state(tmp_path: Path) -> None
         )
         query = RepositoryQueryService(repo)
         present = query.query("artifact:artifact:a")
-        assert present["state"]["content_id"] == str(observation.content_id)
-        assert len(present["history"]) == 1
+        present_state = _mapping(present.get("state"))
+        assert present_state["content_id"] == str(observation.content_id)
+        assert len(_array(present.get("history"))) == 1
 
         repo.record_absence(
             "artifact:a",
@@ -47,8 +60,9 @@ def test_artifact_query_reports_present_and_absent_state(tmp_path: Path) -> None
             observed_at=102.0,
         )
         absent = query.query("artifact:artifact:a")
-        assert absent["state"]["absent"] is True
-        assert len(absent["history"]) == 1
+        absent_state = _mapping(absent.get("state"))
+        assert absent_state["absent"] is True
+        assert len(_array(absent.get("history"))) == 1
 
 
 def test_artifact_locator_reads_immutable_blob_content(tmp_path: Path) -> None:
@@ -64,8 +78,9 @@ def test_artifact_locator_reads_immutable_blob_content(tmp_path: Path) -> None:
             media_type="application/json",
         )
         payload = RepositoryQueryService(repo).query("artifact:artifact:json#/items/0/name")
-        assert payload["locator"]["value"] == "alpha"
-        assert payload["locator"]["error"] is None
+        locator = _mapping(payload.get("locator"))
+        assert locator["value"] == "alpha"
+        assert locator["error"] is None
 
 
 def test_exact_observation_query_is_independent_of_latest_state(tmp_path: Path) -> None:
@@ -88,8 +103,10 @@ def test_exact_observation_query_is_independent_of_latest_state(tmp_path: Path) 
             observed_at=102.0,
         )
         payload = RepositoryQueryService(repo).query(f"observation:{old.observation_id}#text")
-        assert payload["observation"]["observation_id"] == str(old.observation_id)
-        assert payload["locator"]["value"] == "old"
+        observation = _mapping(payload.get("observation"))
+        locator = _mapping(payload.get("locator"))
+        assert observation["observation_id"] == str(old.observation_id)
+        assert locator["value"] == "old"
 
 
 def test_snapshot_queries_include_tree_entries(tmp_path: Path) -> None:
@@ -113,9 +130,13 @@ def test_snapshot_queries_include_tree_entries(tmp_path: Path) -> None:
         )
         query = RepositoryQueryService(repo)
         exact = query.query(f"snapshot:{snapshot.snapshot_id}")
-        assert exact["snapshot"]["entries"][0]["path"] == "aa/a.txt"
+        exact_snapshot = _mapping(exact.get("snapshot"))
+        entries = _array(exact_snapshot.get("entries"))
+        first_entry = _mapping(entries[0])
+        assert first_entry["path"] == "aa/a.txt"
         latest = query.query(f"source-snapshot:{source}")
-        assert latest["snapshot"]["snapshot_id"] == str(snapshot.snapshot_id)
+        latest_snapshot = _mapping(latest.get("snapshot"))
+        assert latest_snapshot["snapshot_id"] == str(snapshot.snapshot_id)
 
 
 def test_dataset_query_exposes_frozen_membership(tmp_path: Path) -> None:

@@ -27,7 +27,8 @@ The design must preserve the useful properties of the current implementation:
 - query and status helpers
 
 while replacing path-centric storage and merged-manifest state with explicit
-artifact identity, version history, provenance, and repository-backed queries.
+artifact identity, version history, provenance, normalized source inventories,
+and repository-backed queries.
 
 ## High-Level Architecture
 
@@ -37,7 +38,12 @@ The default architecture is:
 Sources
    |
    v
-Engine / Planner / Executor
+Source adapters
+   |
+   +--> SourceInventory / acquisition results
+   |
+   v
+Planner / Executor / Reconciler
    |
    v
 Repository
@@ -57,9 +63,15 @@ MetadataStore                 BlobStore
                                            / exports
 ```
 
+`Engine` is the convenience facade over these pieces. It does not define storage
+or provenance semantics itself.
+
 The major responsibility boundaries are:
 
-- **ingestion** decides what external work to perform and records its results
+- **source adapters** understand external protocols and enumerate/fetch source
+  items
+- **planning/reconciliation** compares requested source state with repository
+  state and decides what work is required
 - **repository** owns authoritative artifact, observation, provenance, dataset,
   validation, and retention state
 - **blob storage** owns immutable bytes identified by content digest
@@ -68,7 +80,7 @@ The major responsibility boundaries are:
 - **filesystem mirrors, manifests, exports, and virtual filesystems** are derived
   representations, not authoritative storage
 
-## Core Invariant
+## Core Invariants
 
 All authoritative mutation occurs through the `efloud` repository API.
 
@@ -76,21 +88,32 @@ Filesystem projections and exported manifests are read-only or disposable
 representations of repository state. External code must never be able to mutate
 repository content by editing a projected path.
 
-This invariant makes complete provenance, transactional updates, historical
+The repository must never commit metadata that references unavailable content.
+It is acceptable for an interrupted operation to leave an unreferenced blob;
+reachability-based garbage collection can remove such orphans later.
+
+Absence is evidence, not a default assumption. A source item may be recorded as
+absent only when a successful source inventory establishes complete coverage of
+the relevant scope.
+
+These invariants make complete provenance, transactional updates, historical
 reconstruction, and integrity checking possible.
 
 ## Goals
 
 - expose a compact API for ordinary acquisition and repository use
 - support heterogeneous sources behind protocol adapters
+- normalize source enumeration and reconciliation across protocols
 - make logical artifact identity independent of filesystem layout
 - distinguish retrieval observations from immutable content
+- distinguish actual content identity from upstream integrity expectations and
+  change tokens
 - retain complete acquisition and derivation provenance
 - deduplicate identical content without losing repeated observations
 - represent source state and file trees historically
 - create immutable datasets from exact artifact observations
 - support reproducible temporal or "as-of" dataset resolution
-- make derived artifacts first-class repository objects
+- make deterministic derived artifacts reusable without losing run provenance
 - use relational integrity for universal structure while allowing flexible JSON
   metadata
 - keep bytes directly inspectable in a portable content-addressed blob store
@@ -106,8 +129,13 @@ reconstruction, and integrity checking possible.
 - forcing all artifact metadata into a rigid relational schema
 - requiring a server database for ordinary local use
 - making a FUSE/WinFsp filesystem a core dependency
-- using filesystem paths, mtimes, inodes, or hardlinks as artifact identity
+- using filesystem paths, mtimes, inodes, hardlinks, or local storage keys as
+  artifact/content identity
 - treating cache files or exported manifests as authoritative state
+- requiring remote/offloaded blob replicas before a concrete use case exists
+- requiring mutable branch/ref semantics before a concrete use case exists
+- implementing recursive Merkle trees or chunk-level deduplication before scale
+  measurements justify the additional complexity
 
 ## Domain Model
 
@@ -135,7 +163,7 @@ Protocol-specific source types may include:
 - `GitSource`
 
 Source definitions describe facts and configuration. Execution state belongs in
-runs, operations, observations, and source snapshots.
+runs, operations, inventories, observations, and source snapshots.
 
 Protocol-specific fields must remain isolated to the source type or adapter that
 understands them.
@@ -174,12 +202,15 @@ The default identity is SHA-256:
 sha256:<hex digest>
 ```
 
-A content record includes at least:
+The semantic content record includes at least:
 
 - content identifier
 - byte size
 - media type when known
-- blob-store key
+
+Blob-store placement is an implementation detail. Local paths, bucket keys, or
+other backend locators do not participate in content identity and should not be
+required by repository-facing APIs.
 
 Identical bytes must reuse the same content object even when they are observed
 multiple times, by different sources, or under different logical artifact keys.
@@ -214,15 +245,143 @@ N observations
 
 This preserves acquisition history without duplicating content.
 
+### Absence
+
+An absence observation records that a logical artifact was established not to be
+present within a successfully observed source scope.
+
+Absence must carry the same run/operation/source provenance needed to explain why
+it is trusted. Incomplete or failed inventories may never create authoritative
+absence outside their proven scope.
+
+### Source Inventory
+
+A `SourceInventory` is the normalized representation of what an adapter
+successfully established about source membership before or alongside content
+retrieval.
+
+Conceptually:
+
+```python
+@dataclass(frozen=True)
+class InventoryCoverage:
+    scope: tuple[str, ...]
+    complete: bool
+
+@dataclass(frozen=True)
+class InventoryItem:
+    item_id: str
+    artifact_key: ArtifactKey
+    locator: str | None
+    source_path: str | None
+    change_token: ChangeToken | None = None
+    expected_integrity: tuple[IntegrityExpectation, ...] = ()
+    metadata: JsonObject = field(default_factory=dict)
+
+@dataclass(frozen=True)
+class SourceInventory:
+    source_id: SourceId
+    observed_at: float
+    coverage: InventoryCoverage
+    items: tuple[InventoryItem, ...]
+    upstream_identity: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+```
+
+The exact concrete API may evolve, but the semantic separation is normative:
+
+- enumeration/membership evidence
+- coverage/completeness
+- per-item identity and locator
+- optional change evidence
+- optional integrity expectations
+
+HTTP may produce a one-item complete inventory. `rsync` produces a path-scoped
+inventory. Collection/fanout enumeration produces item identities. Git may
+produce a commit/tree-backed inventory.
+
+A generic reconciler compares inventories with repository state and classifies
+items as new, changed, unchanged, or absent. Protocol adapters must not each
+invent incompatible absence/reconciliation semantics.
+
+### Change Tokens
+
+A change token is source evidence that may allow retrieval to be skipped or
+revalidated efficiently. Examples include HTTP ETags, upstream version IDs, or
+source-specific revision tokens.
+
+Change tokens are not content identity. They may be classified by strength or
+reliability when useful to policy.
+
+### Integrity Expectations
+
+An integrity expectation is an upstream assertion that eFLOUD can test, for
+example an expected SHA-256 digest supplied by a registry or source manifest.
+
+Integrity expectations are distinct from `ContentId`:
+
+```text
+upstream assertion -> IntegrityExpectation
+actual downloaded bytes -> ContentId
+comparison -> ValidationResult
+```
+
+An upstream checksum must never become the authoritative content identity until
+eFLOUD has independently computed and verified the bytes.
+
+HTTP ETags and Last-Modified values are change/version evidence, not integrity
+expectations unless the source explicitly defines cryptographic semantics.
+
 ### Materialization
 
-A materialization describes a physical representation of content, such as a blob
-path, native checkout, or mirror path.
+A materialization describes a physical representation of repository content,
+such as a native checkout, compatibility mirror, or exported dataset tree.
 
 Materialization is not identity.
 
 The repository must remain correct if a disposable materialized view is removed
 and reconstructed from authoritative blobs and metadata.
+
+Ordinary user-visible immutable materialization should prefer:
+
+```text
+reflink / copy-on-write clone
+        ↓ fallback
+copy
+```
+
+Hardlinks should not be the default because modifying a hardlinked checkout can
+corrupt an authoritative filesystem CAS blob. Symlinks are appropriate only for
+explicit disposable view modes.
+
+Materialization should validate path layout/collisions before writing and should
+publish a complete tree atomically where the platform permits it.
+
+### Producer And Operation Lifecycle
+
+Every acquisition or derivation operation has an explicit producer identity and
+version:
+
+```python
+ProducerRef(producer_id="efloud:rsync", version="...")
+```
+
+Producer IDs are namespaced and stable. Protocol adapters and derived tasks use
+the same producer concept.
+
+Runs and operations use explicit lifecycle states rather than inferring state
+solely from nullable timestamps. At minimum:
+
+```text
+operation: running -> succeeded | failed | cancelled
+run:       running -> succeeded | partial | failed | cancelled
+```
+
+Plans and dry-runs describe potential work but do not create persisted
+`planned` operations merely by being inspected.
+
+Invalid lifecycle transitions must be rejected by repository/metadata-store
+logic.
 
 ### Provenance
 
@@ -233,8 +392,7 @@ A provenance record should include:
 
 - run identifier
 - operation identifier
-- producer/task identity
-- producer/task version when applicable
+- producer identity/version
 - source identifier when applicable
 - upstream locator when applicable
 - input observation identifiers
@@ -255,8 +413,9 @@ validator identity/version.
 Validation is layered:
 
 1. **storage integrity** - content still hashes to its content identifier
-2. **generic encoding/container validation** - for example gzip or JSON validity
-3. **domain validation** - supplied by consuming packages
+2. **source expectation validation** - expected checksum/version assertions
+3. **generic encoding/container validation** - for example gzip or JSON validity
+4. **domain validation** - supplied by consuming packages
 
 A validation result should be reusable when both content identity and validator
 identity/version are unchanged.
@@ -267,10 +426,11 @@ Validation must never silently mutate artifact content.
 
 A source snapshot records what state of a source was actually observed.
 
-Snapshot evidence is source-specific. Examples include:
+Snapshots are derived from successful inventory/reconciliation evidence plus
+content observations. Snapshot evidence is source-specific. Examples include:
 
 - HTTP ETag, Last-Modified value, or response digest
-- REST collection enumeration identity
+- REST/collection enumeration identity
 - `rsync` tree identity and requested path scope
 - Git commit or tree identity
 
@@ -282,22 +442,23 @@ were actually examined.
 
 ### Tree Snapshot
 
-File-tree sources may be represented by immutable Merkle-style tree snapshots.
+File-tree sources are represented by immutable canonical tree snapshots.
 
-A tree consists of entries that reference:
+The initial implementation may use a flat canonical tree representation, but the
+semantic target permits recursive Merkle trees whose entries reference:
 
 - content objects for files
 - child tree identities for directories
 - symlink targets when preserved
 
-Tree identity is derived from canonical ordered entries and semantic tree
-metadata. Local filesystem details such as inode, ctime, or local ownership must
-not participate in tree identity by default.
+Tree identity is derived from canonical ordered semantic entries. Local
+filesystem details such as inode, ctime, uid/gid, or absolute paths must not
+participate in tree identity by default.
 
-Unchanged files and subtrees are shared between snapshots.
-
-The original source-relative path remains recorded and can be reconstructed even
-though the authoritative bytes live in the blob store.
+A future recursive representation should structurally share unchanged subtrees
+between snapshots. It should be introduced only when measurements show that the
+flat representation is a material scaling cost, and historical tree identities
+must remain readable through explicit representation versioning.
 
 ## Repository
 
@@ -318,7 +479,9 @@ semantic operations rather than arbitrary CRUD.
 Typical mutation operations include:
 
 - ingest or record an observation
-- record derived output
+- observe existing content without re-storing bytes
+- record absence supported by complete inventory evidence
+- record derived output and provenance
 - record validation
 - create or update source snapshots
 - resolve and publish datasets
@@ -354,6 +517,7 @@ operations
 logical_artifacts
 content_objects
 observations
+artifact_absences
 provenance_edges
 validations
 source_snapshots
@@ -363,8 +527,8 @@ dataset_members
 materializations
 ```
 
-Foreign keys, unique constraints, and transactions should enforce repository
-invariants where possible.
+Foreign keys, unique constraints, lifecycle transition checks, and transactions
+should enforce repository invariants where possible.
 
 Protocol- and domain-specific details belong in JSON columns rather than causing
 transport-specific relational columns to proliferate.
@@ -386,14 +550,32 @@ objects/
       abcdef...
 ```
 
+The generic blob-store contract is semantic and storage-location independent:
+
+```python
+class BlobStore(Protocol):
+    def put_bytes(...) -> ContentRef: ...
+    def put_path(...) -> ContentRef: ...
+    def open(content_id) -> BinaryIO: ...
+    def contains(content_id) -> bool: ...
+    def verify(content_id) -> bool: ...
+    def delete(content_id) -> None: ...
+```
+
+A local filesystem path is an optional capability of a local blob store, not a
+requirement of every blob store. Repository/query/dataset code should use
+`open()` rather than reaching through to a filesystem path.
+
 Blob storage rules:
 
 - content is immutable after installation
 - blob identity is derived from bytes
+- `put` is idempotent by content identity
+- a successful `put` guarantees immediately readable content
 - writes occur through temporary files followed by atomic installation where the
   backend permits it
 - identical content is stored once
-- storage paths are implementation details
+- storage paths/keys are implementation details
 - whole-file content addressing is the default
 
 Chunk-level deduplication is not part of the initial design. It may be added for
@@ -412,7 +594,10 @@ The default ingestion sequence is:
 acquire bytes into temporary storage
         |
         v
-compute content identity and basic integrity
+compute actual ContentId
+        |
+        v
+validate required IntegrityExpectation(s)
         |
         v
 atomically install or reuse immutable blob
@@ -422,11 +607,17 @@ metadata transaction
   - content record
   - observation
   - provenance
+  - validation evidence
   - source/run/operation updates
         |
         v
 commit
 ```
+
+If a required integrity expectation fails, the operation fails and source state
+must not advance as if acquisition succeeded. Actual digest/size evidence should
+remain available in operation diagnostics. Failed bytes need not enter the
+ordinary CAS unless a future quarantine/forensic policy explicitly requests it.
 
 Equivalent guarantees must be preserved by alternate storage backends.
 
@@ -455,7 +646,7 @@ Planning may consider:
 
 - requested targets
 - source definitions
-- source snapshot state
+- current source snapshots/inventories
 - current artifact observations
 - adapter capabilities
 - refresh policies
@@ -467,6 +658,25 @@ Planning performs no authoritative mutation or network retrieval.
 Dry-run uses the same planning path as real execution.
 
 Planning decisions must be explainable and serializable.
+
+### Reconciliation
+
+Reconciliation is protocol-independent wherever possible.
+
+A generic reconciler compares a successful `SourceInventory` against relevant
+repository state and classifies source items as:
+
+- new
+- changed
+- unchanged
+- absent within proven complete scope
+
+The reconciler must preserve repeated observations of unchanged content when the
+source was actually observed, while reusing the existing `ContentId` and avoiding
+unnecessary byte hashing/retrieval when trustworthy source evidence permits it.
+
+Incomplete inventories may record positive observations inside their scope but
+may not infer absence from missing members.
 
 ### Execution
 
@@ -480,12 +690,28 @@ bookkeeping necessary to safely complete an operation.
 
 Protocol-specific acquisition behavior belongs behind adapters.
 
+Adapters separate declarative source configuration from runtime implementation.
+Conceptually:
+
+```python
+class SourceAdapter(Protocol):
+    descriptor: AdapterDescriptor
+
+    async def inventory(...) -> SourceInventory: ...
+    async def fetch(...) -> AcquisitionResult: ...
+```
+
+An adapter descriptor contains a stable namespaced adapter/producer ID, version,
+and capabilities.
+
 Each adapter must:
 
 - declare the source/operation types it supports
-- plan or contribute protocol-specific operations
-- execute the operations it owns
-- emit normalized observations, source snapshots, and operation results
+- contribute protocol-specific planning evidence where needed
+- enumerate source membership/coverage when the protocol permits it
+- retrieve content for requested items
+- emit normalized inventory/acquisition evidence rather than writing repository
+  internals directly
 
 Initial adapters include:
 
@@ -496,6 +722,10 @@ Initial adapters include:
 
 Git should become a first-class adapter for versioned upstream repositories.
 
+Built-in adapters may be registered directly. External plugin discovery should
+be added only if a real external-adapter use case appears; if added, use lazy
+loading and fully qualified/namespaced identities.
+
 Adding a protocol must not require modifying repository semantics.
 
 ### Collection Sources
@@ -505,17 +735,19 @@ special REST_BASE concept.
 
 A collection source separates:
 
-- enumeration of item identities
+- enumeration of item identities into `SourceInventory`
 - per-item retrieval
 - naming/logical artifact mapping
 - reconciliation/completeness policy
 
 REST pagination and REST fanout are implementations of this more general model.
+Collection enumeration is source evidence and should be sufficient to establish
+complete/partial membership semantics independently of individual item fetches.
 
 ### File-Tree Sources
 
-For file-tree sources such as `rsync`, the adapter must report individual
-artifact observations and enough tree state to construct source snapshots.
+For file-tree sources such as `rsync`, inventory establishes the covered path
+scope and item set before or alongside transfer reconciliation.
 
 The repository must not need to rescan its own mirror later merely to rediscover
 which files it previously ingested.
@@ -528,34 +760,46 @@ materialized for convenience, but it is a derived view over repository state.
 Derived outputs are ordinary artifacts with provenance, not a separate cache
 object family.
 
-A derived task declares:
+A deterministic derived task declares at least:
 
-- stable task identity
-- task version
-- input observations or selectors
-- normalized parameters
-- output artifact identities
-
-The repository records the resulting observations and provenance edges.
-
-Derived invalidation should prefer exact dependency identities over time-based
-TTL expiration:
-
-```text
-recorded input content/observation identities
-        !=
-current selected input identities
+```python
+@dataclass(frozen=True)
+class DerivedTaskSpec:
+    task_id: str
+    task_version: str
+    deterministic: bool
+    dependency_semantics: Literal["content", "observation"]
+    parameters: JsonObject
 ```
 
+The repository/executor computes a canonical `DerivationKey` from:
+
+- task identity/version
+- normalized parameters
+- declared output identities
+- normalized input identities according to dependency semantics
+
+For `dependency_semantics="content"`, independently observed but byte-identical
+inputs may reuse a prior deterministic result. For
+`dependency_semantics="observation"`, provenance-distinct inputs remain distinct.
+
+Reuse of an existing output `ContentId` must still create a new output observation
+for the current run/operation so current provenance remains complete.
+
+`task_version` is an explicit reproducibility contract. eFLOUD should not attempt
+to infer reproducibility by hashing arbitrary Python source or the entire runtime
+environment, though callers may record an optional environment fingerprint.
+
 TTL remains appropriate for deciding when an external source should be
-re-observed, not for deterministic dependency invalidation.
+re-observed, not for deterministic derived invalidation.
 
 ### Indexes
 
 Indexes are specialized derived artifacts.
 
 Index definitions may add query-oriented metadata and convenience APIs, but
-index outputs and their provenance are stored using the ordinary artifact model.
+index outputs and their provenance are stored using the ordinary artifact model
+and deterministic derivation semantics where appropriate.
 
 Disposable database indexes used solely to accelerate repository queries remain
 implementation caches and are not repository artifacts.
@@ -568,7 +812,7 @@ timestamp.
 Relevant times may include:
 
 - request/start time
-- observation time
+- inventory/observation time
 - storage/commit time
 - upstream modification time
 - upstream validity interval when explicitly provided
@@ -650,9 +894,14 @@ A consumer can therefore operate entirely on frozen artifact versions without
 knowing whether data originally came from HTTP, REST, `rsync`, Git, or a derived
 operation.
 
+Dataset metadata/member enumeration must work without materializing files.
+
 ## Retention And Garbage Collection
 
 Retention operates on repository references, not on arbitrary filesystem paths.
+
+The initial retention model assumes every retained `ContentId` is available in
+the repository's canonical local/default `BlobStore`.
 
 Content referenced by immutable datasets must not be collected.
 
@@ -668,6 +917,11 @@ protected repository object requires it.
 
 Garbage collection should be reachability-based and should support a grace period
 before physical blob deletion.
+
+Remote/offloaded replica tracking is deliberately deferred until a concrete use
+case requires content identity to be separated from local availability. If later
+introduced, an upstream mutable URL must not automatically count as a verified
+replica of exact content.
 
 ## Query Architecture
 
@@ -716,18 +970,25 @@ source state; historical state already exists as repository records.
 Source-like trees and dataset trees may be materialized as ordinary native
 filesystem views.
 
-Possible strategies include:
+Default immutable materialization strategies are:
 
-- copies, always available
-- hardlinks when safe and supported
 - reflinks/clones when supported
-- symlinks where their semantics are acceptable
+- copies as the universal fallback
 
-These mechanisms are optimizations only. Repository correctness must never
-depend on link semantics or filesystem snapshot support.
+Hardlinks are not a normal user-visible materialization strategy because a
+writable hardlink can mutate an authoritative filesystem CAS blob. Symlinks may
+be offered only as explicit disposable views whose dependence on the repository
+is clear.
 
-Materialized views should be read-only to ordinary consumers where practical.
-Mutation of repository state must still occur through the repository API.
+Materialization should:
+
+1. resolve and validate the complete path layout before writing
+2. reject traversal and collisions deterministically
+3. build into a sibling temporary location
+4. write self-describing dataset/snapshot metadata where appropriate
+5. atomically publish the completed tree where the platform permits it
+
+Deleting a materialized view must not affect repository correctness.
 
 ## Optional Virtual Filesystem
 
@@ -754,6 +1015,39 @@ view + path
 
 The VFS must never become an authoritative mutation path.
 
+## Mutable References (Deferred)
+
+Immutable dataset/source-snapshot identity must remain separate from any future
+human-friendly mutable names.
+
+If mutable refs become necessary, introduce explicit reference records and
+compare-and-swap updates rather than embedding mutable names into immutable
+identity:
+
+```text
+name -> immutable target ID
+```
+
+Ref updates should require an expected previous target/generation to avoid lost
+updates. Refs may act as retention/GC roots. This feature is deferred until a
+concrete mutable-name use case exists.
+
+## Replica And Availability Tracking (Deferred)
+
+If future repositories need remote/offloaded content, model availability
+separately from content identity, for example with replica records containing:
+
+- content identity
+- store/replica identity
+- locator
+- availability state
+- last verification time
+- whether eFLOUD manages the replica
+
+The local-first implementation does not require this model. Exact content should
+not be dropped from the canonical store based solely on an unverified upstream
+locator.
+
 ## Policy Architecture
 
 Policies make structured decisions and do not directly perform transport or
@@ -762,10 +1056,10 @@ storage work.
 Important policy areas include:
 
 - source refresh
+- inventory/reconciliation completeness
 - retention and garbage collection
-- collection reconciliation/completeness
 - naming/logical artifact mapping
-- validation
+- validation/integrity expectations
 - dataset resolution
 
 Policy outputs should include actions, reasons, and structured details suitable
@@ -839,7 +1133,7 @@ semantic history or reproducibility.
 Repository data includes:
 
 - retained content objects
-- observations
+- observations/absences
 - provenance
 - source snapshots
 - derived artifact records
@@ -862,19 +1156,21 @@ adapted incrementally.
 
 A preferred migration sequence is:
 
-1. introduce repository artifact, content, observation, and provenance records
-2. make existing protocol adapters populate repository state alongside current
-   manifests
-3. make the blob store content-addressed and authoritative
-4. make source/file-tree synchronization produce artifact observations directly
-5. represent derived outputs and indexes as ordinary artifacts
-6. implement source and tree snapshots
-7. implement immutable datasets and migrate generic catalog functionality into
-   `efloud`
-8. make repository queries authoritative and reduce manifests/mirror scans to
-   compatibility views
-9. add Git and broader collection-source support
-10. remove obsolete path-centric and duplicated state mechanisms
+1. establish repository artifact/content/observation/provenance storage
+2. normalize source membership through `SourceInventory` and generic
+   reconciliation
+3. make collection/fanout use the same inventory/reconciliation model
+4. make derived outputs ordinary artifacts with producer identity and
+   deterministic `DerivationKey` semantics
+5. separate integrity expectations from actual content identity
+6. remove filesystem-path assumptions from the generic blob-store contract
+7. make repository queries/status/synchronization decisions authoritative and
+   reduce manifests/mirror scans to compatibility views
+8. formalize planner/executor/adapter interfaces around the proven semantics
+9. complete validation, dataset temporal policies, retention, and GC
+10. add Git and other source types only from concrete use cases
+11. remove obsolete path-centric and duplicated state mechanisms
+12. add safe native/virtual materializations and advanced/deferred features last
 
 During migration:
 
@@ -894,9 +1190,12 @@ efloud/
   engine.py
   repository.py
   sources.py
+  inventory.py
+  reconciliation.py
   artifacts.py
   provenance.py
   datasets.py
+  derivation.py
   operations.py
   policy.py
   validation.py
@@ -932,6 +1231,9 @@ repository / storage
         +----> query
         |
         v
+inventory / reconciliation / derivation
+        |
+        v
 planning / execution / adapters
         |
         v
@@ -947,10 +1249,15 @@ All implementations must preserve these invariants:
 - the repository is the authoritative source of semantic state
 - all authoritative mutation goes through repository operations
 - content objects are immutable and content-addressed
+- generic blob-store semantics do not require a local filesystem path
 - logical artifact identity is independent of storage paths
 - repeated observations do not require duplicate content
 - observations retain acquisition provenance even when content is unchanged
+- absence requires successful complete coverage of the relevant source scope
+- source inventory/change evidence is distinct from content identity
+- expected integrity is validated against independently computed content identity
 - fetched and derived artifacts use the same provenance model
+- deterministic derived reuse never erases current-run provenance
 - source snapshot completeness is explicit
 - filesystem paths and mirrors are representations, not identity
 - immutable datasets resolve to exact observations
@@ -963,3 +1270,5 @@ All implementations must preserve these invariants:
 - the default local implementation requires no database server
 - optional filesystem projections are read-only mutation boundaries
 - compatibility shims are explicit and testable
+- deferred replicas, mutable refs, and recursive Merkle trees must not complicate
+  the local core until concrete requirements justify them

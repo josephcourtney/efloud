@@ -68,13 +68,12 @@ class Engine:
         *,
         repository: Repository | None = None,
     ) -> Engine:
-        engine = cls.__new__(cls)
+        engine = cls(config.root, config.sources, repository=repository)
         engine.config = config
-        engine.repository = repository or Repository(config.root)
-        engine._owns_repository = repository is None
         return engine
 
     def __enter__(self) -> Engine:
+        """Return this engine for context-manager use."""
         return self
 
     def __exit__(
@@ -83,6 +82,7 @@ class Engine:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        """Close owned repository resources when leaving a context."""
         self.close()
 
     def close(self) -> None:

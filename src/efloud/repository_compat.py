@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from efloud.fs import atomic_write_text, safe_json_dump
 from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_none
 from efloud.repository_models import ArtifactAbsence, ContentId, RunId, SourceId
 
@@ -194,7 +195,7 @@ def _iso_timestamp(timestamp: float) -> str:
 def _manifest_errors(repository: Repository, run_id: RunId) -> list[ManifestError]:
     errors: list[ManifestError] = []
     for operation in repository.metadata.operations_for_run(run_id):
-        if operation.status not in {"failed", "partial"}:
+        if operation.status != "failed":
             continue
         detail = operation.details.get("error")
         error = detail if isinstance(detail, str) else operation.status
@@ -254,8 +255,24 @@ def repository_manifest(
     return manifest
 
 
+def write_repository_manifest(
+    repository: Repository,
+    *,
+    cfg: EngineConfig,
+    run_id: RunId | str | None = None,
+) -> tuple[NormalizedManifest, Path]:
+    """Atomically publish the canonical compatibility manifest from repository state."""
+
+    manifest = repository_manifest(repository, cfg=cfg, run_id=run_id)
+    path = Path(cfg.root) / cfg.log_dir / cfg.manifest_filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, safe_json_dump(manifest))
+    return manifest, path.resolve()
+
+
 __all__ = [
     "repository_exists",
     "repository_manifest",
     "repository_source_entry",
+    "write_repository_manifest",
 ]

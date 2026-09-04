@@ -6,36 +6,47 @@ Rules:
 
 - This is execution-level and ephemeral.
 - Remove completed items before committing.
-- Prefer concrete references (files/classes/tests) and explicit acceptance criteria.
+- Prefer concrete references and explicit acceptance criteria.
 
-## Phase 1: Continue Runtime-Seam Decomposition After Rsync Stabilization
+## 1. Land repository-native query and public read APIs
 
-### 1. Extract manifest payload shaping from `sync.py`
+Files: `src/efloud/repository_query.py`, `src/efloud/__init__.py`, query-focused tests
 
-Files: `src/efloud/sync.py` → `src/efloud/manifest_recorder.py`, `tests/unit/test_fanout_and_sync.py`
+- expose artifact, observation, source-snapshot/tree, and dataset reads without consulting sync manifests
+- support locator evaluation directly against immutable blob content
+- export `Repository`, `Engine`, dataset selectors/types, repository identities, and the repository query service from the package API
+- keep legacy `query_target()` behavior intact during this cutover
 
-- move `ManifestRecorder`, `_http_freshness_record`, `_http_manifest_entry`, `_rsync_manifest_entry`, and `_rsync_freshness_record` to a dedicated module
-- keep call sites in `sync.py` thin and orchestration-focused
-- preserve existing manifest schema and compatibility behavior
+Acceptance: focused tests cover present/absent artifact state, exact observation lookup, snapshot/tree lookup, dataset membership, and blob-backed locator evaluation.
 
-Acceptance: `sync.py` no longer defines manifest-entry builders; current manifest-related tests pass unchanged
+## 2. Move source/run/status inspection onto repository metadata
 
-### 2. Introduce a lightweight runtime seam
+Files: `src/efloud/metadata_store.py`, `src/efloud/sqlite_metadata.py`, repository query/status modules, tests
 
-Files: `src/efloud/runtime.py` (new), `src/efloud/sync.py`, `tests/unit/test_fanout_and_sync.py`
+- add read methods for sources, runs, operations, source snapshots, and materializations needed by status/reporting
+- make new source/run/status payloads derive from SQLite repository state
+- retain compatibility manifest/status functions until parity is demonstrated
 
-- add a minimal `Runtime` coordinator (dataclass or small class) that owns phase sequencing
-- make `sync()` delegate to the runtime coordinator while preserving `SyncResult` semantics
-- keep current transport behavior and manifest outputs identical
+Acceptance: representative source and run status can be produced after reopening the repository with no manifest or mirror-state read.
 
-Acceptance: `sync(cfg)` behavior is unchanged from caller perspective; at least one test asserts runtime delegation
+## 3. Implement authoritative rsync reconciliation
 
-### 3. Cache discovered rsync shard inventories
+Files: `src/efloud/transport/rsync.py`, repository ingestion/reconciliation modules, tests
 
-Files: `src/efloud/sync.py`, `tests/unit/test_fanout_and_sync.py`
+- obtain an explicit enumeration for the covered rsync scope
+- reconcile that enumeration against prior repository state
+- emit content observations for changed/new files and absence observations only when coverage proves deletion
+- create complete snapshots for fully enumerated scopes and scoped incomplete snapshots otherwise
+- avoid unconditional full-tree rehashing of unchanged files
 
-- add a short-TTL local cache for `pdb_mmcif` remote bucket discovery (`rsync --list-only`)
-- key cache entries by remote root + port so discovery is reused across repeated sync invocations
-- keep fallback behavior unchanged when discovery fails
+Acceptance: tests cover addition, modification, unchanged content, deletion, partial-scope sync, failed/incomplete enumeration, and repeated sync deduplication.
 
-Acceptance: repeated `pdb_mmcif` sync runs avoid redundant list-only discovery within cache TTL; tests cover hit/miss/fallback paths
+## 4. Switch compatibility outputs to repository-derived views
+
+Files: manifest/state/query/status compatibility modules and tests
+
+- generate canonical manifest/state facts from repository records where equivalent data exists
+- verify parity against current compatibility fixtures
+- remove any remaining read-side assumption that mirrors or JSON manifests are authoritative
+
+Acceptance: repository state is sufficient to reproduce required compatibility outputs for HTTP/REST and reconciled rsync fixtures.

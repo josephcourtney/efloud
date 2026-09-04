@@ -6,7 +6,11 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import] - structured rsy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from efloud.inventory import ChangeToken, InventoryCoverage, InventoryItem, SourceInventory
+from efloud.repository_models import ArtifactKey, SourceId
+
 if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
     from efloud.transport.rsync import RsyncMirrorConfig
 
 InventoryKind = Literal["file", "directory", "symlink"]
@@ -29,6 +33,74 @@ class RsyncInventory:
     scope: tuple[str, ...] = ()
     complete: bool = True
     error: str | None = None
+
+
+def rsync_change_token(
+    *,
+    kind: InventoryKind | str,
+    byte_size: int | None,
+    modified: str | None,
+    target: str | None = None,
+) -> ChangeToken | None:
+    """Return rsync list evidence suitable for change detection, never content identity."""
+
+    if modified is None:
+        return None
+    if kind == "file":
+        if byte_size is None:
+            return None
+        value = f"file:{byte_size}:{modified}"
+    elif kind == "symlink":
+        value = f"symlink:{target or ''}:{modified}"
+    else:
+        value = f"{kind}:{modified}"
+    return ChangeToken(kind="rsync-list-state", value=value, reliability="strong")
+
+
+def rsync_source_inventory(
+    inventory: RsyncInventory,
+    *,
+    source_id: SourceId | str,
+    observed_at: float,
+    upstream_root: str,
+) -> SourceInventory:
+    """Convert transport-specific rsync enumeration into normalized source evidence."""
+
+    normalized_source = SourceId(str(source_id))
+    items: list[InventoryItem] = []
+    for entry in inventory.entries:
+        metadata: JsonObject = {"kind": entry.kind}
+        if entry.byte_size is not None:
+            metadata["byte_size"] = entry.byte_size
+        if entry.modified is not None:
+            metadata["modified"] = entry.modified
+        if entry.target is not None:
+            metadata["target"] = entry.target
+        items.append(
+            InventoryItem(
+                item_id=entry.relative_path,
+                artifact_key=ArtifactKey(f"source:{normalized_source}:path:{entry.relative_path}"),
+                locator=f"{upstream_root.rstrip('/')}/{entry.relative_path}",
+                source_path=entry.relative_path,
+                change_token=rsync_change_token(
+                    kind=entry.kind,
+                    byte_size=entry.byte_size,
+                    modified=entry.modified,
+                    target=entry.target,
+                ),
+                metadata=metadata,
+            )
+        )
+    metadata: JsonObject = {"transport": "RSYNC"}
+    if inventory.error is not None:
+        metadata["error"] = inventory.error
+    return SourceInventory(
+        source_id=normalized_source,
+        observed_at=observed_at,
+        coverage=InventoryCoverage(scope=inventory.scope, complete=inventory.complete),
+        items=tuple(items),
+        metadata=metadata,
+    )
 
 
 def _normalize_relative_path(value: str) -> str | None:
@@ -169,4 +241,6 @@ __all__ = [
     "RsyncInventoryEntry",
     "enumerate_rsync",
     "parse_rsync_list_only",
+    "rsync_change_token",
+    "rsync_source_inventory",
 ]

@@ -8,44 +8,37 @@ Rules:
 - Remove completed items before committing.
 - Prefer concrete references and explicit acceptance criteria.
 
-## 1. Record collection and derived outputs as repository artifacts
+## 1. Route collection enumeration through `SourceInventory`
 
-Files: `src/efloud/fanout.py`, `src/efloud/derived.py`, `src/efloud/repository_recording.py`, tests
+Files: `src/efloud/fanout.py`, `src/efloud/repository_derived.py`, `src/efloud/inventory.py`, `src/efloud/reconciliation.py`, tests
 
-- import successful `REST_BASE` / fanout item outputs as logical artifact observations
-- preserve per-item request metadata and materialization paths
-- represent deterministic derived outputs with input observation provenance instead of treating them as opaque manifest payloads
-- record failed/missing collection items without inventing content observations
+- convert collection/fanout enumeration into `SourceInventory` with explicit complete/partial coverage
+- map collection item identities to deterministic logical artifact keys and locators
+- pass collection membership through `reconcile_inventory()` instead of collection-specific absence logic
+- preserve current item observations, request metadata, materialization paths, and source snapshots
 
-Acceptance: a fanout/derived run can be reopened from `metadata.sqlite` and its item artifacts, content, producer operation, inputs, and source snapshot can be inspected without reading a sync manifest.
+Acceptance: HTTP, rsync, and collection enumeration all use the same inventory/reconciliation semantics, and a complete collection enumeration can prove removed items absent without a collection-specific repository model.
 
-## 2. Generate compatibility manifests and state from repository records
+## 2. Remove `REST_BASE` reconciliation special cases
 
-Files: `src/efloud/manifest.py`, `src/efloud/state.py`, `src/efloud/repository_compat.py`, `src/efloud/query.py`, `src/efloud/status.py`, tests
+Files: `src/efloud/fanout.py`, `src/efloud/repository_derived.py`, `src/efloud/repository_recording.py`, tests
 
-- derive HTTP/REST, reconciled rsync, and collection/derived compatibility facts from repository metadata
-- preserve required legacy payload shapes while making SQLite/blob state authoritative
-- generate mirror/tree integrity facts from recorded source snapshots rather than rescanning mirrors where equivalent repository data exists
-- retain read fallback only for repositories that predate repository metadata
+- separate collection enumeration from per-item retrieval
+- use generic reconciliation decisions for new/changed/unchanged/absent collection members
+- ensure failed or partial enumeration never establishes absence
+- retain compatibility manifest/result serialization only at the compatibility boundary
 
-Acceptance: representative compatibility manifests/status/query payloads can be regenerated after deleting canonical manifest and mirror-state files.
+Acceptance: `RestBaseFanoutTask` behavior is expressible through ordinary source inventory, artifact observation, absence, and source-snapshot records.
 
-## 3. Remove remaining read-side manifest/mirror authority
-
-Files: source-result, resolve, health, store-inspection, summary, and compatibility modules; tests
-
-- route current-state reads through repository APIs whenever repository metadata exists
-- identify and delete duplicate source-result/state logic made obsolete by repository projections
-- keep legacy-file import/migration explicit rather than silently mixing two sources of truth
-
-Acceptance: no normal read path for an initialized repository requires canonical JSON manifests or `.mirror_meta.json` for authoritative artifact/source state.
-
-## 4. Run and repair the full repository quality gate
+## 3. Run and repair the Phase 6/7 quality gate
 
 Files: repository-wide as required
 
-- run formatting/lint, static typing, import contracts, focused repository tests, and full pytest suite
-- repair any issues introduced during the repository migration
-- verify SQLite v1→v2 migration and compatibility fallback fixtures
+- run `.venv/bin/ruff format src/ tests/`
+- run `.venv/bin/ruff check src/ tests/`
+- run `.venv/bin/ty check src/ tests/`
+- run focused inventory/reconciliation and rsync tests
+- run `.venv/bin/pytest`
+- verify the new public inventory/reconciliation imports and existing rsync behavior
 
-Acceptance: the normal project quality gate passes from a clean checkout.
+Acceptance: the normal project quality gate passes from a clean checkout without regressions in existing HTTP, REST, collection/fanout, or rsync behavior.

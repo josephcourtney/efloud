@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from efloud.json_types import JsonObject
-from efloud.repository_models import ArtifactAbsence, ContentId, SourceId
+from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_none
+from efloud.repository_models import ArtifactAbsence, ContentId, RunId, SourceId
 
 if TYPE_CHECKING:
-    from efloud.models import EngineConfig
+    from efloud.models import EngineConfig, NormalizedManifest
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
 
@@ -164,4 +166,95 @@ def repository_source_entry(
     return entry
 
 
-__all__ = ["repository_exists", "repository_source_entry"]
+def _derived_result_payload(repository: Repository, task_name: str) -> JsonObject | None:
+    observation = repository.latest_observation(f"derived:{task_name}:result")
+    if observation is None:
+        return None
+    try:
+        with repository.open_content(observation.content_id) as stream:
+            decoded = json.loads(stream.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    mapping = json_mapping_or_none(decoded)
+    return copy_json_mapping(mapping) if mapping is not None else None
+
+
+def _run_for_manifest(repository: Repository, run_id: RunId | str | None):
+    if run_id is not None:
+        return repository.metadata.run(RunId(str(run_id)))
+    runs = repository.metadata.recent_runs(limit=1)
+    return runs[0] if runs else None
+
+
+def _iso_timestamp(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def _manifest_errors(repository: Repository, run_id: RunId) -> list[dict[str, object]]:
+    errors: list[dict[str, object]] = []
+    for operation in repository.metadata.operations_for_run(run_id):
+        if operation.status not in {"failed", "partial"}:
+            continue
+        detail = operation.details.get("error")
+        error = detail if isinstance(detail, str) else operation.status
+        item: dict[str, object] = {
+            "phase": operation.kind,
+            "name": operation.subject,
+            "error": error,
+        }
+        if operation.source_id is not None:
+            item["source_id"] = str(operation.source_id)
+        errors.append(item)
+    return errors
+
+
+def repository_manifest(
+    repository: Repository,
+    *,
+    cfg: EngineConfig,
+    run_id: RunId | str | None = None,
+) -> NormalizedManifest:
+    """Serialize current repository state into the legacy normalized manifest shape."""
+
+    http: dict[str, JsonObject] = {}
+    rsync: dict[str, JsonObject] = {}
+    derived: dict[str, JsonObject] = {}
+
+    for source in cfg.sources:
+        if source.kind.value in {"HTTP", "REST"}:
+            http[source.id] = repository_source_entry(repository, source, cfg=cfg)
+        elif source.kind.value == "RSYNC":
+            rsync[source.id] = repository_source_entry(repository, source, cfg=cfg)
+
+    for task in cfg.derived_tasks:
+        payload = _derived_result_payload(repository, task.name)
+        if payload is not None:
+            derived[task.name] = payload
+
+    manifest: NormalizedManifest = {
+        "version": 1,
+        "root": str(Path(cfg.root).resolve()),
+        "results": {
+            "http": http,
+            "rsync": rsync,
+            "derived": derived,
+        },
+        "errors": [],
+    }
+    run = _run_for_manifest(repository, run_id)
+    if run is not None:
+        manifest["started_at_unix"] = int(run.started_at)
+        manifest["started_at_iso"] = _iso_timestamp(run.started_at)
+        if run.finished_at is not None:
+            manifest["finished_at_unix"] = int(run.finished_at)
+            manifest["finished_at_iso"] = _iso_timestamp(run.finished_at)
+            manifest["duration_seconds"] = max(0.0, run.finished_at - run.started_at)
+        manifest["errors"] = _manifest_errors(repository, run.run_id)
+    return manifest
+
+
+__all__ = [
+    "repository_exists",
+    "repository_manifest",
+    "repository_source_entry",
+]

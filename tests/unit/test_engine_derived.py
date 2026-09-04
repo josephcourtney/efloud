@@ -87,8 +87,8 @@ def test_engine_records_rest_base_fanout_result(tmp_path: Path, monkeypatch: pyt
         assert result.skipped_source_ids == ()
         item = engine.repository.latest_observation("source:collection:item:alpha")
         assert item is not None
-        derived_result = engine.repository.latest_observation("derived:fanout:result")
-        assert derived_result is not None
+        execution = engine.repository.latest_observation("derived:fanout:execution")
+        assert execution is not None
         snapshot = engine.repository.latest_source_snapshot("collection")
         assert snapshot is not None
         assert snapshot.complete

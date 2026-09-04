@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from efloud.fs import atomic_write_text, safe_json_dump
 from efloud.registry import SourceKind
 from efloud.repository_models import ArtifactObservation, SourceId
 from efloud.state import HASH_ALGORITHM, MirrorSourceState, MirrorState, MirrorStateNode
@@ -125,12 +126,14 @@ def repository_mirror_state(
 ) -> MirrorState | None:
     """Build compatibility mirror state without rescanning mirror files.
 
-    Returns ``None`` when any configured rsync source lacks a complete repository
-    reconciliation baseline, because a full mirror-state tree would then overstate
-    what the repository actually knows.
+    Returns ``None`` when there are no configured rsync sources or when any
+    configured rsync source lacks a complete repository reconciliation baseline.
     """
 
     rsync_sources = [source for source in cfg.sources if source.kind is SourceKind.RSYNC]
+    if not rsync_sources:
+        return None
+
     global_directory = _Directory()
     source_states: list[MirrorSourceState] = []
 
@@ -180,8 +183,6 @@ def write_repository_mirror_state(
         return None, None
     path = Path(cfg.root) / cfg.state_filename
     path.parent.mkdir(parents=True, exist_ok=True)
-    from efloud.fs import atomic_write_text, safe_json_dump
-
     atomic_write_text(path, safe_json_dump(state.to_dict()))
     return state, path.resolve()
 

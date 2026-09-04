@@ -21,8 +21,10 @@ class InventoryCoverage:
     complete: bool = True
 
     def contains(self, source_path: str | None) -> bool:
-        if source_path is None or not self.scope:
+        if not self.scope:
             return True
+        if source_path is None:
+            return False
         normalized = source_path.strip("/")
         return any(
             normalized == item.strip("/") or normalized.startswith(item.strip("/") + "/")

@@ -1,6 +1,9 @@
-from pathlib import Path
-from typing import Protocol
+from __future__ import annotations
 
+from pathlib import Path
+from typing import Protocol, runtime_checkable
+
+from efloud.json_types import JsonObject
 from efloud.models import NormalizedManifest
 from efloud.registry import SourceDefinition
 
@@ -15,3 +18,16 @@ class DerivedTask(Protocol):
         manifest: NormalizedManifest,
         sources: tuple[SourceDefinition, ...],
     ) -> dict[str, object]: ...
+
+
+@runtime_checkable
+class RepositoryDerivedTask(Protocol):
+    """Optional metadata contract for provenance-complete derived-task recording."""
+
+    repository_version: str
+    repository_input_source_ids: tuple[str, ...]
+
+    def repository_parameters(self) -> JsonObject: ...
+
+
+__all__ = ["DerivedTask", "RepositoryDerivedTask"]

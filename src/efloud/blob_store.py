@@ -10,6 +10,9 @@ from typing import BinaryIO, Protocol
 
 from efloud.repository_models import ContentId, ContentRef
 
+CHUNK_SIZE = 1024 * 1024
+SHA256_HEX_LENGTH = 64
+
 
 class BlobStore(Protocol):
     def put_path(self, path: Path, *, media_type: str | None = None) -> ContentRef: ...
@@ -28,6 +31,7 @@ class FilesystemBlobStore:
     root: Path
 
     def __post_init__(self) -> None:
+        """Ensure the blob-store root exists."""
         self.root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -35,7 +39,7 @@ class FilesystemBlobStore:
         hasher = hashlib.sha256()
         size = 0
         with path.open("rb") as fin:
-            while chunk := fin.read(1024 * 1024):
+            while chunk := fin.read(CHUNK_SIZE):
                 hasher.update(chunk)
                 size += len(chunk)
         return hasher.hexdigest(), size
@@ -52,7 +56,7 @@ class FilesystemBlobStore:
             msg = f"Unsupported content identifier: {text!r}"
             raise ValueError(msg)
         digest = text.removeprefix(prefix)
-        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+        if len(digest) != SHA256_HEX_LENGTH or any(ch not in "0123456789abcdef" for ch in digest):
             msg = f"Invalid SHA-256 content identifier: {text!r}"
             raise ValueError(msg)
         return digest
@@ -86,7 +90,7 @@ class FilesystemBlobStore:
         tmp_path: Path | None = Path(tmp_name)
         try:
             with source.open("rb") as fin, tmp_path.open("wb") as fout:
-                shutil.copyfileobj(fin, fout, length=1024 * 1024)
+                shutil.copyfileobj(fin, fout, length=CHUNK_SIZE)
                 fout.flush()
                 os.fsync(fout.fileno())
             try:

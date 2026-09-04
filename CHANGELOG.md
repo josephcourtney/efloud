@@ -18,14 +18,22 @@ Items should be categorized under these headings:
 ## Unreleased
 
 ### Added
+- add a repository-centered storage foundation with stable source/artifact/content/observation/run/operation/snapshot/dataset identities, SHA-256 content-addressed blob storage, and SQLite metadata persistence
+- add provenance edges, validation records, materialization records, source/tree snapshots, and explicit artifact-absence states so repository history can distinguish unchanged content, changed content, and known absence
+- add immutable datasets with exact, latest, latest-before, and latest-all selection plus separate provenance-sensitive dataset identity and content-equivalence identity
+- add a transitional `Engine` that preserves existing sync outputs while recording HTTP/REST acquisitions and rsync file deltas into the repository
 
 ### Changed
+- change temporal dataset resolution to treat an explicit later absence as authoritative instead of falling back to an older content-bearing observation
+- record legacy rsync changes as scoped, incomplete repository snapshots; source-relative paths are preserved, but deletion is not inferred when the existing rsync mode cannot prove upstream absence
+- add additive SQLite schema migration support for repository metadata evolution
 
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+- prevent temporal dataset selection from resurrecting files that have a later authoritative absence observation
 
 ### Security
 

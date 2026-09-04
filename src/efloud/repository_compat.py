@@ -9,7 +9,8 @@ from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_non
 from efloud.repository_models import ArtifactAbsence, ContentId, RunId, SourceId
 
 if TYPE_CHECKING:
-    from efloud.models import EngineConfig, NormalizedManifest
+    from efloud.metadata_store import RunRecord
+    from efloud.models import EngineConfig, ManifestError, NormalizedManifest
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
 
@@ -166,8 +167,8 @@ def repository_source_entry(
     return entry
 
 
-def _derived_result_payload(repository: Repository, task_name: str) -> JsonObject | None:
-    observation = repository.latest_observation(f"derived:{task_name}:result")
+def _derived_execution_payload(repository: Repository, task_name: str) -> JsonObject | None:
+    observation = repository.latest_observation(f"derived:{task_name}:execution")
     if observation is None:
         return None
     try:
@@ -179,7 +180,7 @@ def _derived_result_payload(repository: Repository, task_name: str) -> JsonObjec
     return copy_json_mapping(mapping) if mapping is not None else None
 
 
-def _run_for_manifest(repository: Repository, run_id: RunId | str | None):
+def _run_for_manifest(repository: Repository, run_id: RunId | str | None) -> RunRecord | None:
     if run_id is not None:
         return repository.metadata.run(RunId(str(run_id)))
     runs = repository.metadata.recent_runs(limit=1)
@@ -190,14 +191,14 @@ def _iso_timestamp(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=UTC).isoformat().replace("+00:00", "Z")
 
 
-def _manifest_errors(repository: Repository, run_id: RunId) -> list[dict[str, object]]:
-    errors: list[dict[str, object]] = []
+def _manifest_errors(repository: Repository, run_id: RunId) -> list[ManifestError]:
+    errors: list[ManifestError] = []
     for operation in repository.metadata.operations_for_run(run_id):
         if operation.status not in {"failed", "partial"}:
             continue
         detail = operation.details.get("error")
         error = detail if isinstance(detail, str) else operation.status
-        item: dict[str, object] = {
+        item: ManifestError = {
             "phase": operation.kind,
             "name": operation.subject,
             "error": error,
@@ -227,7 +228,7 @@ def repository_manifest(
             rsync[source.id] = repository_source_entry(repository, source, cfg=cfg)
 
     for task in cfg.derived_tasks:
-        payload = _derived_result_payload(repository, task.name)
+        payload = _derived_execution_payload(repository, task.name)
         if payload is not None:
             derived[task.name] = payload
 

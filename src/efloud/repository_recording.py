@@ -139,6 +139,71 @@ class RepositorySyncRecorder:
             if source.kind is SourceKind.REST_BASE and source.id not in handled_collection_sources:
                 self.skipped_source_ids.append(source.id)
 
+        self._import_manifest_errors(result)
+
+    def _import_manifest_errors(self, result: SyncResult) -> None:
+        raw_errors = result.manifest.get("errors", [])
+        if not isinstance(raw_errors, list):
+            return
+
+        operations = self.repository.metadata.operations_for_run(self.run_id)
+        existing_keys = {
+            (
+                operation.kind,
+                operation.subject,
+                str(operation.source_id) if operation.source_id is not None else None,
+            )
+            for operation in operations
+        }
+        existing_source_failures = {
+            (operation.kind, str(operation.source_id))
+            for operation in operations
+            if operation.source_id is not None and operation.status in {"failed", "partial"}
+        }
+        known_source_ids = {source.id for source in self.config.sources}
+
+        for raw_error in raw_errors:
+            error_mapping = json_mapping_or_none(raw_error)
+            if error_mapping is None:
+                continue
+            phase_value = error_mapping.get("phase")
+            phase = phase_value.strip().lower() if isinstance(phase_value, str) else "sync"
+            source_value = error_mapping.get("source_id")
+            source_text = source_value if isinstance(source_value, str) else None
+            source_id = SourceId(source_text) if source_text in known_source_ids else None
+            name_value = error_mapping.get("name")
+            subject = (
+                name_value
+                if isinstance(name_value, str) and name_value
+                else source_text or phase
+            )
+            key = (phase, subject, source_text if source_id is not None else None)
+            if key in existing_keys:
+                continue
+            if source_text is not None and (phase, source_text) in existing_source_failures:
+                continue
+
+            operation_id = self.repository.start_operation(
+                run_id=self.run_id,
+                source_id=source_id,
+                kind=phase,
+                subject=subject,
+                parameters={"compatibility_manifest_error": True},
+            )
+            error_value = error_mapping.get("error")
+            error_text = error_value if isinstance(error_value, str) else "sync operation failed"
+            self.repository.finish_operation(
+                operation_id,
+                status="failed",
+                details={
+                    "error": error_text,
+                    "compatibility_manifest_error": True,
+                },
+            )
+            existing_keys.add(key)
+            if source_text is not None:
+                existing_source_failures.add((phase, source_text))
+
     def _import_http_source(self, source: SourceDefinition, entry: JsonMapping) -> None:
         operation_id = self._start_source_operation(source)
         if entry.get("ok") is False:

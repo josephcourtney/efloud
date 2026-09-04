@@ -77,7 +77,7 @@ def _collection_payload(
     }
 
 
-def test_complete_collection_records_items_absence_snapshot_and_result(tmp_path: Path) -> None:
+def test_complete_collection_records_items_absence_snapshot_and_execution(tmp_path: Path) -> None:
     source = SourceDefinition(
         "collection",
         "Collection",
@@ -120,10 +120,11 @@ def test_complete_collection_records_items_absence_snapshot_and_result(tmp_path:
         entries = repository.tree_entries(snapshot.tree_id)
         assert {entry.metadata["item_id"] for entry in entries} == {"alpha", "missing"}
 
-        result = repository.latest_observation("derived:fanout:result")
-        assert result is not None
-        assert result.media_type == "application/json"
-        assert result.metadata["collection_snapshot_id"] == str(snapshot.snapshot_id)
+        execution = repository.latest_observation("derived:fanout:execution")
+        assert execution is not None
+        assert execution.media_type == "application/json"
+        assert execution.metadata["collection_snapshot_id"] == str(snapshot.snapshot_id)
+        assert execution.metadata["compatibility_execution_record"] is True
 
 
 def test_complete_collection_enumeration_records_removed_item_absence(tmp_path: Path) -> None:
@@ -178,7 +179,7 @@ class DerivedFileTask:
         return {}
 
 
-def test_generic_derived_task_records_output_and_result(tmp_path: Path) -> None:
+def test_generic_derived_task_records_output_and_execution(tmp_path: Path) -> None:
     output = tmp_path / "derived.txt"
     output.write_text("derived bytes", encoding="utf-8")
     task = DerivedFileTask()
@@ -199,7 +200,8 @@ def test_generic_derived_task_records_output_and_result(tmp_path: Path) -> None:
         assert artifact is not None
         with repository.open_content(artifact.content_id) as stream:
             assert stream.read() == b"derived bytes"
-        result = repository.latest_observation("derived:derived-file:result")
-        assert result is not None
-        assert result.metadata["task_version"] == "3"
-        assert result.metadata["provenance_complete"] is True
+        execution = repository.latest_observation("derived:derived-file:execution")
+        assert execution is not None
+        assert execution.metadata["task_version"] == "3"
+        assert execution.metadata["provenance_complete"] is True
+        assert execution.metadata["input_observation_ids"] == []

@@ -27,6 +27,43 @@ from efloud.repository_models import (
 
 
 @dataclass(frozen=True, slots=True)
+class SourceRecord:
+    source_id: SourceId
+    definition: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class RunRecord:
+    run_id: RunId
+    started_at: float
+    finished_at: float | None
+    status: str
+    metadata: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class OperationRecord:
+    operation_id: OperationId
+    run_id: RunId
+    source_id: SourceId | None
+    kind: str
+    subject: str
+    started_at: float
+    finished_at: float | None
+    status: str
+    parameters: JsonObject
+    details: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializationRecord:
+    content_id: ContentId
+    kind: str
+    path: str
+    metadata: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetMemberRecord:
     artifact_key: ArtifactKey
     observation_id: ObservationId
@@ -49,6 +86,10 @@ class MetadataStore(Protocol):
 
     def register_source(self, source_id: SourceId, definition: JsonObject) -> None: ...
 
+    def source(self, source_id: SourceId) -> SourceRecord | None: ...
+
+    def sources(self) -> tuple[SourceRecord, ...]: ...
+
     def start_run(
         self,
         run_id: RunId,
@@ -58,6 +99,10 @@ class MetadataStore(Protocol):
     ) -> None: ...
 
     def finish_run(self, run_id: RunId, *, finished_at: float, status: str) -> None: ...
+
+    def run(self, run_id: RunId) -> RunRecord | None: ...
+
+    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...
 
     def start_operation(
         self,
@@ -80,6 +125,15 @@ class MetadataStore(Protocol):
         details: JsonObject,
     ) -> None: ...
 
+    def operations_for_run(self, run_id: RunId) -> tuple[OperationRecord, ...]: ...
+
+    def operations_for_source(
+        self,
+        source_id: SourceId,
+        *,
+        limit: int = 50,
+    ) -> tuple[OperationRecord, ...]: ...
+
     def record_observation_bundle(
         self,
         *,
@@ -98,6 +152,8 @@ class MetadataStore(Protocol):
         path: str,
         metadata: JsonObject,
     ) -> None: ...
+
+    def materializations_for(self, content_id: ContentId) -> tuple[MaterializationRecord, ...]: ...
 
     def record_validation(self, result: ValidationResult) -> None: ...
 
@@ -133,6 +189,13 @@ class MetadataStore(Protocol):
 
     def latest_source_snapshot(self, source_id: SourceId) -> SourceSnapshot | None: ...
 
+    def source_snapshots_for(
+        self,
+        source_id: SourceId,
+        *,
+        limit: int = 50,
+    ) -> tuple[SourceSnapshot, ...]: ...
+
     def record_dataset(self, record: DatasetRecord) -> None: ...
 
     def dataset(self, dataset_id: DatasetId) -> DatasetRecord | None: ...
@@ -141,5 +204,9 @@ class MetadataStore(Protocol):
 __all__ = [
     "DatasetMemberRecord",
     "DatasetRecord",
+    "MaterializationRecord",
     "MetadataStore",
+    "OperationRecord",
+    "RunRecord",
+    "SourceRecord",
 ]

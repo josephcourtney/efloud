@@ -8,7 +8,6 @@ from efloud.derived import RepositoryDerivedTask
 from efloud.json_types import JsonMapping, JsonObject, copy_json_mapping, json_mapping_or_none
 from efloud.registry import SourceKind
 from efloud.repository_models import (
-    ArtifactAbsence,
     ArtifactObservation,
     ObservationId,
     OperationId,
@@ -72,12 +71,14 @@ def _operation_parameters(
     task_parameters: JsonObject,
     input_source_ids: tuple[str, ...],
     input_snapshot_ids: list[str],
+    input_observation_ids: tuple[ObservationId, ...],
 ) -> JsonObject:
     payload: JsonObject = {
         "task": task_name,
         "parameters": dict(task_parameters),
         "input_source_ids": list(input_source_ids),
         "input_snapshot_ids": list(input_snapshot_ids),
+        "input_observation_ids": [str(item) for item in input_observation_ids],
     }
     if task_version is not None:
         payload["task_version"] = task_version
@@ -165,7 +166,7 @@ def _record_collection(
     run_id: RunId,
     operation_id: OperationId,
     observed_at: float,
-) -> tuple[list[ObservationId], str | None]:
+) -> tuple[list[ObservationId], str]:
     entries = json_mapping_or_none(payload.get("entries")) or {}
     enumeration = json_mapping_or_none(payload.get("enumeration")) or {}
     enumeration_complete = enumeration.get("complete") is True
@@ -197,9 +198,10 @@ def _record_collection(
         destination = entry.get("dest")
 
         if status == "ok" and isinstance(destination, str) and Path(destination).is_file():
+            path = Path(destination)
             observation = repository.ingest_path(
                 f"source:{source_id}:item:{item_id}",
-                Path(destination),
+                path,
                 run_id=run_id,
                 operation_id=operation_id,
                 source_id=source_id,
@@ -216,7 +218,7 @@ def _record_collection(
                     relative_path=relative_path,
                     kind="file",
                     content_id=observation.content_id,
-                    byte_size=Path(destination).stat().st_size,
+                    byte_size=path.stat().st_size,
                     metadata=tree_metadata,
                 )
             )
@@ -237,11 +239,7 @@ def _record_collection(
             )
             observations.append(absence.observation_id)
             tree_entries.append(
-                TreeEntry(
-                    relative_path=relative_path,
-                    kind="absent",
-                    metadata=tree_metadata,
-                )
+                TreeEntry(relative_path=relative_path, kind="absent", metadata=tree_metadata)
             )
             absent_count += 1
             continue
@@ -256,16 +254,20 @@ def _record_collection(
         )
         unresolved_count += 1
 
-    removed = _record_removed_collection_items(
-        repository,
-        source_id=source_id,
-        run_id=run_id,
-        operation_id=operation_id,
-        observed_at=observed_at,
-        previous=previous,
-        current_item_ids=current_item_ids,
-        task_name=task_name,
-    ) if enumeration_complete else []
+    removed = (
+        _record_removed_collection_items(
+            repository,
+            source_id=source_id,
+            run_id=run_id,
+            operation_id=operation_id,
+            observed_at=observed_at,
+            previous=previous,
+            current_item_ids=current_item_ids,
+            task_name=task_name,
+        )
+        if enumeration_complete
+        else []
+    )
     observations.extend(removed)
 
     snapshot = repository.record_tree_snapshot(
@@ -367,12 +369,14 @@ def import_derived_results(
                 task_parameters=task_parameters,
                 input_source_ids=input_source_ids,
                 input_snapshot_ids=input_snapshot_ids,
+                input_observation_ids=input_ids,
             ),
         )
 
         task_metadata: JsonObject = {
             "task": task_name,
             "input_snapshot_ids": input_snapshot_ids,
+            "input_observation_ids": [str(item) for item in input_ids],
             "provenance_complete": task is not None and isinstance(task, RepositoryDerivedTask),
         }
         if task_version is not None:
@@ -407,25 +411,29 @@ def import_derived_results(
         if output_id is not None:
             observations.append(output_id)
 
-        result_inputs = list(input_ids)
+        execution_inputs = list(input_ids)
         if output_id is not None:
-            result_inputs.append(output_id)
-        result_observation = repository.ingest_bytes(
-            f"derived:{task_name}:result",
+            execution_inputs.append(output_id)
+        execution_metadata = {
+            **task_metadata,
+            "compatibility_execution_record": True,
+        }
+        execution_observation = repository.ingest_bytes(
+            f"derived:{task_name}:execution",
             canonical_json_bytes(copy_json_mapping(payload)),
             run_id=run_id,
             operation_id=operation_id,
             source_id=source_id,
             observed_at=started_at,
             media_type="application/json",
-            metadata=task_metadata,
-            inputs=tuple(result_inputs),
+            metadata=execution_metadata,
+            inputs=tuple(execution_inputs),
         )
-        observations.append(result_observation.observation_id)
+        observations.append(execution_observation.observation_id)
 
         status = _result_status(payload)
         details: JsonObject = {
-            "result_observation_id": str(result_observation.observation_id),
+            "execution_observation_id": str(execution_observation.observation_id),
             "input_observation_count": len(input_ids),
         }
         if collection_snapshot_id is not None:

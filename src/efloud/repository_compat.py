@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from efloud.json_types import JsonObject
-from efloud.repository_models import ArtifactAbsence, SourceId
+from efloud.repository_models import ArtifactAbsence, ContentId, SourceId
 
 if TYPE_CHECKING:
     from efloud.models import EngineConfig
@@ -35,7 +35,7 @@ def _latest_operation_payload(repository: Repository, source_id: SourceId) -> Js
     return payload
 
 
-def _materialized_path(repository: Repository, content_id: str) -> str | None:
+def _materialized_path(repository: Repository, content_id: ContentId) -> str | None:
     materializations = repository.metadata.materializations_for(content_id)
     if not materializations:
         return None
@@ -63,7 +63,7 @@ def _http_entry(
     if state is not None and not isinstance(state, ArtifactAbsence):
         entry["observation_id"] = str(state.observation_id)
         entry["content_id"] = str(state.content_id)
-        destination = _materialized_path(repository, str(state.content_id))
+        destination = _materialized_path(repository, state.content_id)
         if destination is not None:
             entry["dest"] = destination
         freshness: JsonObject = {"fetched_at_unix": state.observed_at}
@@ -76,6 +76,8 @@ def _http_entry(
             if isinstance(evidence, dict):
                 for key in ("etag", "last_modified", "status_code"):
                     value = evidence.get(key)
+                    if isinstance(value, bool):
+                        continue
                     if isinstance(value, str | int):
                         freshness[key] = value
         entry["freshness"] = freshness
@@ -122,7 +124,7 @@ def _rsync_entry(
                 "absence_count",
             ):
                 value = evidence.get(key)
-                if isinstance(value, int):
+                if isinstance(value, int) and not isinstance(value, bool):
                     entry[key] = value
     if operation_payload is not None:
         entry["operation"] = operation_payload

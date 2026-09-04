@@ -15,6 +15,7 @@ from efloud.datasets import (
     LatestAll,
     LatestBefore,
 )
+from efloud.derived import RepositoryDerivedTask
 from efloud.engine import Engine, EngineSyncResult
 from efloud.fanout import FanoutItem, RestBaseFanoutTask, two_char_bucket
 from efloud.health import MirrorHealthSummary, build_mirror_health_summary
@@ -36,6 +37,7 @@ from efloud.query import query_target, root_payload, source_payload, store_paylo
 from efloud.query_targets import QueryTarget, parse_query_target
 from efloud.registry import MirrorMode, SourceDefinition, SourceKind
 from efloud.repository import Repository
+from efloud.repository_compat import repository_manifest, write_repository_manifest
 from efloud.repository_models import (
     ArtifactAbsence,
     ArtifactKey,
@@ -145,6 +147,7 @@ __all__ = [
     "ProvenanceEdge",
     "QueryTarget",
     "Repository",
+    "RepositoryDerivedTask",
     "RepositoryQueryService",
     "RepositoryStatusService",
     "RestBaseFanoutTask",
@@ -199,6 +202,7 @@ __all__ = [
     "parse_query_target",
     "query_target",
     "rel_to_root",
+    "repository_manifest",
     "repository_query",
     "root_payload",
     "sha256_hex",
@@ -215,4 +219,5 @@ __all__ = [
     "sync_manifest_metadata",
     "two_char_bucket",
     "verify_gzip",
+    "write_repository_manifest",
 ]

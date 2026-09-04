@@ -58,6 +58,7 @@ from efloud.repository_models import (
     ValidationResult,
 )
 from efloud.repository_query import RepositoryQueryService, repository_query
+from efloud.repository_state import repository_mirror_state, write_repository_mirror_state
 from efloud.repository_status import RepositoryStatusService
 from efloud.resolve import (
     manifest_entry_for_source_aliasable,
@@ -203,6 +204,7 @@ __all__ = [
     "query_target",
     "rel_to_root",
     "repository_manifest",
+    "repository_mirror_state",
     "repository_query",
     "root_payload",
     "sha256_hex",
@@ -220,4 +222,5 @@ __all__ = [
     "two_char_bucket",
     "verify_gzip",
     "write_repository_manifest",
+    "write_repository_mirror_state",
 ]

@@ -5,11 +5,16 @@ from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 
+import anyio
+
 from efloud.json_types import JsonMapping, JsonObject, json_mapping_or_none
 from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId, TreeEntry
+from efloud.rsync_reconciliation import reconcile_rsync_inventory
+from efloud.transport.rsync import RsyncMirrorConfig
+from efloud.transport.rsync_inventory import enumerate_rsync
 
 
 def _source_definition_payload(source: SourceDefinition) -> JsonObject:
@@ -87,7 +92,7 @@ class RepositorySyncRecorder:
             parameters={"url": source.url},
         )
 
-    def import_result(self, result: SyncResult) -> None:
+    async def import_result(self, result: SyncResult) -> None:
         if self.config.dry_run:
             return
         results = result.manifest.get("results", {})
@@ -108,7 +113,7 @@ class RepositorySyncRecorder:
                 if mapping is None:
                     self.skipped_source_ids.append(source.id)
                     continue
-                self._import_rsync_source(source, mapping)
+                await self._import_rsync_source(source, mapping)
                 continue
             self.skipped_source_ids.append(source.id)
 
@@ -116,7 +121,9 @@ class RepositorySyncRecorder:
         operation_id = self._start_source_operation(source)
         if entry.get("ok") is False:
             error = entry.get("error")
-            details: JsonObject = {"error": error if isinstance(error, str) else "source acquisition failed"}
+            details: JsonObject = {
+                "error": error if isinstance(error, str) else "source acquisition failed"
+            }
             self.repository.finish_operation(operation_id, status="failed", details=details)
             return
 
@@ -200,9 +207,6 @@ class RepositorySyncRecorder:
                     continue
                 normalized = raw.strip().replace("\\", "/")
                 if normalized.startswith("deleting "):
-                    # Legacy rsync does not run with deletion reconciliation, so a
-                    # deletion-looking itemized line is not sufficient evidence for
-                    # an authoritative absence observation.
                     continue
                 normalized = normalized.strip("/")
                 if normalized and normalized != ".mirror_meta.json":
@@ -218,24 +222,17 @@ class RepositorySyncRecorder:
         candidate = root_resolved.joinpath(*relative.parts).resolve(strict=False)
         return candidate if candidate.is_relative_to(root_resolved) else None
 
-    def _import_rsync_source(self, source: SourceDefinition, entry: JsonMapping) -> None:
-        operation_id = self._start_source_operation(source)
-        if entry.get("ok") is False:
-            error = entry.get("error")
-            details: JsonObject = {"error": error if isinstance(error, str) else "rsync acquisition failed"}
-            self.repository.finish_operation(operation_id, status="failed", details=details)
-            return
-
-        local_value = entry.get("local")
-        if not isinstance(local_value, str):
-            self.repository.finish_operation(
-                operation_id,
-                status="failed",
-                details={"error": "successful rsync result has no local mirror root"},
-            )
-            return
-        local_root = Path(local_value)
-        scope = self._rsync_scope(entry)
+    def _legacy_rsync_delta(
+        self,
+        *,
+        source: SourceDefinition,
+        entry: JsonMapping,
+        operation_id: OperationId,
+        local_root: Path,
+        scope: tuple[str, ...],
+        observed_at: float,
+        inventory_error: str,
+    ) -> None:
         updated_paths = self._rsync_updated_paths(entry)
         tree_entries: list[TreeEntry] = []
         ingested = 0
@@ -245,7 +242,11 @@ class RepositorySyncRecorder:
                 continue
             if path.is_symlink():
                 tree_entries.append(
-                    TreeEntry(relative_path=relative_path, kind="symlink", target=path.readlink().as_posix())
+                    TreeEntry(
+                        relative_path=relative_path,
+                        kind="symlink",
+                        target=path.readlink().as_posix(),
+                    )
                 )
                 continue
             if path.is_dir():
@@ -259,7 +260,7 @@ class RepositorySyncRecorder:
                 run_id=self.run_id,
                 operation_id=operation_id,
                 source_id=SourceId(source.id),
-                observed_at=self.started_at,
+                observed_at=observed_at,
                 source_path=relative_path,
                 upstream_locator=f"{source.url.rstrip('/')}/{relative_path}",
                 metadata={"transport": "RSYNC", "compatibility_import": True},
@@ -276,29 +277,100 @@ class RepositorySyncRecorder:
             )
             ingested += 1
 
-        evidence: JsonObject = {
-            "transport": "RSYNC",
-            "compatibility_import": True,
-            "reconciliation_complete": False,
-            "changed_entry_count": len(updated_paths),
-            "ingested_file_count": ingested,
-        }
-        # The legacy RsyncMirror uses delete=False. Even a whole-source transfer
-        # therefore cannot establish upstream absence, so this snapshot must not
-        # claim complete source coverage.
         self.repository.record_tree_snapshot(
             source_id=SourceId(source.id),
             run_id=self.run_id,
             entries=tree_entries,
             complete=False,
             scope=scope,
-            observed_at=self.started_at,
-            evidence=evidence,
+            observed_at=observed_at,
+            evidence={
+                "transport": "RSYNC",
+                "compatibility_import": True,
+                "reconciliation_complete": False,
+                "enumeration_complete": False,
+                "inventory_error": inventory_error,
+                "changed_entry_count": len(updated_paths),
+                "ingested_file_count": ingested,
+            },
         )
         self.repository.finish_operation(
             operation_id,
             status="success",
-            details={"ingested_file_count": ingested, "reconciliation_complete": False},
+            details={
+                "ingested_file_count": ingested,
+                "reconciliation_complete": False,
+                "inventory_error": inventory_error,
+            },
+        )
+
+    async def _import_rsync_source(self, source: SourceDefinition, entry: JsonMapping) -> None:
+        operation_id = self._start_source_operation(source)
+        if entry.get("ok") is False:
+            error = entry.get("error")
+            details: JsonObject = {
+                "error": error if isinstance(error, str) else "rsync acquisition failed"
+            }
+            self.repository.finish_operation(operation_id, status="failed", details=details)
+            return
+
+        local_value = entry.get("local")
+        if not isinstance(local_value, str):
+            self.repository.finish_operation(
+                operation_id,
+                status="failed",
+                details={"error": "successful rsync result has no local mirror root"},
+            )
+            return
+        local_root = Path(local_value)
+        if not local_root.is_absolute():
+            local_root = Path(self.config.root) / local_root
+        scope = self._rsync_scope(entry)
+        observed_at = time.time()
+        inventory_cfg = RsyncMirrorConfig(
+            name=source.id,
+            remote=source.url,
+            local=local_root,
+            port=source.port,
+            include=source.include or (),
+            exclude=source.exclude or (),
+        )
+        inventory = await anyio.to_thread.run_sync(
+            lambda: enumerate_rsync(inventory_cfg, scope=scope)
+        )
+        if not inventory.complete:
+            self._legacy_rsync_delta(
+                source=source,
+                entry=entry,
+                operation_id=operation_id,
+                local_root=local_root,
+                scope=scope,
+                observed_at=observed_at,
+                inventory_error=inventory.error or "rsync inventory unavailable",
+            )
+            return
+
+        reconciled = reconcile_rsync_inventory(
+            self.repository,
+            source_id=SourceId(source.id),
+            run_id=self.run_id,
+            operation_id=operation_id,
+            local_root=local_root,
+            inventory=inventory,
+            observed_at=observed_at,
+            upstream_root=source.url,
+        )
+        self.observations.extend(reconciled.observations)
+        self.repository.finish_operation(
+            operation_id,
+            status="success" if reconciled.complete else "failed",
+            details={
+                "reconciliation_complete": reconciled.complete,
+                "ingested_file_count": reconciled.ingested_file_count,
+                "reused_content_count": reconciled.reused_content_count,
+                "absence_count": reconciled.absence_count,
+                **({"error": reconciled.error} if reconciled.error is not None else {}),
+            },
         )
 
     def finish(self, *, ok: bool) -> None:

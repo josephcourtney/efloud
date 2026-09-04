@@ -4,14 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from efloud.repository_models import (
-    ArtifactObservation,
-    ObservationId,
-    OperationId,
-    RunId,
-    SourceId,
-    TreeEntry,
-)
+from efloud.reconciliation import PreviousInventoryItem, ReconciliationDecision, reconcile_inventory
+from efloud.repository_models import ObservationId, OperationId, RunId, SourceId, TreeEntry
+from efloud.transport.rsync_inventory import rsync_change_token, rsync_source_inventory
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
@@ -64,7 +59,8 @@ def _path_in_scope(path: str, scope: tuple[str, ...]) -> bool:
         return True
     normalized = path.strip("/")
     return any(
-        normalized == item.rstrip("/") or normalized.startswith(item.rstrip("/") + "/") for item in scope
+        normalized == item.rstrip("/") or normalized.startswith(item.rstrip("/") + "/")
+        for item in scope
     )
 
 
@@ -90,29 +86,19 @@ def _tree_metadata(entry: RsyncInventoryEntry) -> JsonObject:
     return metadata
 
 
-def _unchanged(previous: TreeEntry | None, current: RsyncInventoryEntry) -> bool:
-    if previous is None or previous.kind != "file" or previous.content_id is None:
-        return False
-    if current.kind != "file" or previous.byte_size != current.byte_size:
-        return False
-    previous_modified = previous.metadata.get("rsync_modified")
-    return current.modified is not None and previous_modified == current.modified
-
-
 def _observe_existing_content(
     context: _ReconciliationContext,
     *,
-    previous: TreeEntry,
-    artifact_key: str,
+    previous: PreviousInventoryItem,
     source_path: str,
     upstream_locator: str,
     local_path: Path,
-) -> ArtifactObservation | None:
+):
     if previous.content_id is None:
         return None
     try:
         return context.repository.observe_content(
-            artifact_key,
+            previous.artifact_key,
             previous.content_id,
             run_id=context.run_id,
             operation_id=context.operation_id,
@@ -149,6 +135,7 @@ def _incomplete_result(
         observed_at=observed_at,
         evidence={
             "transport": "RSYNC",
+            "inventory_model": "source-inventory-v1",
             "reconciliation_complete": False,
             "enumeration_complete": inventory.complete,
             "error": error,
@@ -169,9 +156,6 @@ def _validate_inventory(
     inventory: RsyncInventory,
     local_root: Path,
 ) -> tuple[dict[str, RsyncInventoryEntry], dict[str, Path], str | None]:
-    if not inventory.complete:
-        return {}, {}, inventory.error or "rsync inventory was incomplete"
-
     current_entries = {entry.relative_path: entry for entry in inventory.entries}
     if len(current_entries) != len(inventory.entries):
         return {}, {}, "rsync inventory contains duplicate paths"
@@ -189,19 +173,35 @@ def _validate_inventory(
     return current_entries, local_paths, None
 
 
-def _previous_entries(
+def _previous_items(
     repository: Repository,
     source_id: SourceId,
     scope: tuple[str, ...],
-) -> dict[str, TreeEntry]:
+) -> tuple[PreviousInventoryItem, ...]:
     baseline = _baseline_snapshot(repository, source_id, scope)
     if baseline is None or baseline.tree_id is None:
-        return {}
-    return {
-        entry.relative_path: entry
-        for entry in repository.tree_entries(baseline.tree_id)
-        if _path_in_scope(entry.relative_path, scope)
-    }
+        return ()
+    items: list[PreviousInventoryItem] = []
+    for entry in repository.tree_entries(baseline.tree_id):
+        if not _path_in_scope(entry.relative_path, scope):
+            continue
+        modified = entry.metadata.get("rsync_modified")
+        items.append(
+            PreviousInventoryItem(
+                item_id=entry.relative_path,
+                artifact_key=f"source:{source_id}:path:{entry.relative_path}",
+                content_id=entry.content_id,
+                source_path=entry.relative_path,
+                change_token=rsync_change_token(
+                    kind=entry.kind,
+                    byte_size=entry.byte_size,
+                    modified=modified if isinstance(modified, str) else None,
+                    target=entry.target,
+                ),
+                metadata={"kind": entry.kind},
+            )
+        )
+    return tuple(items)
 
 
 def _file_entry_result(
@@ -209,18 +209,16 @@ def _file_entry_result(
     *,
     entry: RsyncInventoryEntry,
     local_path: Path,
-    previous: TreeEntry | None,
+    decision: ReconciliationDecision,
 ) -> _EntryResult:
     relative_path = entry.relative_path
-    artifact_key = f"source:{context.source_id}:path:{relative_path}"
     upstream_locator = f"{context.upstream_root.rstrip('/')}/{relative_path}"
     observation = None
     reused = False
-    if _unchanged(previous, entry) and previous is not None:
+    if decision.state == "unchanged" and decision.previous is not None:
         observation = _observe_existing_content(
             context,
-            previous=previous,
-            artifact_key=artifact_key,
+            previous=decision.previous,
             source_path=relative_path,
             upstream_locator=upstream_locator,
             local_path=local_path,
@@ -228,7 +226,7 @@ def _file_entry_result(
         reused = observation is not None
     if observation is None:
         observation = context.repository.ingest_path(
-            artifact_key,
+            decision.artifact_key,
             local_path,
             run_id=context.run_id,
             operation_id=context.operation_id,
@@ -258,7 +256,7 @@ def _entry_result(
     *,
     entry: RsyncInventoryEntry,
     local_paths: dict[str, Path],
-    previous: TreeEntry | None,
+    decision: ReconciliationDecision,
 ) -> _EntryResult:
     metadata = _tree_metadata(entry)
     if entry.kind == "directory":
@@ -276,28 +274,31 @@ def _entry_result(
         context,
         entry=entry,
         local_path=local_paths[entry.relative_path],
-        previous=previous,
+        decision=decision,
     )
 
 
 def _record_absences(
     context: _ReconciliationContext,
-    *,
-    previous_entries: dict[str, TreeEntry],
-    current_entries: dict[str, RsyncInventoryEntry],
+    decisions: tuple[ReconciliationDecision, ...],
 ) -> tuple[ObservationId, ...]:
     observations: list[ObservationId] = []
-    for relative_path, previous in sorted(previous_entries.items()):
-        if relative_path in current_entries or previous.kind != "file":
+    for decision in decisions:
+        if decision.state != "absent" or decision.previous is None:
             continue
+        if decision.previous.metadata.get("kind") != "file":
+            continue
+        source_path = decision.previous.source_path
         absence = context.repository.record_absence(
-            f"source:{context.source_id}:path:{relative_path}",
+            decision.artifact_key,
             run_id=context.run_id,
             operation_id=context.operation_id,
             source_id=context.source_id,
             observed_at=context.observed_at,
-            source_path=relative_path,
-            upstream_locator=f"{context.upstream_root.rstrip('/')}/{relative_path}",
+            source_path=source_path,
+            upstream_locator=(
+                f"{context.upstream_root.rstrip('/')}/{source_path}" if source_path is not None else None
+            ),
             metadata={"transport": "RSYNC", "inventory_observation": True},
         )
         observations.append(absence.observation_id)
@@ -309,26 +310,36 @@ def _record_success_snapshot(
     *,
     inventory: RsyncInventory,
     tree_entries: list[TreeEntry],
+    decisions: tuple[ReconciliationDecision, ...],
     ingested: int,
     reused: int,
     absence_count: int,
 ) -> str:
+    counts = {
+        state: sum(decision.state == state for decision in decisions)
+        for state in ("new", "changed", "unchanged", "absent")
+    }
+    evidence: JsonObject = {
+        "transport": "RSYNC",
+        "inventory_model": "source-inventory-v1",
+        "reconciliation_complete": inventory.complete,
+        "scope_complete": inventory.complete,
+        "inventory_entry_count": len(inventory.entries),
+        "ingested_file_count": ingested,
+        "reused_content_count": reused,
+        "absence_count": absence_count,
+        "classification_counts": counts,
+    }
+    if inventory.error is not None:
+        evidence["inventory_error"] = inventory.error
     snapshot = context.repository.record_tree_snapshot(
         source_id=context.source_id,
         run_id=context.run_id,
         entries=tree_entries,
-        complete=not inventory.scope,
+        complete=inventory.complete and not inventory.scope,
         scope=inventory.scope,
         observed_at=context.observed_at,
-        evidence={
-            "transport": "RSYNC",
-            "reconciliation_complete": True,
-            "scope_complete": True,
-            "inventory_entry_count": len(inventory.entries),
-            "ingested_file_count": ingested,
-            "reused_content_count": reused,
-            "absence_count": absence_count,
-        },
+        evidence=evidence,
     )
     return str(snapshot.snapshot_id)
 
@@ -356,6 +367,17 @@ def reconcile_rsync_inventory(
             error=validation_error,
         )
 
+    source_inventory = rsync_source_inventory(
+        inventory,
+        source_id=normalized_source,
+        observed_at=observed_at,
+        upstream_root=upstream_root,
+    )
+    reconciliation = reconcile_inventory(
+        source_inventory,
+        _previous_items(repository, normalized_source, inventory.scope),
+    )
+    decisions_by_id = {decision.item_id: decision for decision in reconciliation.decisions}
     context = _ReconciliationContext(
         repository=repository,
         source_id=normalized_source,
@@ -365,18 +387,18 @@ def reconcile_rsync_inventory(
         observed_at=observed_at,
         upstream_root=upstream_root,
     )
-    previous_entries = _previous_entries(repository, normalized_source, inventory.scope)
     observations: list[ObservationId] = []
     tree_entries: list[TreeEntry] = []
     ingested = 0
     reused = 0
 
     for relative_path in sorted(current_entries):
+        decision = decisions_by_id[relative_path]
         result = _entry_result(
             context,
             entry=current_entries[relative_path],
             local_paths=local_paths,
-            previous=previous_entries.get(relative_path),
+            decision=decision,
         )
         tree_entries.append(result.tree_entry)
         if result.observation_id is not None:
@@ -384,27 +406,25 @@ def reconcile_rsync_inventory(
         ingested += int(result.ingested)
         reused += int(result.reused)
 
-    absences = _record_absences(
-        context,
-        previous_entries=previous_entries,
-        current_entries=current_entries,
-    )
+    absences = _record_absences(context, reconciliation.decisions)
     observations.extend(absences)
     snapshot_id = _record_success_snapshot(
         context,
         inventory=inventory,
         tree_entries=tree_entries,
+        decisions=reconciliation.decisions,
         ingested=ingested,
         reused=reused,
         absence_count=len(absences),
     )
     return RsyncReconciliationResult(
-        complete=True,
+        complete=inventory.complete,
         snapshot_id=snapshot_id,
         observations=tuple(observations),
         ingested_file_count=ingested,
         reused_content_count=reused,
         absence_count=len(absences),
+        error=inventory.error,
     )
 
 

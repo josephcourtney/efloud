@@ -5,9 +5,13 @@ import pytest
 from efloud.repository import Repository
 from efloud.repository_models import ArtifactAbsence, SourceId
 from efloud.rsync_reconciliation import reconcile_rsync_inventory
-from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry, parse_rsync_list_only
+from efloud.transport.rsync_inventory import (
+    RsyncInventory,
+    RsyncInventoryEntry,
+    parse_rsync_list_only,
+)
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 def _run(repo: Repository, source: SourceId, *, started_at: float):
@@ -22,7 +26,11 @@ def _run(repo: Repository, source: SourceId, *, started_at: float):
     return run, operation
 
 
-def _file_inventory(*, modified: str = "2026/09/04 10:00:00", scope: tuple[str, ...] = ()) -> RsyncInventory:
+def _file_inventory(
+    *,
+    modified: str = "2026/09/04 10:00:00",
+    scope: tuple[str, ...] = (),
+) -> RsyncInventory:
     return RsyncInventory(
         entries=(RsyncInventoryEntry("aa/a.txt", "file", 5, modified),),
         scope=scope,

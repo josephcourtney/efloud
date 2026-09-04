@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from efloud.fanout import RestBaseFanoutTask
+from efloud.json_types import JsonObject
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_derived import import_derived_results
 from efloud.repository_models import ArtifactAbsence, SourceId
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 async def _unused_enumerator(*, sync_root, manifest, sources):
     del sync_root, manifest, sources
+    await asyncio.sleep(0)
     return []
 
 
@@ -34,8 +37,8 @@ def _collection_payload(
     *,
     items: tuple[str, ...],
     missing: tuple[str, ...] = (),
-) -> dict[str, object]:
-    entries: dict[str, object] = {}
+) -> JsonObject:
+    entries: JsonObject = {}
     for item_id in items:
         dest = root / "fanout" / f"{item_id}.json"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -171,11 +174,14 @@ class DerivedFileTask:
     repository_version = "3"
     repository_input_source_ids: tuple[str, ...] = ()
 
-    def repository_parameters(self) -> dict[str, object]:
+    @staticmethod
+    def repository_parameters() -> JsonObject:
         return {"mode": "fixture"}
 
-    async def run(self, *, sync_root, manifest, sources):
+    @staticmethod
+    async def run(*, sync_root, manifest, sources):
         del sync_root, manifest, sources
+        await asyncio.sleep(0)
         return {}
 
 

@@ -20,6 +20,18 @@ from efloud.engine import Engine, EngineSyncResult
 from efloud.fanout import FanoutItem, RestBaseFanoutTask, two_char_bucket
 from efloud.health import MirrorHealthSummary, build_mirror_health_summary
 from efloud.indexing import IndexDefinition, IndexRegistry, IndexStatus, JsonTtlIndex
+from efloud.inventory import (
+    ChangeToken,
+    ChangeTokenReliability,
+    IntegrityCheck,
+    IntegrityExpectation,
+    IntegrityExpectationError,
+    InventoryCoverage,
+    InventoryItem,
+    SourceInventory,
+    check_integrity,
+    require_integrity,
+)
 from efloud.manifest import load_latest_manifest, merge_manifests, normalize_manifest
 from efloud.materialization import http_dest_for_source_url, http_dests_for_source_urls
 from efloud.metadata_store import (
@@ -35,6 +47,13 @@ from efloud.models import EngineConfig
 from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
 from efloud.query import query_target, root_payload, source_payload, store_payload
 from efloud.query_targets import QueryTarget, parse_query_target
+from efloud.reconciliation import (
+    PreviousInventoryItem,
+    ReconciliationDecision,
+    ReconciliationResult,
+    ReconciliationState,
+    reconcile_inventory,
+)
 from efloud.registry import MirrorMode, SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_compat import repository_manifest, write_repository_manifest
@@ -108,6 +127,8 @@ __all__ = [
     "ArtifactObservation",
     "ArtifactState",
     "BlobStore",
+    "ChangeToken",
+    "ChangeTokenReliability",
     "ContentId",
     "ContentRef",
     "DatasetDefinition",
@@ -131,6 +152,11 @@ __all__ = [
     "IndexDefinition",
     "IndexRegistry",
     "IndexStatus",
+    "IntegrityCheck",
+    "IntegrityExpectation",
+    "IntegrityExpectationError",
+    "InventoryCoverage",
+    "InventoryItem",
     "JsonTtlIndex",
     "Latest",
     "LatestAll",
@@ -145,8 +171,12 @@ __all__ = [
     "OpResult",
     "OperationId",
     "OperationRecord",
+    "PreviousInventoryItem",
     "ProvenanceEdge",
     "QueryTarget",
+    "ReconciliationDecision",
+    "ReconciliationResult",
+    "ReconciliationState",
     "Repository",
     "RepositoryDerivedTask",
     "RepositoryQueryService",
@@ -163,6 +193,7 @@ __all__ = [
     "SourceAliasResolver",
     "SourceDefinition",
     "SourceId",
+    "SourceInventory",
     "SourceKind",
     "SourceRecord",
     "SourceSnapshot",
@@ -179,6 +210,7 @@ __all__ = [
     "build_summary",
     "cache_group_name",
     "canonical_path",
+    "check_integrity",
     "collect_status_payload",
     "derived_summary",
     "dest_for_http_source",
@@ -202,10 +234,12 @@ __all__ = [
     "normalize_manifest",
     "parse_query_target",
     "query_target",
+    "reconcile_inventory",
     "rel_to_root",
     "repository_manifest",
     "repository_mirror_state",
     "repository_query",
+    "require_integrity",
     "root_payload",
     "sha256_hex",
     "source_by_id_or_alias",

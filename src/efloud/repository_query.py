@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from efloud.json_types import JsonObject, JsonValue
 from efloud.locator import apply_structured_locator, locator_candidates, split_locator
 from efloud.repository_models import ArtifactAbsence, ArtifactObservation, ObservationId, SnapshotId
+from efloud.repository_status import RepositoryStatusService
 
 if TYPE_CHECKING:
     from efloud.metadata_store import DatasetMemberRecord
@@ -145,13 +146,30 @@ class RepositoryQueryService:
         if not target:
             msg = "Repository query target must not be empty."
             raise ValueError(msg)
+        if target == "root":
+            if locator is not None:
+                msg = "Locators are not supported for the repository root."
+                raise ValueError(msg)
+            return RepositoryStatusService(self.repository).root_payload()
+
         prefix, separator, identifier = target.partition(":")
         if not separator or not identifier:
             msg = (
-                "Repository query targets must use one of: artifact:<key>, observation:<id>, "
-                "snapshot:<id>, source-snapshot:<source-id>, dataset:<id>."
+                "Repository query targets must use one of: root, source:<id>, run:<id>, "
+                "artifact:<key>, observation:<id>, snapshot:<id>, source-snapshot:<source-id>, "
+                "dataset:<id>."
             )
             raise ValueError(msg)
+        if prefix == "source":
+            if locator is not None:
+                msg = "Locators are not supported for repository source targets."
+                raise ValueError(msg)
+            return RepositoryStatusService(self.repository).source_payload(identifier)
+        if prefix == "run":
+            if locator is not None:
+                msg = "Locators are not supported for repository run targets."
+                raise ValueError(msg)
+            return RepositoryStatusService(self.repository).run_payload(identifier)
         if prefix == "artifact":
             return self._artifact(identifier, locator)
         if prefix == "observation":

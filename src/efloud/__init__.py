@@ -21,7 +21,15 @@ from efloud.health import MirrorHealthSummary, build_mirror_health_summary
 from efloud.indexing import IndexDefinition, IndexRegistry, IndexStatus, JsonTtlIndex
 from efloud.manifest import load_latest_manifest, merge_manifests, normalize_manifest
 from efloud.materialization import http_dest_for_source_url, http_dests_for_source_urls
-from efloud.metadata_store import DatasetMemberRecord, DatasetRecord, MetadataStore
+from efloud.metadata_store import (
+    DatasetMemberRecord,
+    DatasetRecord,
+    MaterializationRecord,
+    MetadataStore,
+    OperationRecord,
+    RunRecord,
+    SourceRecord,
+)
 from efloud.models import EngineConfig
 from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
 from efloud.query import query_target, root_payload, source_payload, store_payload
@@ -48,6 +56,7 @@ from efloud.repository_models import (
     ValidationResult,
 )
 from efloud.repository_query import RepositoryQueryService, repository_query
+from efloud.repository_status import RepositoryStatusService
 from efloud.resolve import (
     manifest_entry_for_source_aliasable,
     manifest_http_dest_for_url,
@@ -123,6 +132,7 @@ __all__ = [
     "Latest",
     "LatestAll",
     "LatestBefore",
+    "MaterializationRecord",
     "MetadataStore",
     "MirrorHealthSummary",
     "MirrorMode",
@@ -131,22 +141,26 @@ __all__ = [
     "ObservationId",
     "OpResult",
     "OperationId",
+    "OperationRecord",
     "ProvenanceEdge",
     "QueryTarget",
     "Repository",
     "RepositoryQueryService",
+    "RepositoryStatusService",
     "RestBaseFanoutTask",
     "RoleDrivenSyncPolicy",
     "RsyncCommandConfig",
     "RsyncMirror",
     "RsyncMirrorConfig",
     "RunId",
+    "RunRecord",
     "SQLiteMetadataStore",
     "SnapshotId",
     "SourceAliasResolver",
     "SourceDefinition",
     "SourceId",
     "SourceKind",
+    "SourceRecord",
     "SourceSnapshot",
     "StoreMetadataProvider",
     "StorePathKind",

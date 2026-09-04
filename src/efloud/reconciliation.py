@@ -3,11 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from efloud.inventory import ChangeToken, InventoryItem, SourceInventory
-from efloud.repository_models import ArtifactKey, ContentId
-
 if TYPE_CHECKING:
+    from efloud.inventory import ChangeToken, InventoryItem, SourceInventory
     from efloud.json_types import JsonObject
+    from efloud.repository_models import ArtifactKey, ContentId
 
 ReconciliationState = Literal["new", "changed", "unchanged", "absent"]
 
@@ -51,8 +50,10 @@ class ReconciliationResult:
 
     def counts(self) -> dict[ReconciliationState, int]:
         return {
-            state: len(self.by_state(state))
-            for state in ("new", "changed", "unchanged", "absent")
+            "new": len(self.by_state("new")),
+            "changed": len(self.by_state("changed")),
+            "unchanged": len(self.by_state("unchanged")),
+            "absent": len(self.by_state("absent")),
         }
 
 

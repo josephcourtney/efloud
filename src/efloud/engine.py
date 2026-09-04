@@ -41,6 +41,10 @@ class EngineSyncResult:
         return self.repository_manifest or self.sync_result.manifest
 
     @property
+    def manifest_path(self) -> Path | None:
+        return self.repository_manifest_path or self.sync_result.manifest_path
+
+    @property
     def legacy_manifest(self) -> NormalizedManifest:
         return self.sync_result.manifest
 

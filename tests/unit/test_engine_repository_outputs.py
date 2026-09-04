@@ -13,7 +13,7 @@ from efloud.models import EngineConfig, SyncResult
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
-pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.small]
 
 
 def test_engine_manifest_property_and_canonical_file_are_repository_derived(
@@ -32,6 +32,7 @@ def test_engine_manifest_property_and_canonical_file_are_repository_derived(
     config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,
@@ -90,6 +91,7 @@ def test_engine_publishes_repository_mirror_state_after_complete_rsync_reconcili
     config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,
@@ -161,6 +163,7 @@ def test_engine_does_not_replace_mirror_state_from_partial_only_history(
     config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_sync(_config: EngineConfig) -> SyncResult:
+        await asyncio.sleep(0)
         return SyncResult(
             ok=True,
             root=tmp_path,

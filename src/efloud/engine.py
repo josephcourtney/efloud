@@ -12,6 +12,8 @@ from efloud.repository import Repository
 from efloud.repository_compat import repository_manifest, write_repository_manifest
 from efloud.repository_models import ObservationId, RunId
 from efloud.repository_recording import RepositorySyncRecorder
+from efloud.repository_state import write_repository_mirror_state
+from efloud.state import MirrorState
 from efloud.sync import sync as legacy_sync
 
 
@@ -23,6 +25,8 @@ class EngineSyncResult:
     skipped_source_ids: tuple[str, ...]
     repository_manifest: NormalizedManifest | None = None
     repository_manifest_path: Path | None = None
+    repository_mirror_state: MirrorState | None = None
+    repository_mirror_state_path: Path | None = None
 
     @property
     def ok(self) -> bool:
@@ -93,6 +97,8 @@ class Engine:
 
         current_manifest: NormalizedManifest | None = None
         manifest_path: Path | None = None
+        mirror_state: MirrorState | None = None
+        mirror_state_path: Path | None = None
         if not self.config.dry_run:
             current_manifest = repository_manifest(
                 self.repository,
@@ -105,6 +111,15 @@ class Engine:
                     cfg=self.config,
                     run_id=recorder.run_id,
                 )
+            run = self.repository.metadata.run(recorder.run_id)
+            generated_at = run.finished_at if run is not None else None
+            with contextlib.suppress(OSError):
+                mirror_state, mirror_state_path = write_repository_mirror_state(
+                    self.repository,
+                    cfg=self.config,
+                    manifest_path=manifest_path,
+                    generated_at=generated_at,
+                )
 
         return EngineSyncResult(
             sync_result=sync_result,
@@ -113,6 +128,8 @@ class Engine:
             skipped_source_ids=tuple(recorder.skipped_source_ids),
             repository_manifest=current_manifest,
             repository_manifest_path=manifest_path,
+            repository_mirror_state=mirror_state,
+            repository_mirror_state_path=mirror_state_path,
         )
 
 

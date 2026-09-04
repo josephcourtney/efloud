@@ -12,7 +12,6 @@ from efloud.repository_models import (
     RunId,
     SourceId,
     TreeEntry,
-    observation_id_for,
 )
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
@@ -97,45 +96,26 @@ def _observe_existing_content(
 ) -> ArtifactObservation | None:
     if previous.content_id is None:
         return None
-    content = repository.metadata.content(previous.content_id)
-    if content is None:
+    try:
+        return repository.observe_content(
+            artifact_key,
+            previous.content_id,
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=source_id,
+            observed_at=observed_at,
+            source_path=source_path,
+            upstream_locator=upstream_locator,
+            metadata={
+                "transport": "RSYNC",
+                "inventory_observation": True,
+                "content_reused": True,
+            },
+            materialization_kind="rsync-mirror",
+            materialization_path=local_path,
+        )
+    except KeyError:
         return None
-    observation_id = observation_id_for(
-        artifact_key=repository_models_artifact_key(artifact_key),
-        content_id=content.content_id,
-        run_id=run_id,
-        operation_id=operation_id,
-        observed_at=observed_at,
-        source_path=source_path,
-        upstream_locator=upstream_locator,
-    )
-    observation = ArtifactObservation(
-        observation_id=observation_id,
-        artifact_key=repository_models_artifact_key(artifact_key),
-        content_id=content.content_id,
-        source_id=source_id,
-        run_id=run_id,
-        operation_id=operation_id,
-        observed_at=observed_at,
-        source_path=source_path,
-        upstream_locator=upstream_locator,
-        metadata={"transport": "RSYNC", "inventory_observation": True, "content_reused": True},
-    )
-    repository.metadata.record_observation_bundle(content=content, observation=observation)
-    repository.metadata.record_materialization(
-        content_id=content.content_id,
-        kind="rsync-mirror",
-        path=local_path.resolve().as_posix(),
-        metadata={},
-    )
-    return observation
-
-
-def repository_models_artifact_key(value: str):
-    # Kept as a tiny helper to avoid importing a runtime-only identifier through TYPE_CHECKING.
-    from efloud.repository_models import ArtifactKey
-
-    return ArtifactKey(value)
 
 
 def _incomplete_result(
@@ -246,7 +226,9 @@ def reconcile_rsync_inventory(
         entry = current_entries[relative_path]
         metadata = _tree_metadata(entry)
         if entry.kind == "directory":
-            tree_entries.append(TreeEntry(relative_path=relative_path, kind="directory", metadata=metadata))
+            tree_entries.append(
+                TreeEntry(relative_path=relative_path, kind="directory", metadata=metadata)
+            )
             continue
         if entry.kind == "symlink":
             tree_entries.append(

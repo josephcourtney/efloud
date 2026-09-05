@@ -66,12 +66,15 @@ Still transitional:
   repository rather than executing a canonical adapter/planner path
 - compatibility manifests/state and some legacy resolver/control-flow mechanisms
   remain during the authority migration
-- the full repository formatting, lint, type, and pytest quality gate has not been
-  executed for the Phase 6/7 changes in the available execution environment
+- the full Phase 6/7 quality gate was run against the initial Phase 7 implementation
+  and exposed lint/type issues plus two test failures; fixes are now committed for
+  those reported failures, but a clean post-fix `just lint; just typecheck; just test`
+  rerun is still required before treating the gate as verified
 
 ## Continuity
 
-Next implement Phase 8: introduce stable producer identity/version, enforce run and
+First rerun the full quality gate on the repaired Phase 7 HEAD. If it is clean,
+continue with Phase 8: introduce stable producer identity/version, enforce run and
 operation lifecycle transitions, define deterministic derivation identities and
 reuse semantics, and migrate persistent semantic indexes away from TTL-based
 validity where their outputs are deterministic.

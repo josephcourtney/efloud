@@ -1,12 +1,22 @@
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from efloud.blob_store import FilesystemBlobStore
 from efloud.datasets import DatasetDefinition, ExactObservation, Latest, LatestAll, LatestBefore
 from efloud.repository import Repository
-from efloud.repository_models import ArtifactAbsence, ContentId, SourceId, TreeEntry, ValidationResult
+from efloud.repository_models import (
+    ArtifactAbsence,
+    ContentId,
+    OperationId,
+    RunId,
+    SourceId,
+    TreeEntry,
+    ValidationResult,
+)
 
 if TYPE_CHECKING:
     from efloud.sqlite_metadata import SQLiteMetadataStore
@@ -119,12 +129,30 @@ def test_latest_before_dataset_selection(tmp_path: Path) -> None:
 
 
 def test_dataset_verification_detects_blob_corruption(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repo:
+    blob_store = FilesystemBlobStore(tmp_path / "objects")
+    with Repository(tmp_path, blob_store=blob_store) as repo:
         source, run, op = _run(repo)
         obs = repo.ingest_bytes("artifact:a", b"hello", run_id=run, operation_id=op, source_id=source)
         dataset = repo.resolve_dataset(DatasetDefinition.from_selectors(Latest("artifact:a")))
-        repo.blobs.path_for(obs.content_id).write_bytes(b"corrupt")
+        blob_store.path_for(obs.content_id).write_bytes(b"corrupt")
         assert dataset.verify() is False
+
+
+def test_metadata_failure_after_blob_put_leaves_unreachable_orphan(tmp_path: Path) -> None:
+    payload = b"orphan"
+    content_id = ContentId(f"sha256:{hashlib.sha256(payload).hexdigest()}")
+    with Repository(tmp_path) as repo, pytest.raises(sqlite3.IntegrityError):
+        repo.ingest_bytes(
+            "artifact:orphan",
+            payload,
+            run_id=RunId("run:missing"),
+            operation_id=OperationId("op:missing"),
+        )
+
+    with Repository(tmp_path) as repo:
+        assert repo.blobs.contains(content_id)
+        assert repo.metadata.content(content_id) is None
+        assert repo.observations_for("artifact:orphan") == ()
 
 
 def test_validation_requires_known_content(tmp_path: Path) -> None:

@@ -49,8 +49,8 @@ class MemoryBlobStore:
         data = self._data.get(content_id)
         return data is not None and self._content_id(data) == content_id
 
-    def delete(self, content_id: ContentId) -> bool:
-        return self._data.pop(content_id, None) is not None
+    def delete(self, content_id: ContentId) -> None:
+        self._data.pop(content_id, None)
 
 
 def _run(repo: Repository, *, started_at: float = 100.0):
@@ -148,7 +148,7 @@ def test_pathless_blob_store_contains_verify_and_delete() -> None:
 
     assert store.contains(ref.content_id)
     assert store.verify(ref.content_id)
-    assert store.delete(ref.content_id) is True
+    store.delete(ref.content_id)
     assert store.contains(ref.content_id) is False
     assert store.verify(ref.content_id) is False
-    assert store.delete(ref.content_id) is False
+    store.delete(ref.content_id)

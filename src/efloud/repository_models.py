@@ -80,7 +80,6 @@ class ContentRef:
     content_id: ContentId
     byte_size: int
     media_type: str | None = None
-    _legacy_storage_key: str | None = field(default=None, repr=False, compare=False)
 
     def __init__(
         self,
@@ -89,16 +88,16 @@ class ContentRef:
         storage_key: str | None = None,
         media_type: str | None = None,
     ) -> None:
-        """Build a semantic content reference while accepting legacy storage metadata."""
+        """Build a semantic content reference while accepting obsolete storage metadata."""
+        del storage_key
         object.__setattr__(self, "content_id", content_id)
         object.__setattr__(self, "byte_size", byte_size)
         object.__setattr__(self, "media_type", media_type)
-        object.__setattr__(self, "_legacy_storage_key", storage_key)
 
     @property
     def storage_key(self) -> str:
-        """Return legacy SQLite storage metadata; not part of content semantics."""
-        return self._legacy_storage_key or _legacy_storage_key_for(self.content_id)
+        """Return the historical SQLite compatibility value derived from content identity."""
+        return _legacy_storage_key_for(self.content_id)
 
     def to_dict(self) -> JsonObject:
         payload: JsonObject = {

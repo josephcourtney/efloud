@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
-from efloud.json_types import JsonMapping, JsonObject, copy_json_mapping, json_mapping_or_none
+from efloud.json_types import JsonMapping, JsonObject, JsonValue, copy_json_mapping, json_mapping_or_none
 
 if TYPE_CHECKING:
     from efloud.models import NormalizedManifest
 
 
-# Manifest payloads come from callers and JSON files, so the entrypoint must accept arbitrary input.
-def normalize_manifest(raw: Any) -> NormalizedManifest:  # ruff: ignore[any-type]
+def normalize_manifest(raw: JsonValue) -> NormalizedManifest:
+    """Normalize a JSON value into the canonical manifest shape."""
     raw_mapping = json_mapping_or_none(raw)
     if raw_mapping is None:
         msg = "manifest must be a JSON object"
@@ -82,7 +82,7 @@ def _merge_result_entries(
                 destination[str(key)] = copy_json_mapping(value_mapping)
 
 
-def merge_manifests(previous: Any | None, new: Any) -> NormalizedManifest:  # ruff: ignore[any-type]
+def merge_manifests(previous: JsonValue | None, new: JsonValue) -> NormalizedManifest:
     """
     Merge two manifests such that per-source results are retained across runs.
 
@@ -177,7 +177,7 @@ def load_latest_manifest(
         return None, warnings, candidate
 
     try:
-        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        data: JsonValue = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         warnings.append(f"sync manifest unreadable: {exc}")
         return None, warnings, manifest_path

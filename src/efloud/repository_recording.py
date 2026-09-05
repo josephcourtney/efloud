@@ -503,7 +503,14 @@ class RepositorySyncRecorder:
         )
 
     def finish(self, *, ok: bool) -> None:
-        self.repository.finish_run(self.run_id, status="success" if ok else "failed")
+        operations = self.repository.metadata.operations_for_run(self.run_id)
+        failed = any(operation.status == "failed" for operation in operations)
+        succeeded = any(operation.status == "succeeded" for operation in operations)
+        if failed:
+            status = "partial" if succeeded else "failed"
+        else:
+            status = "succeeded" if ok else "failed"
+        self.repository.finish_run(self.run_id, status=status)
 
 
 __all__ = ["RepositorySyncRecorder"]

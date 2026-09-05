@@ -15,7 +15,13 @@ from efloud.datasets import (
     LatestAll,
     LatestBefore,
 )
-from efloud.derived import RepositoryDerivedTask
+from efloud.derivation import (
+    DependencySemantics,
+    DerivationKey,
+    DerivedTaskSpec,
+    derivation_key_for,
+)
+from efloud.derived import RepositoryDerivedTask, SpecifiedDerivedTask
 from efloud.engine import Engine, EngineSyncResult
 from efloud.fanout import (
     FanoutEnumeration,
@@ -26,7 +32,15 @@ from efloud.fanout import (
     two_char_bucket,
 )
 from efloud.health import MirrorHealthSummary, build_mirror_health_summary
-from efloud.indexing import IndexDefinition, IndexRegistry, IndexStatus, JsonTtlIndex
+from efloud.indexing import (
+    DerivedIndexDefinition,
+    DerivedIndexRegistry,
+    DerivedIndexResult,
+    IndexDefinition,
+    IndexRegistry,
+    IndexStatus,
+    JsonTtlIndex,
+)
 from efloud.inventory import (
     ChangeToken,
     ChangeTokenReliability,
@@ -74,8 +88,11 @@ from efloud.repository_models import (
     DatasetId,
     ObservationId,
     OperationId,
+    OperationStatus,
+    ProducerRef,
     ProvenanceEdge,
     RunId,
+    RunStatus,
     SnapshotId,
     SourceId,
     SourceSnapshot,
@@ -146,6 +163,12 @@ __all__ = [
     "DatasetSelection",
     "DatasetSelector",
     "DefaultSyncPolicy",
+    "DependencySemantics",
+    "DerivationKey",
+    "DerivedIndexDefinition",
+    "DerivedIndexRegistry",
+    "DerivedIndexResult",
+    "DerivedTaskSpec",
     "Engine",
     "EngineConfig",
     "EngineSyncResult",
@@ -179,7 +202,9 @@ __all__ = [
     "OpResult",
     "OperationId",
     "OperationRecord",
+    "OperationStatus",
     "PreviousInventoryItem",
+    "ProducerRef",
     "ProvenanceEdge",
     "QueryTarget",
     "ReconciliationDecision",
@@ -196,6 +221,7 @@ __all__ = [
     "RsyncMirrorConfig",
     "RunId",
     "RunRecord",
+    "RunStatus",
     "SQLiteMetadataStore",
     "SnapshotId",
     "SourceAliasResolver",
@@ -205,6 +231,7 @@ __all__ = [
     "SourceKind",
     "SourceRecord",
     "SourceSnapshot",
+    "SpecifiedDerivedTask",
     "StoreMetadataProvider",
     "StorePathKind",
     "StoreSpec",
@@ -220,6 +247,7 @@ __all__ = [
     "canonical_path",
     "check_integrity",
     "collect_status_payload",
+    "derivation_key_for",
     "derived_summary",
     "dest_for_http_source",
     "fanout_source_inventory",

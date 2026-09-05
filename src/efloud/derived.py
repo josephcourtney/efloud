@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from efloud.derivation import DerivedTaskSpec
     from efloud.json_types import JsonObject
     from efloud.models import NormalizedManifest
     from efloud.registry import SourceDefinition
@@ -32,4 +33,11 @@ class RepositoryDerivedTask(Protocol):
     def repository_parameters(self) -> JsonObject: ...
 
 
-__all__ = ["DerivedTask", "RepositoryDerivedTask"]
+@runtime_checkable
+class SpecifiedDerivedTask(Protocol):
+    """Optional deterministic derivation contract for repository-backed reuse."""
+
+    def repository_spec(self) -> DerivedTaskSpec: ...
+
+
+__all__ = ["DerivedTask", "RepositoryDerivedTask", "SpecifiedDerivedTask"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 async def _unused_enumerator(*, sync_root, manifest, sources):
     del sync_root, manifest, sources
+    await asyncio.gather()
     return []
 
 
@@ -391,6 +393,7 @@ class DerivedFileTask:
     @staticmethod
     async def run(*, sync_root, manifest, sources):
         del sync_root, manifest, sources
+        await asyncio.gather()
         return {}
 
 

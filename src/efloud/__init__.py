@@ -17,7 +17,14 @@ from efloud.datasets import (
 )
 from efloud.derived import RepositoryDerivedTask
 from efloud.engine import Engine, EngineSyncResult
-from efloud.fanout import FanoutItem, RestBaseFanoutTask, two_char_bucket
+from efloud.fanout import (
+    FanoutEnumeration,
+    FanoutItem,
+    RestBaseFanoutTask,
+    fanout_source_inventory,
+    normalize_fanout_enumeration,
+    two_char_bucket,
+)
 from efloud.health import MirrorHealthSummary, build_mirror_health_summary
 from efloud.indexing import IndexDefinition, IndexRegistry, IndexStatus, JsonTtlIndex
 from efloud.inventory import (
@@ -143,6 +150,7 @@ __all__ = [
     "EngineConfig",
     "EngineSyncResult",
     "ExactObservation",
+    "FanoutEnumeration",
     "FanoutItem",
     "FilesystemBlobStore",
     "HttpCache",
@@ -214,6 +222,7 @@ __all__ = [
     "collect_status_payload",
     "derived_summary",
     "dest_for_http_source",
+    "fanout_source_inventory",
     "generic_store_metadata",
     "http_dest_for_source_url",
     "http_dests_for_source_urls",
@@ -231,6 +240,7 @@ __all__ = [
     "mirror_dir",
     "mirror_root_subdir_for_source",
     "mirror_state_metadata",
+    "normalize_fanout_enumeration",
     "normalize_manifest",
     "parse_query_target",
     "query_target",

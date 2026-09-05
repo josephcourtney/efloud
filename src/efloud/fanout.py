@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
@@ -165,6 +166,12 @@ class RestBaseFanoutTask(DerivedTask):
 
         raw_enumeration = await self.enumerator(sync_root=sync_root, manifest=manifest, sources=sources)
         enumeration = normalize_fanout_enumeration(raw_enumeration)
+        inventory = fanout_source_inventory(
+            source_id=source.id,
+            base_url=self.base_url,
+            enumeration=enumeration,
+            observed_at=time.time(),
+        )
         items = list(enumeration.items)
         dest_root = sync_root / self.dest_subdir
         dest_root.mkdir(parents=True, exist_ok=True)
@@ -203,12 +210,12 @@ class RestBaseFanoutTask(DerivedTask):
         ok_n = sum(1 for row in statuses.values() if row.get("status") == "ok")
         err_n = len(statuses) - ok_n
         enumeration_payload: dict[str, object] = {
-            "complete": enumeration.complete,
-            "item_count": len(items),
+            "complete": inventory.coverage.complete,
+            "item_count": len(inventory.items),
             "model": "source-inventory-v1",
         }
-        if enumeration.upstream_identity is not None:
-            enumeration_payload["upstream_identity"] = enumeration.upstream_identity
+        if inventory.upstream_identity is not None:
+            enumeration_payload["upstream_identity"] = inventory.upstream_identity
         return {
             "source_id": source.id,
             "kind": source.kind.value,
@@ -219,6 +226,7 @@ class RestBaseFanoutTask(DerivedTask):
                 "response_mode": self.response_mode,
                 "concurrency": self.concurrency,
             },
+            "inventory": inventory.to_dict(),
             "enumeration": enumeration_payload,
             "entries": statuses,
             "ok": ok_n,

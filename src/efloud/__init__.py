@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib.metadata import version
 
+from efloud.adoption import AdoptionResult, adopt_existing_store
 from efloud.artifacts import build_path_index, canonical_path, sha256_hex, verify_gzip
 from efloud.blob_store import BlobStore, FilesystemBlobStore
 from efloud.datasets import (
@@ -145,6 +146,7 @@ from efloud.transport.rsync import OpResult, RsyncCommandConfig, RsyncMirror, Rs
 __version__ = version("efloud")
 
 __all__ = [
+    "AdoptionResult",
     "AliasMap",
     "ArtifactAbsence",
     "ArtifactKey",
@@ -239,6 +241,7 @@ __all__ = [
     "TreeId",
     "ValidationResult",
     "__version__",
+    "adopt_existing_store",
     "build_mirror_health_summary",
     "build_path_index",
     "build_summary",

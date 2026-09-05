@@ -52,6 +52,14 @@ class _EntryResult:
     reused: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _RecordedEntries:
+    observations: tuple[ObservationId, ...]
+    tree_entries: tuple[TreeEntry, ...]
+    ingested: int
+    reused: int
+
+
 def _safe_local_path(root: Path, relative_path: str) -> Path | None:
     relative = PurePosixPath(relative_path)
     if relative.is_absolute() or ".." in relative.parts:
@@ -316,13 +324,13 @@ def _record_success_snapshot(
     context: _ReconciliationContext,
     *,
     inventory: RsyncInventory,
-    tree_entries: list[TreeEntry],
+    tree_entries: list[TreeEntry] | tuple[TreeEntry, ...],
     decisions: tuple[ReconciliationDecision, ...],
     ingested: int,
     reused: int,
     absence_count: int,
 ) -> str:
-    counts = {
+    counts: JsonObject = {
         state: sum(decision.state == state for decision in decisions)
         for state in ("new", "changed", "unchanged", "absent")
     }
@@ -349,6 +357,37 @@ def _record_success_snapshot(
         evidence=evidence,
     )
     return str(snapshot.snapshot_id)
+
+
+def _record_current_entries(
+    context: _ReconciliationContext,
+    *,
+    current_entries: dict[str, RsyncInventoryEntry],
+    local_paths: dict[str, Path],
+    decisions_by_id: dict[str, ReconciliationDecision],
+) -> _RecordedEntries:
+    observations: list[ObservationId] = []
+    tree_entries: list[TreeEntry] = []
+    ingested = 0
+    reused = 0
+    for relative_path in sorted(current_entries):
+        result = _entry_result(
+            context,
+            entry=current_entries[relative_path],
+            local_paths=local_paths,
+            decision=decisions_by_id[relative_path],
+        )
+        tree_entries.append(result.tree_entry)
+        if result.observation_id is not None:
+            observations.append(result.observation_id)
+        ingested += int(result.ingested)
+        reused += int(result.reused)
+    return _RecordedEntries(
+        observations=tuple(observations),
+        tree_entries=tuple(tree_entries),
+        ingested=ingested,
+        reused=reused,
+    )
 
 
 def reconcile_rsync_inventory(
@@ -384,7 +423,6 @@ def reconcile_rsync_inventory(
         source_inventory,
         _previous_items(repository, normalized_source, inventory.scope),
     )
-    decisions_by_id = {decision.item_id: decision for decision in reconciliation.decisions}
     context = _ReconciliationContext(
         repository=repository,
         source_id=normalized_source,
@@ -394,42 +432,29 @@ def reconcile_rsync_inventory(
         observed_at=observed_at,
         upstream_root=upstream_root,
     )
-    observations: list[ObservationId] = []
-    tree_entries: list[TreeEntry] = []
-    ingested = 0
-    reused = 0
-
-    for relative_path in sorted(current_entries):
-        decision = decisions_by_id[relative_path]
-        result = _entry_result(
-            context,
-            entry=current_entries[relative_path],
-            local_paths=local_paths,
-            decision=decision,
-        )
-        tree_entries.append(result.tree_entry)
-        if result.observation_id is not None:
-            observations.append(result.observation_id)
-        ingested += int(result.ingested)
-        reused += int(result.reused)
-
+    recorded = _record_current_entries(
+        context,
+        current_entries=current_entries,
+        local_paths=local_paths,
+        decisions_by_id={decision.item_id: decision for decision in reconciliation.decisions},
+    )
     absences = _record_absences(context, reconciliation.decisions)
-    observations.extend(absences)
+    observations = (*recorded.observations, *absences)
     snapshot_id = _record_success_snapshot(
         context,
         inventory=inventory,
-        tree_entries=tree_entries,
+        tree_entries=recorded.tree_entries,
         decisions=reconciliation.decisions,
-        ingested=ingested,
-        reused=reused,
+        ingested=recorded.ingested,
+        reused=recorded.reused,
         absence_count=len(absences),
     )
     return RsyncReconciliationResult(
         complete=inventory.complete,
         snapshot_id=snapshot_id,
-        observations=tuple(observations),
-        ingested_file_count=ingested,
-        reused_content_count=reused,
+        observations=observations,
+        ingested_file_count=recorded.ingested,
+        reused_content_count=recorded.reused,
         absence_count=len(absences),
         error=inventory.error,
     )

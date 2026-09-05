@@ -12,6 +12,7 @@ from efloud.indexing import IndexDefinition, IndexRegistry, JsonTtlIndex
 from efloud.models import EngineConfig, SyncResult
 from efloud.query import index_payload, query_target, root_payload, store_payload
 from efloud.registry import SourceDefinition, SourceKind
+from efloud.repository import Repository
 from efloud.status import collect_status_payload, derived_summary, describe_source_status, source_status_rows
 from efloud.store_inspection import rel_to_root
 from efloud.summary import build_summary
@@ -168,7 +169,10 @@ def test_build_summary_and_status_helpers(cfg: EngineConfig, tmp_path: Path):
 
 
 @pytest.mark.medium
-def test_health_and_collect_status_payload(cfg: EngineConfig, tmp_path: Path):
+def test_health_compatibility_helper_is_explicit_but_status_does_not_consume_it(
+    cfg: EngineConfig,
+    tmp_path: Path,
+):
     manifest_path = _write_manifest(tmp_path, cfg)
     mirror_root = tmp_path / cfg.mirrors_dir / "mirror/source"
     mirror_root.mkdir(parents=True)
@@ -185,10 +189,12 @@ def test_health_and_collect_status_payload(cfg: EngineConfig, tmp_path: Path):
     assert health.manifest_errors == ("broken source",)
 
     payload, warnings = collect_status_payload(cfg)
-    assert warnings == []
+    assert warnings
+    assert payload["repository_authoritative"] is False
     assert payload["source_count"] == 3
     assert payload["index_count"] == 1
-    assert payload["health"]["manifest_errors"] == ["broken source"]
+    assert payload["health"]["manifest_errors"] == []
+    assert payload["health"]["rsync_results"] == {}
 
 
 @pytest.mark.medium
@@ -224,6 +230,38 @@ def test_store_index_root_and_query_payloads(cfg: EngineConfig, tmp_path: Path):
     assert cfg.index_registry is not None
     cfg.index_registry.build("alpha", root=tmp_path)
 
+    source = cfg.sources[0]
+    with Repository(tmp_path) as repository:
+        repository.register_source(source.id, {"kind": source.kind.value, "url": source.url})
+        run_id = repository.start_run(source_ids=(source.id,), started_at=100.0)
+        operation_id = repository.start_operation(
+            run_id=run_id,
+            source_id=source.id,
+            kind="http",
+            subject=source.id,
+            started_at=100.0,
+        )
+        repository.ingest_path(
+            f"source:{source.id}",
+            source_file,
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=source.id,
+            observed_at=101.0,
+            upstream_locator=source.url,
+            media_type="application/json",
+            materialization_kind="compatibility-http",
+        )
+        repository.record_source_snapshot(
+            source_id=source.id,
+            run_id=run_id,
+            complete=True,
+            observed_at=101.0,
+            evidence={"status_code": 200},
+        )
+        repository.finish_operation(operation_id, status="succeeded", finished_at=102.0)
+        repository.finish_run(run_id, status="succeeded", finished_at=103.0)
+
     manifest_store = store_payload("sync_manifest", cfg=cfg)
     state_store = store_payload("mirror_state", cfg=cfg)
     rate_store = store_payload("rate_limits_dir", cfg=cfg)
@@ -239,6 +277,7 @@ def test_store_index_root_and_query_payloads(cfg: EngineConfig, tmp_path: Path):
     assert sqlite_store["root_relative_path"] == rel_to_root(sqlite_path, tmp_path)
     assert index_info["status"]["present"] is True
     assert root_info["target_kind"] == "root"
+    assert root_info["repository_authoritative"] is True
     assert source_info["locator"]["value"] == str(source_file)
     assert source_info["locator"]["resolved_locator"] in {"/dest", "#/dest"}
 

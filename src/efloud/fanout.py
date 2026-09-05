@@ -43,6 +43,7 @@ class FanoutEnumeration:
     upstream_identity: str | None = None
 
     def __post_init__(self) -> None:
+        """Reject duplicate logical members before acquisition begins."""
         item_ids = [item.item_id for item in self.items]
         if len(set(item_ids)) != len(item_ids):
             msg = "Fanout enumeration contains duplicate item identifiers."

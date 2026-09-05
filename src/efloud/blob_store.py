@@ -15,7 +15,13 @@ SHA256_HEX_LENGTH = 64
 
 
 class BlobStore(Protocol):
-    """Semantic immutable-content store independent of physical storage layout."""
+    """Semantic immutable-content store independent of physical storage layout.
+
+    A successful put must make the returned content immediately readable and may
+    safely be repeated for the same bytes. Metadata is committed only after that
+    guarantee, so a later metadata failure may leave an unreachable blob but not
+    a committed reference to unavailable content.
+    """
 
     def put_path(self, path: Path, *, media_type: str | None = None) -> ContentRef: ...
 
@@ -27,7 +33,7 @@ class BlobStore(Protocol):
 
     def verify(self, content_id: ContentId) -> bool: ...
 
-    def delete(self, content_id: ContentId) -> bool: ...
+    def delete(self, content_id: ContentId) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,13 +170,8 @@ class FilesystemBlobStore:
         digest, _ = self._digest_path(path)
         return f"sha256:{digest}" == str(content_id)
 
-    def delete(self, content_id: ContentId) -> bool:
-        path = self.path_for(content_id)
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            return False
-        return True
+    def delete(self, content_id: ContentId) -> None:
+        self.path_for(content_id).unlink(missing_ok=True)
 
 
 __all__ = [

@@ -21,7 +21,12 @@ from efloud.json_types import (
     copy_json_mapping,
     json_mapping_or_none,
 )
-from efloud.reconciliation import PreviousInventoryItem, ReconciliationDecision, reconcile_inventory
+from efloud.reconciliation import (
+    PreviousInventoryItem,
+    ReconciliationDecision,
+    ReconciliationResult,
+    reconcile_inventory,
+)
 from efloud.registry import SourceKind
 from efloud.repository_models import (
     ArtifactKey,
@@ -57,6 +62,15 @@ class _CollectionImportState:
     absent_count: int = 0
     content_count: int = 0
     unexpected_entry_count: int = 0
+
+
+@dataclass(slots=True)
+class _CollectionRecordContext:
+    inventory: SourceInventory
+    reconciliation: ReconciliationResult
+    entries_by_id: dict[str, tuple[str, JsonValue]]
+    media_type: str | None
+    state: _CollectionImportState
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +175,7 @@ def _collection_item_metadata(item_id: str, entry: JsonMapping, task_name: str) 
     return payload
 
 
-def _change_token_from_mapping(value: object) -> ChangeToken | None:
+def _change_token_from_mapping(value: JsonValue | None) -> ChangeToken | None:
     mapping = json_mapping_or_none(value)
     if mapping is None:
         return None
@@ -175,7 +189,7 @@ def _change_token_from_mapping(value: object) -> ChangeToken | None:
     return ChangeToken(kind=kind, value=token_value, reliability="weak")
 
 
-def _integrity_expectations_from_mapping(value: object) -> tuple[IntegrityExpectation, ...]:
+def _integrity_expectations_from_mapping(value: JsonValue | None) -> tuple[IntegrityExpectation, ...]:
     if not isinstance(value, list):
         return ()
     expectations: list[IntegrityExpectation] = []
@@ -226,7 +240,59 @@ def _enumeration_count_matches(payload: JsonMapping, item_count: int) -> bool:
     return isinstance(declared_count, int) and not isinstance(declared_count, bool) and declared_count == item_count
 
 
-def _serialized_collection_inventory(  # ruff: ignore[too-many-locals]
+def _serialized_inventory_item(source_id: SourceId, raw: JsonValue) -> InventoryItem:
+    mapping = json_mapping_or_none(raw)
+    if mapping is None:
+        msg = "Serialized collection inventory contains a non-object item."
+        raise TypeError(msg)
+    item_id = mapping.get("item_id")
+    if not isinstance(item_id, str):
+        msg = "Serialized collection inventory item has no string item_id."
+        raise TypeError(msg)
+    locator_value = mapping.get("locator")
+    source_path_value = mapping.get("source_path")
+    metadata = json_mapping_or_none(mapping.get("metadata"))
+    return InventoryItem(
+        item_id=item_id,
+        artifact_key=ArtifactKey(f"source:{source_id}:item:{item_id}"),
+        locator=locator_value if isinstance(locator_value, str) else None,
+        source_path=source_path_value if isinstance(source_path_value, str) else None,
+        change_token=_change_token_from_mapping(mapping.get("change_token")),
+        expected_integrity=_integrity_expectations_from_mapping(mapping.get("expected_integrity")),
+        metadata=copy_json_mapping(metadata) if metadata is not None else {},
+    )
+
+
+def _serialized_inventory_items(source_id: SourceId, value: JsonValue | None) -> tuple[InventoryItem, ...]:
+    if not isinstance(value, list):
+        msg = "Serialized collection inventory has no item list."
+        raise TypeError(msg)
+    return tuple(_serialized_inventory_item(source_id, raw) for raw in value)
+
+
+def _serialized_inventory_complete(
+    payload: JsonMapping,
+    serialized: JsonMapping,
+    *,
+    item_count: int,
+) -> bool:
+    coverage = json_mapping_or_none(serialized.get("coverage")) or {}
+    enumeration = json_mapping_or_none(payload.get("enumeration")) or {}
+    if coverage.get("complete") is not True:
+        return False
+    if enumeration and enumeration.get("complete") is not True:
+        return False
+    return _enumeration_count_matches(payload, item_count)
+
+
+def _serialized_inventory_observed_at(serialized: JsonMapping, fallback: float) -> float:
+    value = serialized.get("observed_at")
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return fallback
+
+
+def _serialized_collection_inventory(
     *,
     source_id: SourceId,
     payload: JsonMapping,
@@ -239,60 +305,17 @@ def _serialized_collection_inventory(  # ruff: ignore[too-many-locals]
     if isinstance(serialized_source, str) and serialized_source != str(source_id):
         msg = f"Collection inventory source mismatch: {serialized_source!r} != {str(source_id)!r}"
         raise ValueError(msg)
-    raw_items = serialized.get("items")
-    if not isinstance(raw_items, list):
-        msg = "Serialized collection inventory has no item list."
-        raise TypeError(msg)
-
-    items: list[InventoryItem] = []
-    for raw in raw_items:
-        mapping = json_mapping_or_none(raw)
-        if mapping is None:
-            msg = "Serialized collection inventory contains a non-object item."
-            raise TypeError(msg)
-        item_id = mapping.get("item_id")
-        if not isinstance(item_id, str):
-            msg = "Serialized collection inventory item has no string item_id."
-            raise TypeError(msg)
-        locator_value = mapping.get("locator")
-        locator = locator_value if isinstance(locator_value, str) else None
-        source_path_value = mapping.get("source_path")
-        source_path = source_path_value if isinstance(source_path_value, str) else None
-        metadata = json_mapping_or_none(mapping.get("metadata"))
-        items.append(
-            InventoryItem(
-                item_id=item_id,
-                artifact_key=ArtifactKey(f"source:{source_id}:item:{item_id}"),
-                locator=locator,
-                source_path=source_path,
-                change_token=_change_token_from_mapping(mapping.get("change_token")),
-                expected_integrity=_integrity_expectations_from_mapping(mapping.get("expected_integrity")),
-                metadata=copy_json_mapping(metadata) if metadata is not None else {},
-            )
-        )
-
-    coverage = json_mapping_or_none(serialized.get("coverage")) or {}
-    enumeration = json_mapping_or_none(payload.get("enumeration")) or {}
-    complete = coverage.get("complete") is True
-    if enumeration and enumeration.get("complete") is not True:
-        complete = False
-    if not _enumeration_count_matches(payload, len(items)):
-        complete = False
+    items = _serialized_inventory_items(source_id, serialized.get("items"))
     identity_value = serialized.get("upstream_identity")
-    identity = identity_value if isinstance(identity_value, str) else None
-    observed_value = serialized.get("observed_at")
-    inventory_observed_at = (
-        float(observed_value)
-        if isinstance(observed_value, (int, float)) and not isinstance(observed_value, bool)
-        else observed_at
-    )
     metadata = json_mapping_or_none(serialized.get("metadata"))
     return SourceInventory(
         source_id=source_id,
-        observed_at=inventory_observed_at,
-        coverage=InventoryCoverage(complete=complete),
-        items=tuple(items),
-        upstream_identity=identity,
+        observed_at=_serialized_inventory_observed_at(serialized, observed_at),
+        coverage=InventoryCoverage(
+            complete=_serialized_inventory_complete(payload, serialized, item_count=len(items))
+        ),
+        items=items,
+        upstream_identity=identity_value if isinstance(identity_value, str) else None,
         metadata=copy_json_mapping(metadata) if metadata is not None else {},
     )
 
@@ -623,7 +646,94 @@ def _entries_by_item_id(entries: JsonMapping) -> dict[str, tuple[str, JsonValue]
     return indexed
 
 
-def _record_collection(  # ruff: ignore[too-many-locals]
+def _collection_record_context(
+    repository: Repository,
+    *,
+    source_id: SourceId,
+    payload: JsonMapping,
+    observed_at: float,
+) -> _CollectionRecordContext:
+    entries = json_mapping_or_none(payload.get("entries")) or {}
+    inventory = _collection_inventory(source_id=source_id, payload=payload, observed_at=observed_at)
+    reconciliation = reconcile_inventory(inventory, _previous_collection_items(repository, source_id))
+    entries_by_id = _entries_by_item_id(entries)
+    inventory_ids = {item.item_id for item in inventory.items}
+    request = json_mapping_or_none(payload.get("request")) or {}
+    return _CollectionRecordContext(
+        inventory=inventory,
+        reconciliation=reconciliation,
+        entries_by_id=entries_by_id,
+        media_type="application/json" if request.get("response_mode") == "json" else None,
+        state=_CollectionImportState(
+            unexpected_entry_count=len(set(entries_by_id) - inventory_ids),
+        ),
+    )
+
+
+def _record_collection_members(
+    repository: Repository,
+    *,
+    context: _CollectionRecordContext,
+    source_id: SourceId,
+    task_name: str,
+    run_id: RunId,
+    operation_id: OperationId,
+    observed_at: float,
+) -> None:
+    decisions_by_id = {decision.item_id: decision for decision in context.reconciliation.decisions}
+    for item in context.inventory.items:
+        decision = decisions_by_id[item.item_id]
+        acquired = context.entries_by_id.get(item.item_id)
+        if acquired is None:
+            _record_missing_collection_entry(context.state, decision)
+            continue
+        key, raw_entry = acquired
+        _record_collection_entry(
+            repository,
+            state=context.state,
+            source_id=source_id,
+            task_name=task_name,
+            run_id=run_id,
+            operation_id=operation_id,
+            observed_at=observed_at,
+            media_type=context.media_type,
+            key=key,
+            raw_entry=raw_entry,
+            decision=decision,
+        )
+
+
+def _collection_snapshot_evidence(
+    context: _CollectionRecordContext,
+    *,
+    task_name: str,
+    removed_count: int,
+) -> JsonObject:
+    classification_counts: JsonObject = {
+        state: count for state, count in context.reconciliation.counts().items()
+    }
+    evidence: JsonObject = {
+        "collection": True,
+        "task": task_name,
+        "inventory_model": "source-inventory-v1",
+        "enumeration_complete": context.inventory.coverage.complete,
+        "enumerated_item_count": len(context.inventory.items),
+        "content_item_count": context.state.content_count,
+        "absent_item_count": context.state.absent_count,
+        "unresolved_item_count": context.state.unresolved_count,
+        "unexpected_entry_count": context.state.unexpected_entry_count,
+        "removed_item_count": removed_count,
+        "acquisition_complete": (
+            context.state.unresolved_count == 0 and context.state.unexpected_entry_count == 0
+        ),
+        "classification_counts": classification_counts,
+    }
+    if context.inventory.upstream_identity is not None:
+        evidence["upstream_identity"] = context.inventory.upstream_identity
+    return evidence
+
+
+def _record_collection(
     repository: Repository,
     *,
     source_id: SourceId,
@@ -633,39 +743,21 @@ def _record_collection(  # ruff: ignore[too-many-locals]
     operation_id: OperationId,
     observed_at: float,
 ) -> tuple[list[ObservationId], str]:
-    entries = json_mapping_or_none(payload.get("entries")) or {}
-    request = json_mapping_or_none(payload.get("request")) or {}
-    media_type = "application/json" if request.get("response_mode") == "json" else None
-    inventory = _collection_inventory(source_id=source_id, payload=payload, observed_at=observed_at)
-    reconciliation = reconcile_inventory(inventory, _previous_collection_items(repository, source_id))
-    decisions_by_id = {decision.item_id: decision for decision in reconciliation.decisions}
-    entries_by_id = _entries_by_item_id(entries)
-    inventory_ids = {item.item_id for item in inventory.items}
-    state = _CollectionImportState(
-        unexpected_entry_count=len(set(entries_by_id) - inventory_ids),
+    context = _collection_record_context(
+        repository,
+        source_id=source_id,
+        payload=payload,
+        observed_at=observed_at,
     )
-
-    for item in inventory.items:
-        decision = decisions_by_id[item.item_id]
-        acquired = entries_by_id.get(item.item_id)
-        if acquired is None:
-            _record_missing_collection_entry(state, decision)
-            continue
-        key, raw_entry = acquired
-        _record_collection_entry(
-            repository,
-            state=state,
-            source_id=source_id,
-            task_name=task_name,
-            run_id=run_id,
-            operation_id=operation_id,
-            observed_at=observed_at,
-            media_type=media_type,
-            key=key,
-            raw_entry=raw_entry,
-            decision=decision,
-        )
-
+    _record_collection_members(
+        repository,
+        context=context,
+        source_id=source_id,
+        task_name=task_name,
+        run_id=run_id,
+        operation_id=operation_id,
+        observed_at=observed_at,
+    )
     removed = _record_collection_membership_absences(
         repository,
         source_id=source_id,
@@ -673,40 +765,22 @@ def _record_collection(  # ruff: ignore[too-many-locals]
         operation_id=operation_id,
         observed_at=observed_at,
         task_name=task_name,
-        decisions=reconciliation.decisions,
+        decisions=context.reconciliation.decisions,
     )
-    state.observations.extend(removed)
-    classification_counts: JsonObject = {
-        "new": len(reconciliation.by_state("new")),
-        "changed": len(reconciliation.by_state("changed")),
-        "unchanged": len(reconciliation.by_state("unchanged")),
-        "absent": len(reconciliation.by_state("absent")),
-    }
-    evidence: JsonObject = {
-        "collection": True,
-        "task": task_name,
-        "inventory_model": "source-inventory-v1",
-        "enumeration_complete": inventory.coverage.complete,
-        "enumerated_item_count": len(inventory.items),
-        "content_item_count": state.content_count,
-        "absent_item_count": state.absent_count,
-        "unresolved_item_count": state.unresolved_count,
-        "unexpected_entry_count": state.unexpected_entry_count,
-        "removed_item_count": len(removed),
-        "acquisition_complete": state.unresolved_count == 0 and state.unexpected_entry_count == 0,
-        "classification_counts": classification_counts,
-    }
-    if inventory.upstream_identity is not None:
-        evidence["upstream_identity"] = inventory.upstream_identity
+    context.state.observations.extend(removed)
     snapshot = repository.record_tree_snapshot(
         source_id=source_id,
         run_id=run_id,
-        entries=state.tree_entries,
-        complete=inventory.coverage.complete,
-        observed_at=inventory.observed_at,
-        evidence=evidence,
+        entries=context.state.tree_entries,
+        complete=context.inventory.coverage.complete,
+        observed_at=context.inventory.observed_at,
+        evidence=_collection_snapshot_evidence(
+            context,
+            task_name=task_name,
+            removed_count=len(removed),
+        ),
     )
-    return state.observations, str(snapshot.snapshot_id)
+    return context.state.observations, str(snapshot.snapshot_id)
 
 
 def _record_top_level_output(

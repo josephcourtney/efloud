@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.locator import resolve_locator_from_file
 from efloud.manifest import load_latest_manifest
 from efloud.query_targets import parse_query_target
@@ -108,7 +110,53 @@ def store_payload(store_id: str, *, cfg: EngineConfig) -> dict[str, Any]:
     return store_payload_for_specs(store_id, root=Path(cfg.root), specs=store_specs(cfg))
 
 
+def _derived_index_payload(index_id: str, *, cfg: EngineConfig) -> dict[str, Any] | None:
+    registry = cfg.derived_index_registry
+    if registry is None:
+        return None
+    definition = registry.definition(index_id)
+    if definition is None:
+        return None
+    with Repository(Path(cfg.root)) as repository:
+        observation = repository.latest_observation(definition.artifact_key)
+        status: dict[str, Any] = {
+            "present": observation is not None,
+            "artifact_key": str(definition.artifact_key),
+            "task_id": definition.spec.task_id,
+            "task_version": definition.task_version,
+            "dependency_semantics": definition.dependency_semantics,
+            "validity": "derivation-key",
+        }
+        payload: dict[str, Any] = {
+            "target_kind": "index",
+            "index_id": index_id,
+            "description": definition.description,
+            "status": status,
+        }
+        if observation is None:
+            return payload
+        status["observation_id"] = str(observation.observation_id)
+        status["content_id"] = str(observation.content_id)
+        status["derivation_key"] = observation.metadata.get("derivation_key")
+        status["reused"] = observation.metadata.get("derivation_reused") is True
+        try:
+            with repository.open_content(observation.content_id) as stream:
+                decoded = json.loads(stream.read().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            status["error"] = f"{type(exc).__name__}: {exc}"
+            return payload
+        mapping = json_mapping_or_none(decoded)
+        if mapping is not None:
+            payload["payload"] = copy_json_mapping(mapping)
+        else:
+            status["error"] = "Derived index content is not a JSON object."
+        return payload
+
+
 def index_payload(index_id: str, *, cfg: EngineConfig) -> dict[str, Any]:
+    derived = _derived_index_payload(index_id, cfg=cfg)
+    if derived is not None:
+        return derived
     if cfg.index_registry is None:
         msg = "No index registry configured for this engine instance."
         raise ValueError(msg)
@@ -127,12 +175,21 @@ def index_payload(index_id: str, *, cfg: EngineConfig) -> dict[str, Any]:
     return payload
 
 
+def _index_ids(cfg: EngineConfig) -> list[str]:
+    ids: set[str] = set()
+    if cfg.index_registry is not None:
+        ids.update(cfg.index_registry.ids())
+    if cfg.derived_index_registry is not None:
+        ids.update(cfg.derived_index_registry.ids())
+    return sorted(ids)
+
+
 def root_payload(cfg: EngineConfig) -> dict[str, Any]:
     return {
         "target_kind": "root",
         "repository_authoritative": repository_exists(cfg),
         "stores": _store_summary_entries(cfg),
-        "indexes": list(cfg.index_registry.ids()) if cfg.index_registry is not None else [],
+        "indexes": _index_ids(cfg),
         "sources": [
             {
                 "source_id": source.id,

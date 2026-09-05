@@ -14,6 +14,7 @@ from efloud.fanout import (
     normalize_fanout_enumeration,
 )
 from efloud.inventory import ChangeToken, IntegrityExpectation, InventoryCoverage
+from efloud.json_types import json_mapping_or_none
 from efloud.reconciliation import PreviousInventoryItem, reconcile_inventory
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_models import ArtifactKey, ContentId, SourceId
@@ -149,18 +150,22 @@ async def test_fanout_task_serializes_inventory_independently_of_retrieval_resul
         sources=(source,),
     )
 
-    inventory = payload["inventory"]
-    assert isinstance(inventory, dict)
-    assert inventory["source_id"] == "collection"
-    assert inventory["coverage"] == {"scope": [], "complete": False}
-    items = inventory["items"]
+    inventory = json_mapping_or_none(payload.get("inventory"))
+    assert inventory is not None
+    assert inventory.get("source_id") == "collection"
+    assert inventory.get("coverage") == {"scope": [], "complete": False}
+    items = inventory.get("items")
     assert isinstance(items, list)
-    assert [item["item_id"] for item in items] == ["alpha", "beta"]
-    assert items[0]["change_token"] == token.to_dict()
-    assert payload["enumeration"] == {
+    parsed_items = [json_mapping_or_none(item) for item in items]
+    assert all(item is not None for item in parsed_items)
+    assert [item.get("item_id") for item in parsed_items if item is not None] == ["alpha", "beta"]
+    first = parsed_items[0]
+    assert first is not None
+    assert first.get("change_token") == token.to_dict()
+    assert payload.get("enumeration") == {
         "complete": False,
         "item_count": 2,
         "model": "source-inventory-v1",
         "upstream_identity": "catalog-page-1",
     }
-    assert payload["entries"] == {"alpha": {"status": "ok"}}
+    assert payload.get("entries") == {"alpha": {"status": "ok"}}

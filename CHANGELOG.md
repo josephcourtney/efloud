@@ -28,6 +28,10 @@ Items should be categorized under these headings:
 - add normalized `SourceInventory`, `InventoryCoverage`, `InventoryItem`, `ChangeToken`, and `IntegrityExpectation` models for protocol-independent source evidence
 - add generic reconciliation that classifies normalized inventory items as new, changed, unchanged, or absent while restricting absence to proven complete coverage
 - add explicit `FanoutEnumeration` membership evidence with complete/partial coverage, upstream enumeration identity, change tokens, and integrity expectations
+- add namespaced, versioned `ProducerRef` identity plus explicit canonical run/operation lifecycle states enforced at repository and SQLite boundaries
+- add `DerivedTaskSpec` and canonical `DerivationKey` identities with content-sensitive and observation-sensitive dependency semantics
+- add deterministic derived-content reuse that preserves immutable content while recording new current-run observations and provenance edges
+- add repository-backed deterministic semantic indexes whose reuse is governed by derivation identity rather than wall-clock TTL
 
 ### Changed
 - change temporal dataset resolution to treat an explicit later absence as authoritative instead of falling back to an older content-bearing observation
@@ -40,6 +44,9 @@ Items should be categorized under these headings:
 - route collection/fanout membership through `SourceInventory` and generic reconciliation so removed-item absence is inferred only from complete enumeration coverage
 - serialize fanout `SourceInventory` immediately after enumeration and before item retrieval so membership evidence remains independent from acquisition results
 - preserve the latest complete collection snapshot as the reconciliation baseline across intervening partial enumerations
+- store successful lifecycle state canonically as `succeeded` while preserving legacy `success` spelling in compatibility status and manifest projections
+- derive run `partial` state from mixed repository operation outcomes rather than relying only on the legacy sync success boolean
+- make configured repository-backed semantic indexes authoritative for `index:<id>` queries while retaining TTL indexes for compatibility/source-refresh cache use
 
 ### Deprecated
 
@@ -48,6 +55,7 @@ Items should be categorized under these headings:
 ### Fixed
 - prevent temporal dataset selection from resurrecting files that have a later authoritative absence observation
 - restore `sqlite_metadata.py` as valid importable source while preserving the schema-v2 absence migration and repository metadata behavior
+- close in-flight repository operations before failing an Engine import run so lifecycle enforcement cannot leave impossible running-operation state
 
 ### Security
 

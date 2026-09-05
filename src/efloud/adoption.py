@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from efloud.artifacts import sha256_hex
 from efloud.registry import SourceKind
-from efloud.repository_models import ContentId, ObservationId, OperationId, RunId, RunStatus, SourceId
+from efloud.repository_models import ContentId, SourceId
 from efloud.transport.http_utils import dest_for_http_source
 
 if TYPE_CHECKING:
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
+    from efloud.repository_models import ObservationId, OperationId, RunId, RunStatus
 
 
 type _AdoptionCandidate = tuple[str, Path, str | None]

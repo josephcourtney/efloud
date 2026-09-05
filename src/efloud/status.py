@@ -5,10 +5,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from efloud.health import build_mirror_health_summary
 from efloud.json_types import JsonArray, JsonMapping, JsonObject, JsonValue, json_mapping_or_none
-from efloud.manifest import load_latest_manifest
-from efloud.models import EngineConfig, NormalizedManifest, SyncResult
+from efloud.models import EngineConfig, NormalizedManifest
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_compat import repository_exists, repository_source_entry
@@ -43,7 +41,24 @@ def _repository_health(repository: Repository, cfg: EngineConfig) -> dict[str, A
     }
 
 
+def _uninitialized_health(cfg: EngineConfig) -> dict[str, Any]:
+    return {
+        "mirror_timestamps": {
+            source.id: None for source in cfg.sources if _kind_name(source.kind) == SourceKind.RSYNC.value
+        },
+        "missing_roots": [],
+        "manifest_errors": [],
+        "rsync_results": {},
+        "http_results": {},
+    }
+
+
 def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]]:
+    """Return status from repository state only.
+
+    Generated manifests and mirror-state files remain inspectable compatibility
+    outputs, but their presence or contents never determine source status.
+    """
     root = Path(cfg.root)
     if repository_exists(cfg):
         with Repository(root) as repository:
@@ -58,37 +73,22 @@ def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]
             }
         return payload, []
 
-    warnings: list[str] = []
-    manifest, manifest_warnings, manifest_path = load_latest_manifest(
-        root / cfg.log_dir,
-        cfg.manifest_filename,
-        expected_root=root,
+    return (
+        {
+            "mirror_root": str(root),
+            "manifest_path": None,
+            "repository_metadata": None,
+            "repository_authoritative": False,
+            "repository_status": "uninitialized",
+            "source_count": len(cfg.sources),
+            "index_count": len(cfg.index_registry.ids()) if cfg.index_registry is not None else 0,
+            "health": _uninitialized_health(cfg),
+        },
+        [
+            "Repository metadata is not initialized; compatibility manifests and mirror-state exports "
+            "are not used as authoritative status. Run a repository sync or adopt retained local data."
+        ],
     )
-    warnings.extend(manifest_warnings)
-
-    sync_res = (
-        SyncResult(ok=True, root=root, manifest_path=manifest_path, manifest=manifest) if manifest is not None else None
-    )
-
-    mirror_roots = {
-        source.id: (root / cfg.mirrors_dir / source.local_subpath) if source.local_subpath else None
-        for source in cfg.sources
-        if _kind_name(source.kind) == SourceKind.RSYNC.value
-    }
-
-    payload = {
-        "mirror_root": str(root),
-        "manifest_path": str(sync_res.manifest_path) if sync_res is not None and sync_res.manifest_path else None,
-        "repository_metadata": None,
-        "repository_authoritative": False,
-        "source_count": len(cfg.sources),
-        "index_count": len(cfg.index_registry.ids()) if cfg.index_registry is not None else 0,
-        "health": build_mirror_health_summary(
-            mirror_roots,
-            manifest=manifest,
-        ).to_dict(),
-    }
-    return payload, warnings
 
 
 def describe_source_status(
@@ -246,6 +246,11 @@ def source_status_rows(
     *,
     aliases: Mapping[str, tuple[str, ...] | list[str]] | None = None,
 ) -> list[OrderedDict[str, Any]]:
+    """Summarize an explicitly supplied compatibility manifest.
+
+    This helper remains for callers that intentionally inspect/export legacy
+    manifest data. Internal status collection uses repository state instead.
+    """
     rows: list[OrderedDict[str, Any]] = []
     for source in sources:
         status, details = describe_source_status(

@@ -38,6 +38,7 @@ Items should be categorized under these headings:
 - expose the repository, immutable dataset selectors/types, repository identities, query service, and repository status service through the package public API
 - route rsync inventory classification through the generic reconciliation layer while preserving repository observations, unchanged-content reuse, scoped snapshots, and deletion semantics
 - route collection/fanout membership through `SourceInventory` and generic reconciliation so removed-item absence is inferred only from complete enumeration coverage
+- serialize fanout `SourceInventory` immediately after enumeration and before item retrieval so membership evidence remains independent from acquisition results
 - preserve the latest complete collection snapshot as the reconciliation baseline across intervening partial enumerations
 
 ### Deprecated

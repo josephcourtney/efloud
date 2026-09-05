@@ -238,7 +238,7 @@ def _serialized_collection_inventory(
         return None
     serialized_source = serialized.get("source_id")
     if isinstance(serialized_source, str) and serialized_source != str(source_id):
-        msg = f"Collection inventory source mismatch: {serialized_source!r} != {source_id!s!r}"
+        msg = f"Collection inventory source mismatch: {serialized_source!r} != {str(source_id)!r}"
         raise ValueError(msg)
     raw_items = serialized.get("items")
     if not isinstance(raw_items, list):
@@ -488,12 +488,17 @@ def _record_collection_entry(
 ) -> None:
     entry = json_mapping_or_none(raw_entry)
     if entry is None:
+        current = decision.current
+        relative_path = current.source_path if current is not None and current.source_path else key
         state.unresolved_count += 1
         state.tree_entries.append(
             TreeEntry(
-                relative_path=decision.current.source_path if decision.current is not None and decision.current.source_path else key,
+                relative_path=relative_path,
                 kind="unresolved",
-                metadata={**_tree_metadata(decision.item_id, decision), "error": "invalid acquisition result"},
+                metadata={
+                    **_tree_metadata(decision.item_id, decision),
+                    "error": "invalid acquisition result",
+                },
             )
         )
         return
@@ -560,11 +565,7 @@ def _record_missing_collection_entry(
     decision: ReconciliationDecision,
 ) -> None:
     current = decision.current
-    relative_path = (
-        current.source_path
-        if current is not None and current.source_path is not None
-        else decision.item_id
-    )
+    relative_path = current.source_path if current is not None and current.source_path is not None else decision.item_id
     state.tree_entries.append(
         TreeEntry(
             relative_path=relative_path,

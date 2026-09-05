@@ -10,8 +10,8 @@ if TYPE_CHECKING:
     from efloud.models import NormalizedManifest
 
 
-def normalize_manifest(raw: JsonValue) -> NormalizedManifest:
-    """Normalize a JSON value into the canonical manifest shape."""
+def normalize_manifest(raw: object) -> NormalizedManifest:
+    """Normalize an arbitrary runtime payload into the canonical manifest shape."""
     raw_mapping = json_mapping_or_none(raw)
     if raw_mapping is None:
         msg = "manifest must be a JSON object"
@@ -82,9 +82,9 @@ def _merge_result_entries(
                 destination[str(key)] = copy_json_mapping(value_mapping)
 
 
-def merge_manifests(previous: JsonValue | None, new: JsonValue) -> NormalizedManifest:
+def merge_manifests(previous: object | None, new: object) -> NormalizedManifest:
     """
-    Merge two manifests such that per-source results are retained across runs.
+    Merge two manifest-like runtime payloads while retaining per-source results.
 
     This is primarily used to keep a canonical manifest (e.g. ``sync-manifest.json``)
     "complete" even when a sync run only targets a subset of sources.

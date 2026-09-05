@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NewType
+from typing import TYPE_CHECKING, Literal, NewType
 
 if TYPE_CHECKING:
-    from efloud.json_types import JsonObject
+    from efloud.json_types import JsonMapping, JsonObject
 
 SourceId = NewType("SourceId", str)
 ArtifactKey = NewType("ArtifactKey", str)
@@ -17,6 +17,39 @@ OperationId = NewType("OperationId", str)
 SnapshotId = NewType("SnapshotId", str)
 TreeId = NewType("TreeId", str)
 DatasetId = NewType("DatasetId", str)
+
+type RunStatus = Literal["running", "succeeded", "partial", "failed", "cancelled"]
+type OperationStatus = Literal["running", "succeeded", "failed", "cancelled"]
+
+
+@dataclass(frozen=True, slots=True)
+class ProducerRef:
+    """Stable namespaced identity and explicit version for an acquisition or derivation producer."""
+
+    producer_id: str
+    version: str
+
+    def __post_init__(self) -> None:
+        """Reject ambiguous or unversioned producer identities."""
+        namespace, separator, name = self.producer_id.partition(":")
+        if not namespace or not separator or not name:
+            msg = f"Producer identifiers must be namespaced: {self.producer_id!r}"
+            raise ValueError(msg)
+        if not self.version:
+            msg = "Producer version must not be empty."
+            raise ValueError(msg)
+
+    def to_dict(self) -> JsonObject:
+        return {"producer_id": self.producer_id, "version": self.version}
+
+    @classmethod
+    def from_mapping(cls, value: JsonMapping) -> ProducerRef:
+        producer_id = value.get("producer_id")
+        version = value.get("version")
+        if not isinstance(producer_id, str) or not isinstance(version, str):
+            msg = "Producer metadata requires string producer_id and version fields."
+            raise TypeError(msg)
+        return cls(producer_id=producer_id, version=version)
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -264,8 +297,11 @@ __all__ = [
     "DatasetId",
     "ObservationId",
     "OperationId",
+    "OperationStatus",
+    "ProducerRef",
     "ProvenanceEdge",
     "RunId",
+    "RunStatus",
     "SnapshotId",
     "SourceId",
     "SourceSnapshot",

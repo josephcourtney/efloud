@@ -93,12 +93,23 @@ class Engine:
         if self._owns_repository:
             self.repository.close()
 
+    def _fail_running_operations(self, run_id: RunId) -> None:
+        for operation in self.repository.metadata.operations_for_run(run_id):
+            if operation.status != "running":
+                continue
+            self.repository.finish_operation(
+                operation.operation_id,
+                status="failed",
+                details={"error": "repository import aborted before operation completion"},
+            )
+
     async def sync(self) -> EngineSyncResult:
         recorder = RepositorySyncRecorder(self.repository, self.config)
         try:
             sync_result = await legacy_sync(self.config)
             await recorder.import_result(sync_result)
         except BaseException:
+            self._fail_running_operations(recorder.run_id)
             recorder.finish(ok=False)
             raise
         recorder.finish(ok=sync_result.ok)

@@ -47,7 +47,10 @@ _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
 
 
 def _canonical_terminal_status(status: str, *, operation: bool) -> str:
-    normalized = "succeeded" if status == "success" else status
+    if operation and status == "partial":
+        normalized = "failed"
+    else:
+        normalized = "succeeded" if status == "success" else status
     allowed = _OPERATION_TERMINAL if operation else _RUN_TERMINAL
     if normalized not in allowed:
         kind = "operation" if operation else "run"

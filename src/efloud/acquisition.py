@@ -10,7 +10,6 @@ from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.models import SyncResult
 from efloud.sync import (
     ManifestRecorder,
-    SyncPaths,
     build_http_caches,
     prepare_paths,
     run_http_phase,
@@ -19,6 +18,7 @@ from efloud.sync import (
 
 if TYPE_CHECKING:
     from efloud.models import EngineConfig
+    from efloud.sync import SyncPaths
     from efloud.transport.http import HttpCache
 
 

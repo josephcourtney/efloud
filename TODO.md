@@ -8,50 +8,78 @@ Rules:
 - Remove completed items before committing.
 - Prefer concrete references and explicit acceptance criteria.
 
-## 1. Run and repair the Phase 8 quality gate
+## 1. Run and repair the Phase 9 quality gate
 
 Files: repository-wide as required
 
 - run `.venv/bin/ruff format src/ tests/`
 - run `.venv/bin/ruff check src/ tests/`
 - run `.venv/bin/ty check src/ tests/`
-- run focused provenance/lifecycle/derivation/index tests
-- run existing repository/status/manifest/engine compatibility tests
+- run focused blob-store/content/repository/dataset tests, including
+  `tests/unit/test_blob_store_contract.py`
+- run existing repository/query/status/manifest/derived-index compatibility tests
 - run `.venv/bin/pytest`
-- verify public imports for `ProducerRef`, `DerivedTaskSpec`, derivation APIs, and derived indexes
+- verify a clean checkout can use `FilesystemBlobStore` normally and the pathless
+  test store without requiring `path_for()`
 
-Acceptance: the normal project quality gate passes from a clean checkout without regressions in existing acquisition, manifest/status compatibility, or repository behavior.
+Acceptance: the normal project quality gate passes without regressions, and generic
+repository/content behavior has no dependency on a local blob path or backend
+storage locator.
 
-## 2. Redefine the generic blob-store semantic contract
+## 2. Inventory remaining Phase 10 authoritative legacy reads
 
-Files: `src/efloud/blob_store.py`, repository/content models, tests
+Files: sync/orchestration, source result/status/freshness helpers, manifest/state
+compatibility modules, tests
 
-- retain semantic operations for put/open/contains/verify/delete
-- keep path/stream ingestion as convenience rather than identity
-- remove assumptions that generic callers can resolve a local storage path
-- move filesystem-only path access behind `FilesystemBlobStore` or an explicit optional capability
-- preserve idempotent puts and content-addressed identity
+- identify every internal read of canonical/timestamped manifests, mirror-state
+  files, and mirror filesystem rescans
+- classify each as authoritative control-flow state, explicit compatibility export,
+  or diagnostic-only inspection
+- map every authoritative read to an existing repository query or a concrete
+  repository API that still needs to be added
+- preserve explicit compatibility serializers but prevent new internal consumers
+  from depending on their output
 
-Acceptance: a fake non-path-backed blob store can satisfy repository ingestion/open/verify behavior without exposing filesystem paths.
+Acceptance: every remaining legacy-state read has a named repository-backed
+replacement and compatibility-only reads are clearly separated.
 
-## 3. Remove `storage_key` from repository-facing semantics where possible
+## 3. Cut current-state/freshness/status decisions over to repository state
 
-Files: content/reference models, metadata store/schema/facade/query/dataset code, tests
+Files: source-result/status/policy/resolution helpers and repository query services
 
-- separate semantic `ContentRef` fields from backend-specific storage location
-- keep backend location private to the blob-store implementation or storage metadata
-- ensure repository/query/dataset code opens content only through `BlobStore`
-- preserve compatibility for existing SQLite stores during migration
+- derive current source/artifact state from observations, absences, snapshots, runs,
+  operations, validations, and materializations
+- derive freshness/change evidence from repository snapshot/operation evidence rather
+  than generated manifests
+- remove control-flow fallbacks that consult compatibility JSON when equivalent
+  repository evidence exists
+- keep consumer-visible compatibility output unchanged where parity is required
 
-Acceptance: relocating the filesystem CAS or replacing it with a non-path backend does not change content/artifact/observation/dataset identity or require repository-facing path logic.
+Acceptance: deleting generated manifests and mirror-state exports cannot change
+internal source-state, freshness, status, or query decisions.
 
-## 4. Characterize interrupted-ingestion/orphan behavior
+## 4. Remove manifest merge from targeted-sync memory
 
-Files: blob-store/repository failure tests and documentation
+Files: sync/planning compatibility path, repository source/snapshot APIs, tests
 
-- document that blob puts are idempotent
-- test metadata failure after successful blob write
-- verify this can leave an orphan blob but never a committed reference to missing content
-- preserve orphan cleanup for the later GC phase rather than coupling it to transaction rollback
+- preserve untouched source/artifact state through repository history rather than
+  merging prior manifest entries into a new manifest
+- ensure partial/targeted runs only advance scopes actually observed
+- regenerate the compatibility manifest from repository state after the run
+- add parity coverage for targeted syncs with untouched sources
 
-Acceptance: interrupted metadata commits may leave safe unreachable blobs, but repository records never reference unavailable content.
+Acceptance: a targeted sync remembers untouched authoritative state with no prior
+manifest available, and the regenerated compatibility manifest still presents the
+expected complete view.
+
+## 5. Add conservative existing-store adoption
+
+Files: repository adoption/import boundary and tests
+
+- recognize existing retained content/materializations without destructive moves
+- import only evidence that can be established from existing files/state
+- do not invent acquisition provenance, observations, completeness, or absence
+- make repeated adoption idempotent
+
+Acceptance: an existing store can be adopted without reacquisition or relocation,
+while uncertain historical facts remain explicitly unknown rather than fabricated.

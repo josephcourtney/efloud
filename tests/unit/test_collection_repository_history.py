@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,11 +13,15 @@ from efloud.repository import Repository
 from efloud.repository_derived import import_derived_results
 from efloud.repository_models import SourceId
 
+if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
+
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
 async def _unused_enumerator(*, sync_root, manifest, sources):
     del sync_root, manifest, sources
+    await asyncio.sleep(0)
     return []
 
 
@@ -37,7 +43,7 @@ def test_collection_history_survives_deleted_materialization_and_reopen(tmp_path
     materialized = tmp_path / "fanout" / "alpha.json"
     materialized.parent.mkdir(parents=True)
     materialized.write_text('{"id":"alpha"}', encoding="utf-8")
-    payload = {
+    payload: JsonObject = {
         "source_id": source.id,
         "kind": source.kind.value,
         "request": {

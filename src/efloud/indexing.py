@@ -2,18 +2,24 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, Self
 
+from efloud.derivation import DependencySemantics, DerivedTaskSpec, derivation_key_for
 from efloud.fs import atomic_write_text, safe_json_dump
 from efloud.json_types import JsonMapping, JsonObject, JsonValue, copy_json_mapping, json_mapping_or_none
+from efloud.repository_models import ArtifactKey, ArtifactObservation, canonical_json_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from efloud.repository import Repository
+
 
 class CachedIndex(Protocol):
+    """Compatibility contract for wall-clock caches, not deterministic derivations."""
+
     fetched_at: float
     ttl_seconds: int
 
@@ -33,6 +39,8 @@ class CachedIndex(Protocol):
 
 @dataclass(frozen=True)
 class JsonTtlIndex:
+    """Legacy/source-refresh JSON cache whose validity is intentionally time based."""
+
     fetched_at: float
     ttl_seconds: int
     payload: JsonObject
@@ -99,6 +107,8 @@ class IndexStatus:
 
 
 class IndexRegistry:
+    """Compatibility registry for TTL-backed external/source caches."""
+
     def __init__(self, definitions: Sequence[IndexDefinition[CachedIndex]] = ()) -> None:
         self._definitions: dict[str, IndexDefinition[CachedIndex]] = {
             definition.index_id: definition for definition in definitions
@@ -184,6 +194,147 @@ class IndexRegistry:
         )
 
 
+class DerivedIndexBuilder(Protocol):
+    def __call__(
+        self,
+        *,
+        repository: Repository,
+        inputs: tuple[ArtifactObservation, ...],
+    ) -> JsonObject: ...
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedIndexDefinition:
+    """Repository-backed semantic index defined as a deterministic derivation."""
+
+    index_id: str
+    task_version: str
+    build: DerivedIndexBuilder
+    dependency_semantics: DependencySemantics = "content"
+    parameters: JsonObject = field(default_factory=dict)
+    description: str = ""
+
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        return ArtifactKey(f"index:{self.index_id}")
+
+    @property
+    def spec(self) -> DerivedTaskSpec:
+        return DerivedTaskSpec(
+            task_id=f"efloud:index:{self.index_id}",
+            task_version=self.task_version,
+            deterministic=True,
+            dependency_semantics=self.dependency_semantics,
+            parameters=self.parameters,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedIndexResult:
+    observation: ArtifactObservation
+    payload: JsonObject
+    reused: bool
+
+
+class DerivedIndexRegistry:
+    """Build semantic indexes as ordinary repository derived artifacts without TTL invalidation."""
+
+    def __init__(self, definitions: Sequence[DerivedIndexDefinition] = ()) -> None:
+        self._definitions = {definition.index_id: definition for definition in definitions}
+
+    def register(self, definition: DerivedIndexDefinition) -> None:
+        self._definitions[definition.index_id] = definition
+
+    def definition(self, index_id: str) -> DerivedIndexDefinition | None:
+        return self._definitions.get(index_id)
+
+    def ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._definitions))
+
+    @staticmethod
+    def _payload_for_observation(repository: Repository, observation: ArtifactObservation) -> JsonObject:
+        with repository.open_content(observation.content_id) as stream:
+            decoded = json.loads(stream.read().decode("utf-8"))
+        mapping = json_mapping_or_none(decoded)
+        if mapping is None:
+            msg = f"Derived index content is not a JSON object: {observation.content_id}"
+            raise TypeError(msg)
+        return copy_json_mapping(mapping)
+
+    def build(
+        self,
+        index_id: str,
+        *,
+        repository: Repository,
+        run_id,
+        inputs: Sequence[ArtifactObservation] = (),
+        observed_at: float | None = None,
+    ) -> DerivedIndexResult:
+        definition = self.definition(index_id)
+        if definition is None:
+            msg = f"Unknown derived index identifier: {index_id!r}"
+            raise ValueError(msg)
+        input_observations = tuple(inputs)
+        spec = definition.spec
+        derivation_key = derivation_key_for(
+            spec,
+            outputs=(definition.artifact_key,),
+            inputs=input_observations,
+        )
+        operation_id = repository.start_operation(
+            run_id=run_id,
+            kind="derive-index",
+            subject=index_id,
+            producer=spec.producer,
+            parameters={
+                "derived_task_spec": spec.to_dict(),
+                "derivation_key": str(derivation_key),
+            },
+        )
+        reusable = repository.reusable_derived_content(derivation_key, definition.artifact_key)
+        try:
+            if reusable is None:
+                payload = definition.build(repository=repository, inputs=input_observations)
+                data = canonical_json_bytes(payload)
+            else:
+                payload = {}
+                data = b""
+            observation = repository.record_derived_bytes(
+                definition.artifact_key,
+                data,
+                derivation_key=derivation_key,
+                run_id=run_id,
+                operation_id=operation_id,
+                inputs=input_observations,
+                observed_at=observed_at,
+                media_type="application/json",
+                metadata={"index_id": index_id, "semantic_index": True},
+            )
+            if reusable is not None:
+                payload = self._payload_for_observation(repository, observation)
+            repository.finish_operation(
+                operation_id,
+                status="succeeded",
+                details={
+                    "derivation_key": str(derivation_key),
+                    "reused": reusable is not None,
+                    "output_observation_id": str(observation.observation_id),
+                },
+            )
+        except Exception as exc:
+            repository.finish_operation(
+                operation_id,
+                status="failed",
+                details={"error": f"{type(exc).__name__}: {exc}"},
+            )
+            raise
+        return DerivedIndexResult(
+            observation=observation,
+            payload=payload,
+            reused=reusable is not None,
+        )
+
+
 def write_index(path: Path, index: CachedIndex) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, safe_json_dump(index.to_dict()))
@@ -215,6 +366,9 @@ def _int_value(value: JsonValue | None, *, default: int) -> int:
 
 __all__ = [
     "CachedIndex",
+    "DerivedIndexDefinition",
+    "DerivedIndexRegistry",
+    "DerivedIndexResult",
     "IndexDefinition",
     "IndexRegistry",
     "IndexStatus",

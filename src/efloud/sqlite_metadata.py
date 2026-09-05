@@ -4,6 +4,7 @@ import json
 import sqlite3
 from typing import TYPE_CHECKING
 
+from efloud.json_types import json_mapping_or_none
 from efloud.metadata_store import (
     DatasetMemberRecord,
     DatasetRecord,
@@ -22,6 +23,7 @@ from efloud.repository_models import (
     DatasetId,
     ObservationId,
     OperationId,
+    ProducerRef,
     ProvenanceEdge,
     RunId,
     SnapshotId,
@@ -39,6 +41,8 @@ if TYPE_CHECKING:
     from efloud.json_types import JsonObject
 
 _SCHEMA_VERSION = 2
+_RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
+_OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -199,6 +203,35 @@ def _load_string_tuple(value: str) -> tuple[str, ...]:
     return tuple(decoded)
 
 
+def _run_terminal_status(status: str) -> str:
+    normalized = "succeeded" if status == "success" else status
+    if normalized not in _RUN_TERMINAL:
+        msg = f"Invalid terminal run status: {status!r}"
+        raise ValueError(msg)
+    return normalized
+
+
+def _operation_terminal_status(status: str) -> str:
+    if status == "partial":
+        normalized = "failed"
+    else:
+        normalized = "succeeded" if status == "success" else status
+    if normalized not in _OPERATION_TERMINAL:
+        msg = f"Invalid terminal operation status: {status!r}"
+        raise ValueError(msg)
+    return normalized
+
+
+def _operation_parameters(parameters: JsonObject) -> JsonObject:
+    normalized = dict(parameters)
+    raw_producer = json_mapping_or_none(normalized.get("producer"))
+    if raw_producer is None:
+        normalized["producer"] = ProducerRef("efloud:legacy", "0").to_dict()
+    else:
+        ProducerRef.from_mapping(raw_producer)
+    return normalized
+
+
 class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -258,14 +291,31 @@ class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
             )
 
     def finish_run(self, run_id: RunId, *, finished_at: float, status: str) -> None:
+        normalized_status = _run_terminal_status(status)
         with self._connection:
-            cursor = self._connection.execute(
-                "UPDATE runs SET finished_at = ?, status = ? WHERE run_id = ?",
-                (finished_at, status, str(run_id)),
-            )
-            if cursor.rowcount != 1:
+            row = self._connection.execute(
+                "SELECT status FROM runs WHERE run_id = ?",
+                (str(run_id),),
+            ).fetchone()
+            if row is None:
                 msg = f"Unknown run: {run_id}"
                 raise KeyError(msg)
+            if row["status"] != "running":
+                msg = f"Run {run_id} cannot transition from {row['status']!r}."
+                raise ValueError(msg)
+            running_count = int(
+                self._connection.execute(
+                    "SELECT COUNT(*) FROM operations WHERE run_id = ? AND status = 'running'",
+                    (str(run_id),),
+                ).fetchone()[0]
+            )
+            if running_count:
+                msg = f"Run {run_id} cannot finish while operations are still running."
+                raise ValueError(msg)
+            self._connection.execute(
+                "UPDATE runs SET finished_at = ?, status = ? WHERE run_id = ?",
+                (finished_at, normalized_status, str(run_id)),
+            )
 
     @staticmethod
     def _run_from_row(row: sqlite3.Row) -> RunRecord:
@@ -303,7 +353,18 @@ class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
         started_at: float,
         parameters: JsonObject,
     ) -> None:
+        normalized_parameters = _operation_parameters(parameters)
         with self._connection:
+            run_row = self._connection.execute(
+                "SELECT status FROM runs WHERE run_id = ?",
+                (str(run_id),),
+            ).fetchone()
+            if run_row is None:
+                msg = f"Unknown run: {run_id}"
+                raise KeyError(msg)
+            if run_row["status"] != "running":
+                msg = f"Cannot start operation {operation_id} in terminal run {run_id}."
+                raise ValueError(msg)
             self._connection.execute(
                 """
                 INSERT INTO operations(
@@ -318,7 +379,7 @@ class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
                     kind,
                     subject,
                     started_at,
-                    _dump(parameters),
+                    _dump(normalized_parameters),
                 ),
             )
 
@@ -330,18 +391,26 @@ class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
         status: str,
         details: JsonObject,
     ) -> None:
+        normalized_status = _operation_terminal_status(status)
         with self._connection:
-            cursor = self._connection.execute(
+            row = self._connection.execute(
+                "SELECT status FROM operations WHERE operation_id = ?",
+                (str(operation_id),),
+            ).fetchone()
+            if row is None:
+                msg = f"Unknown operation: {operation_id}"
+                raise KeyError(msg)
+            if row["status"] != "running":
+                msg = f"Operation {operation_id} cannot transition from {row['status']!r}."
+                raise ValueError(msg)
+            self._connection.execute(
                 """
                 UPDATE operations
                 SET finished_at = ?, status = ?, details_json = ?
                 WHERE operation_id = ?
                 """,
-                (finished_at, status, _dump(details), str(operation_id)),
+                (finished_at, normalized_status, _dump(details), str(operation_id)),
             )
-            if cursor.rowcount != 1:
-                msg = f"Unknown operation: {operation_id}"
-                raise KeyError(msg)
 
     @staticmethod
     def _operation_from_row(row: sqlite3.Row) -> OperationRecord:
@@ -453,6 +522,25 @@ class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
                     for edge in edges
                 ],
             )
+
+    def provenance_inputs(self, observation_id: ObservationId) -> tuple[ProvenanceEdge, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT output_observation_id, input_observation_id, relationship
+            FROM provenance_edges
+            WHERE output_observation_id = ?
+            ORDER BY input_observation_id, relationship
+            """,
+            (str(observation_id),),
+        ).fetchall()
+        return tuple(
+            ProvenanceEdge(
+                output_observation_id=ObservationId(row["output_observation_id"]),
+                input_observation_id=ObservationId(row["input_observation_id"]),
+                relationship=row["relationship"],
+            )
+            for row in rows
+        )
 
     def record_absence(self, absence: ArtifactAbsence) -> None:
         with self._connection:

@@ -24,15 +24,17 @@ if TYPE_CHECKING:
 
 fanout_mod = importlib.import_module("efloud.fanout")
 
-pytestmark = [pytest.mark.unit, pytest.mark.small]
+pytestmark = [pytest.mark.unit]
 
 
+@pytest.mark.small
 def test_sequence_enumerator_results_remain_complete_by_default() -> None:
     enumeration = normalize_fanout_enumeration([FanoutItem("alpha"), FanoutItem("beta")])
     assert enumeration.complete is True
     assert tuple(item.item_id for item in enumeration.items) == ("alpha", "beta")
 
 
+@pytest.mark.small
 def test_partial_fanout_inventory_cannot_establish_absence() -> None:
     enumeration = FanoutEnumeration(
         items=(FanoutItem("alpha"),),
@@ -64,6 +66,7 @@ def test_partial_fanout_inventory_cannot_establish_absence() -> None:
     assert reconciliation.by_state("absent") == ()
 
 
+@pytest.mark.small
 def test_fanout_inventory_preserves_change_and_integrity_evidence() -> None:
     token = ChangeToken("api-revision", "17", reliability="strong")
     expectation = IntegrityExpectation.sha256("c" * 64)
@@ -92,12 +95,14 @@ def test_fanout_inventory_preserves_change_and_integrity_evidence() -> None:
     assert item.expected_integrity == (expectation,)
 
 
+@pytest.mark.small
 def test_duplicate_fanout_item_ids_are_rejected_at_enumeration_boundary() -> None:
     with pytest.raises(ValueError, match="duplicate item identifiers"):
         FanoutEnumeration(items=(FanoutItem("alpha"), FanoutItem("alpha")))
 
 
 @pytest.mark.asyncio
+@pytest.mark.medium
 async def test_fanout_task_serializes_inventory_independently_of_retrieval_results(
     tmp_path: Path,
     monkeypatch,

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
 
 from efloud.derivation import DerivedTaskSpec, derivation_key_for
 from efloud.indexing import DerivedIndexDefinition, DerivedIndexRegistry
-from efloud.models import EngineConfig
+from efloud.models import EngineConfig, SyncResult
 from efloud.query import index_payload
 from efloud.repository import Repository
+from efloud.repository_recording import RepositorySyncRecorder
 from efloud.repository_models import ProducerRef
 
 if TYPE_CHECKING:
@@ -82,6 +84,29 @@ def test_producer_ids_must_be_namespaced_and_versioned() -> None:
         ProducerRef("worker", "1")
     with pytest.raises(ValueError, match="version"):
         ProducerRef("test:worker", "")
+
+
+def test_dry_run_import_creates_no_execution_operations(tmp_path: Path) -> None:
+    cfg = EngineConfig(root=tmp_path, sources=[], dry_run=True)
+    result = SyncResult(
+        ok=True,
+        root=tmp_path,
+        manifest_path=None,
+        manifest={
+            "version": 1,
+            "root": str(tmp_path),
+            "results": {"http": {}, "rsync": {}, "derived": {}},
+            "errors": [],
+        },
+    )
+    with Repository(tmp_path) as repo:
+        recorder = RepositorySyncRecorder(repo, cfg, started_at=1.0)
+        asyncio.run(recorder.import_result(result))
+        assert repo.metadata.operations_for_run(recorder.run_id) == ()
+        recorder.finish(ok=True)
+        run = repo.metadata.run(recorder.run_id)
+        assert run is not None
+        assert run.status == "succeeded"
 
 
 def test_content_derivation_reuses_content_with_fresh_observation_provenance(tmp_path: Path) -> None:
@@ -231,6 +256,7 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
             if operation.kind == "derive-index"
         )
         assert operation.producer == ProducerRef("efloud:index:alpha", "3")
+        reopened.finish_run(second_run, status="succeeded", finished_at=203.0)
 
     cfg = EngineConfig(root=tmp_path, sources=[], derived_index_registry=indexes)
     queried = index_payload("alpha", cfg=cfg)

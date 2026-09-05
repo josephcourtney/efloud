@@ -60,7 +60,7 @@ def _default_producer(kind: str) -> ProducerRef:
     return ProducerRef(f"efloud:{normalized}", "1")
 
 
-class Repository:  # ruff: ignore[too-many-public-methods]
+class Repository:
     def __init__(
         self,
         root: Path,

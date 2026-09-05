@@ -10,6 +10,7 @@ from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.models import SyncResult
 from efloud.sync import (
     ManifestRecorder,
+    SyncPaths,
     build_http_caches,
     prepare_paths,
     run_http_phase,
@@ -19,6 +20,67 @@ from efloud.sync import (
 if TYPE_CHECKING:
     from efloud.models import EngineConfig
     from efloud.transport.http import HttpCache
+
+
+async def _run_derived_phase(
+    *,
+    cfg: EngineConfig,
+    paths: SyncPaths,
+    recorder: ManifestRecorder,
+) -> None:
+    if cfg.skip_derived or cfg.dry_run:
+        return
+    for task in cfg.derived_tasks:
+        try:
+            payload = await task.run(
+                sync_root=paths.root,
+                manifest=recorder.manifest,
+                sources=tuple(cfg.sources),
+            )
+        except (OSError, RuntimeError, TypeError, ValueError, httpx.HTTPError) as exc:
+            recorder.error(
+                phase="derived",
+                error=f"{type(exc).__name__}: {exc}",
+                name=task.name,
+            )
+            continue
+        mapping = json_mapping_or_none(payload)
+        recorder.record_derived(
+            name=task.name,
+            payload=copy_json_mapping(mapping) if mapping is not None else {},
+        )
+
+
+async def _run_acquisition_phases(
+    *,
+    cfg: EngineConfig,
+    paths: SyncPaths,
+    recorder: ManifestRecorder,
+    http_caches: dict[str, HttpCache],
+) -> None:
+    if cfg.delete_http_caches and not cfg.dry_run:
+        recorder.record_http_cache_deleted(delete_http_cache_files(paths.http_cache))
+
+    http_caches.update(
+        build_http_caches(
+            sources=cfg.sources,
+            cache_root=paths.http_cache,
+            rate_root=paths.rate,
+        )
+    )
+    await run_http_phase(cfg=cfg, paths=paths, http_caches=http_caches, recorder=recorder)
+    expected_mirror_dirs = await run_rsync_phase(cfg=cfg, paths=paths, recorder=recorder)
+
+    if cfg.prune_orphan_mirrors and not cfg.dry_run:
+        recorder.record_pruned_orphan_mirrors(prune_orphan_mirrors(paths.mirrors, expected_mirror_dirs))
+
+    await _run_derived_phase(cfg=cfg, paths=paths, recorder=recorder)
+
+
+async def _close_http_caches(http_caches: dict[str, HttpCache]) -> None:
+    for cache in http_caches.values():
+        with contextlib.suppress(OSError, RuntimeError):
+            await cache.aclose()
 
 
 async def acquire(cfg: EngineConfig) -> SyncResult:
@@ -33,44 +95,14 @@ async def acquire(cfg: EngineConfig) -> SyncResult:
     http_caches: dict[str, HttpCache] = {}
 
     try:
-        if cfg.delete_http_caches and not cfg.dry_run:
-            recorder.record_http_cache_deleted(delete_http_cache_files(paths.http_cache))
-
-        http_caches = build_http_caches(
-            sources=cfg.sources,
-            cache_root=paths.http_cache,
-            rate_root=paths.rate,
+        await _run_acquisition_phases(
+            cfg=cfg,
+            paths=paths,
+            recorder=recorder,
+            http_caches=http_caches,
         )
-        await run_http_phase(cfg=cfg, paths=paths, http_caches=http_caches, recorder=recorder)
-        expected_mirror_dirs = await run_rsync_phase(cfg=cfg, paths=paths, recorder=recorder)
-
-        if cfg.prune_orphan_mirrors and not cfg.dry_run:
-            recorder.record_pruned_orphan_mirrors(prune_orphan_mirrors(paths.mirrors, expected_mirror_dirs))
-
-        if not cfg.skip_derived and not cfg.dry_run:
-            for task in cfg.derived_tasks:
-                try:
-                    payload = await task.run(
-                        sync_root=paths.root,
-                        manifest=recorder.manifest,
-                        sources=tuple(cfg.sources),
-                    )
-                except (OSError, RuntimeError, TypeError, ValueError, httpx.HTTPError) as exc:
-                    recorder.error(
-                        phase="derived",
-                        error=f"{type(exc).__name__}: {exc}",
-                        name=task.name,
-                    )
-                    continue
-                mapping = json_mapping_or_none(payload)
-                recorder.record_derived(
-                    name=task.name,
-                    payload=copy_json_mapping(mapping) if mapping is not None else {},
-                )
     finally:
-        for cache in http_caches.values():
-            with contextlib.suppress(OSError, RuntimeError):
-                await cache.aclose()
+        await _close_http_caches(http_caches)
         recorder.finish()
 
     return SyncResult(

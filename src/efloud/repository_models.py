@@ -61,6 +61,18 @@ def stable_id(prefix: str, value: object) -> str:
     return f"{prefix}:{digest}"
 
 
+def _legacy_storage_key_for(content_id: ContentId) -> str:
+    """Derive the historical SQLite locator without consulting any blob backend."""
+    text = str(content_id)
+    prefix = "sha256:"
+    if not text.startswith(prefix):
+        return text
+    digest = text.removeprefix(prefix)
+    if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+        return text
+    return f"sha256/{digest[:2]}/{digest}"
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class ContentRef:
     """Semantic description of immutable content, independent of physical storage."""
@@ -86,7 +98,7 @@ class ContentRef:
     @property
     def storage_key(self) -> str:
         """Return legacy SQLite storage metadata; not part of content semantics."""
-        return self._legacy_storage_key or str(self.content_id)
+        return self._legacy_storage_key or _legacy_storage_key_for(self.content_id)
 
     def to_dict(self) -> JsonObject:
         payload: JsonObject = {

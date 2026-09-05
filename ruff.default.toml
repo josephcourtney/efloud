@@ -145,6 +145,11 @@ respect-gitignore = true
   ]
 
   [lint.per-file-ignores]
+    # These two classes intentionally implement wide repository contracts. Splitting them solely to satisfy
+    # a method-count threshold would preserve the same interface while obscuring the cohesive abstraction.
+    "src/efloud/repository.py" = ["PLR0904"]
+    "src/efloud/sqlite_metadata.py" = ["PLR0904"]
+
     "tests/**/*.py" = [
       "ANN", # Type annotations
 

@@ -144,6 +144,11 @@ def test_content_derivation_reuses_content_with_fresh_observation_provenance(tmp
         assert second_output.observation_id != first_output.observation_id
         assert second_output.content_id == first_output.content_id
         assert second_output.metadata["derivation_reused"] is True
+        edges = repo.provenance_inputs(second_output.observation_id)
+        assert len(edges) == 1
+        assert edges[0].output_observation_id == second_output.observation_id
+        assert edges[0].input_observation_id == second_input.observation_id
+        assert edges[0].input_observation_id != first_input.observation_id
         with repo.open_content(second_output.content_id) as stream:
             assert stream.read() == b"deterministic result"
 

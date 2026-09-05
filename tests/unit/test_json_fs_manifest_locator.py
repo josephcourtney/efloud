@@ -23,6 +23,7 @@ from efloud.json_types import (
     copy_json_mapping,
     is_json_mapping,
     is_json_object,
+    is_json_value,
     json_mapping_or_none,
     json_object_or_none,
 )
@@ -49,11 +50,15 @@ def test_json_type_helpers_recognize_and_copy_mappings():
 
     mapping = StringKeyMapping({"a": 1})
 
+    assert is_json_value({"nested": [1, True, None]}) is True
     assert is_json_mapping(mapping) is True
     assert is_json_mapping({1: "x"}) is False
+    assert is_json_mapping({"a": object()}) is False
     assert is_json_object({"a": 1}) is True
+    assert is_json_object({"a": [object()]}) is False
     assert is_json_object(mapping) is False
     assert json_mapping_or_none(mapping) is mapping
+    assert json_mapping_or_none({"a": object()}) is None
     assert json_mapping_or_none("x") is None
     assert json_object_or_none({"a": 1}) == {"a": 1}
     assert json_object_or_none(mapping) is None

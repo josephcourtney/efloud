@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,7 +21,6 @@ if TYPE_CHECKING:
 
 async def _unused_enumerator(*, sync_root, manifest, sources):
     del sync_root, manifest, sources
-    await asyncio.sleep(0)
     return []
 
 
@@ -60,6 +58,7 @@ def _collection_payload(
     missing: tuple[str, ...] = (),
     complete: bool = True,
     upstream_identity: str | None = None,
+    observed_at: float = 9.0,
 ) -> JsonObject:
     entries: JsonObject = {}
     inventory_items: JsonArray = []
@@ -110,7 +109,7 @@ def _collection_payload(
     }
     inventory: JsonObject = {
         "source_id": "collection",
-        "observed_at": 9.0,
+        "observed_at": observed_at,
         "coverage": {"scope": [], "complete": complete},
         "items": inventory_items,
         "metadata": {"transport": "REST_BASE", "collection": True},
@@ -181,7 +180,7 @@ def test_complete_collection_records_items_absence_snapshot_and_execution(tmp_pa
         snapshot = repository.latest_source_snapshot("collection")
         assert snapshot is not None
         assert snapshot.complete
-        assert snapshot.observed_at == 9.0
+        assert snapshot.observed_at == pytest.approx(9.0)
         assert snapshot.evidence["inventory_model"] == "source-inventory-v1"
         assert snapshot.evidence["enumeration_complete"] is True
         assert snapshot.evidence["upstream_identity"] == "catalog-v1"
@@ -215,7 +214,13 @@ def test_complete_collection_enumeration_records_removed_item_absence(tmp_path: 
             config=config,
             run_id=first_run,
             started_at=10.0,
-            derived_results={"fanout": _collection_payload(tmp_path, items=("alpha", "beta"))},
+            derived_results={
+                "fanout": _collection_payload(
+                    tmp_path,
+                    items=("alpha", "beta"),
+                    observed_at=9.0,
+                )
+            },
         )
         assert repository.latest_observation("source:collection:item:beta") is not None
 
@@ -225,7 +230,13 @@ def test_complete_collection_enumeration_records_removed_item_absence(tmp_path: 
             config=config,
             run_id=second_run,
             started_at=20.0,
-            derived_results={"fanout": _collection_payload(tmp_path, items=("alpha",))},
+            derived_results={
+                "fanout": _collection_payload(
+                    tmp_path,
+                    items=("alpha",),
+                    observed_at=19.0,
+                )
+            },
         )
 
         beta = repository.latest_state("source:collection:item:beta")
@@ -254,7 +265,13 @@ def test_partial_collection_enumeration_never_proves_removed_items_absent(tmp_pa
             config=config,
             run_id=first_run,
             started_at=10.0,
-            derived_results={"fanout": _collection_payload(tmp_path, items=("alpha", "beta"))},
+            derived_results={
+                "fanout": _collection_payload(
+                    tmp_path,
+                    items=("alpha", "beta"),
+                    observed_at=9.0,
+                )
+            },
         )
         beta_before = repository.latest_state("source:collection:item:beta")
         assert isinstance(beta_before, ArtifactObservation)
@@ -266,7 +283,12 @@ def test_partial_collection_enumeration_never_proves_removed_items_absent(tmp_pa
             run_id=partial_run,
             started_at=20.0,
             derived_results={
-                "fanout": _collection_payload(tmp_path, items=("alpha",), complete=False)
+                "fanout": _collection_payload(
+                    tmp_path,
+                    items=("alpha",),
+                    complete=False,
+                    observed_at=19.0,
+                )
             },
         )
 
@@ -288,7 +310,13 @@ def test_partial_collection_enumeration_never_proves_removed_items_absent(tmp_pa
             config=config,
             run_id=final_run,
             started_at=30.0,
-            derived_results={"fanout": _collection_payload(tmp_path, items=("alpha",))},
+            derived_results={
+                "fanout": _collection_payload(
+                    tmp_path,
+                    items=("alpha",),
+                    observed_at=29.0,
+                )
+            },
         )
         beta_after = repository.latest_state("source:collection:item:beta")
         assert isinstance(beta_after, ArtifactAbsence)
@@ -363,7 +391,6 @@ class DerivedFileTask:
     @staticmethod
     async def run(*, sync_root, manifest, sources):
         del sync_root, manifest, sources
-        await asyncio.sleep(0)
         return {}
 
 

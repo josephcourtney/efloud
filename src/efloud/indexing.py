@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from efloud.repository import Repository
+    from efloud.repository_models import RunId
 
 
 class CachedIndex(Protocol):
@@ -266,7 +267,7 @@ class DerivedIndexRegistry:
         index_id: str,
         *,
         repository: Repository,
-        run_id,
+        run_id: RunId,
         inputs: Sequence[ArtifactObservation] = (),
         observed_at: float | None = None,
     ) -> DerivedIndexResult:
@@ -292,6 +293,7 @@ class DerivedIndexRegistry:
             },
         )
         reusable = repository.reusable_derived_content(derivation_key, definition.artifact_key)
+        payload: JsonObject
         try:
             if reusable is None:
                 payload = definition.build(repository=repository, inputs=input_observations)
@@ -321,7 +323,7 @@ class DerivedIndexRegistry:
                     "output_observation_id": str(observation.observation_id),
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - index builders are caller supplied and may raise arbitrary errors.
             repository.finish_operation(
                 operation_id,
                 status="failed",

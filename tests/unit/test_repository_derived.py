@@ -243,7 +243,12 @@ def test_partial_collection_enumeration_never_proves_removed_items_absent(tmp_pa
         assert partial_snapshot is not None
         assert partial_snapshot.complete is False
         assert partial_snapshot.evidence["removed_item_count"] == 0
-        assert partial_snapshot.evidence["classification_counts"]["absent"] == 0
+        assert partial_snapshot.evidence["classification_counts"] == {
+            "new": 0,
+            "changed": 0,
+            "unchanged": 1,
+            "absent": 0,
+        }
 
         final_run = repository.start_run(source_ids=(source.id,), started_at=30.0)
         import_derived_results(

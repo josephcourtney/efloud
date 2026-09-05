@@ -13,12 +13,17 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from efloud.json_types import JsonObject
-    from efloud.repository_models import ArtifactObservation
+    from efloud.repository_models import ArtifactObservation, RunId
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
-def _input_observation(repo: Repository, run_id, *, observed_at: float) -> ArtifactObservation:
+def _input_observation(
+    repo: Repository,
+    run_id: RunId,
+    *,
+    observed_at: float,
+) -> ArtifactObservation:
     operation_id = repo.start_operation(
         run_id=run_id,
         kind="fixture-input",

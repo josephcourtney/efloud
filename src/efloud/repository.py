@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from efloud.json_types import JsonObject
     from efloud.metadata_store import MetadataStore, OperationRecord
 
-_DEFAULT_PRODUCER = ProducerRef("efloud:repository", "1")
 _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
 _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
 
@@ -57,6 +56,11 @@ def _canonical_terminal_status(status: str, *, operation: bool) -> str:
         msg = f"Invalid terminal {kind} status: {status!r}"
         raise ValueError(msg)
     return normalized
+
+
+def _default_producer(kind: str) -> ProducerRef:
+    normalized = kind.strip().lower().replace("_", "-") or "operation"
+    return ProducerRef(f"efloud:{normalized}", "1")
 
 
 class Repository:  # ruff: ignore[too-many-public-methods]
@@ -160,7 +164,7 @@ class Repository:  # ruff: ignore[too-many-public-methods]
         operation_id = operation_id_for(run_id=run_id, kind=kind, subject=subject)
         normalized_source_id = SourceId(str(source_id)) if source_id is not None else None
         operation_parameters: JsonObject = dict(parameters or {})
-        operation_parameters["producer"] = (producer or _DEFAULT_PRODUCER).to_dict()
+        operation_parameters["producer"] = (producer or _default_producer(kind)).to_dict()
         self.metadata.start_operation(
             operation_id,
             run_id=run_id,
@@ -361,8 +365,6 @@ class Repository:  # ruff: ignore[too-many-public-methods]
                     observed_at=observed_at,
                     metadata=payload,
                     inputs=input_ids,
-                    materialization_kind=materialization_kind,
-                    materialization_path=path,
                 )
         payload["derivation_reused"] = False
         return self.ingest_path(
@@ -419,6 +421,13 @@ class Repository:  # ruff: ignore[too-many-public-methods]
             metadata=payload,
             inputs=input_ids,
         )
+
+    def provenance_inputs(
+        self,
+        observation_id: ObservationId | str,
+    ) -> tuple[ProvenanceEdge, ...]:
+        """Return direct provenance inputs for an output observation."""
+        return self.metadata.provenance_inputs(ObservationId(str(observation_id)))
 
     def _record_content_observation(
         self,

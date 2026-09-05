@@ -36,11 +36,18 @@ Implemented on `main`:
   observations, unchanged-content reuse, scoped snapshots, and deletion evidence
 - collection/fanout enumeration represented explicitly by `FanoutEnumeration`,
   including complete/partial coverage and optional upstream enumeration identity
-- collection membership converted to `SourceInventory`; removed collection members
-  are now established only from generic `absent` reconciliation decisions
-- partial collection enumerations cannot establish absence, and later complete
-  enumerations continue to use the most recent complete snapshot as their baseline
-- collection item change/integrity evidence is preserved through fanout result
+- fanout serializes normalized collection `SourceInventory` immediately after
+  enumeration and before per-item retrieval, keeping membership evidence independent
+  from acquisition success/failure results
+- collection membership is reconciled from that pre-fetch inventory; removed
+  collection members are established only from generic `absent` decisions
+- an enumerated item with no retrieval result remains unresolved rather than being
+  inferred absent, while retrieval results not present in inventory cannot create
+  authoritative collection membership
+- partial collection enumerations and count-inconsistent inventory payloads cannot
+  establish absence, and later complete enumerations continue to use the most recent
+  complete snapshot as their baseline
+- collection item change/integrity evidence is preserved through fanout inventory
   serialization and source-snapshot/tree evidence while current per-item
   observations, request metadata, and materializations remain compatible
 - conservative rsync delta fallback when authoritative enumeration fails
@@ -50,7 +57,7 @@ Implemented on `main`:
 Still transitional:
 
 - collection acquisition is still executed by the legacy derived-task/fanout path;
-  normalized inventory/reconciliation is applied at the repository boundary until
+  normalized inventory/reconciliation is consumed at the repository boundary until
   the canonical planner/adapter runtime is introduced
 - producer identity/version and operation lifecycle states are not yet enforced as
   first-class repository semantics

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from efloud.artifacts import sha256_hex
 from efloud.registry import SourceKind
-from efloud.repository_models import ContentId, ObservationId, OperationId, RunId, SourceId
+from efloud.repository_models import ContentId, ObservationId, OperationId, RunId, RunStatus, SourceId
 from efloud.transport.http_utils import dest_for_http_source
 
 if TYPE_CHECKING:
@@ -101,13 +101,13 @@ def _rsync_candidates(cfg: EngineConfig, source: SourceDefinition) -> tuple[_Ado
     return tuple(candidates)
 
 
-def _source_candidates(cfg: EngineConfig, source: SourceDefinition) -> tuple[_AdoptionCandidate, ...] | None:
+def _source_candidates(cfg: EngineConfig, source: SourceDefinition) -> tuple[_AdoptionCandidate, ...]:
     if source.kind in {SourceKind.HTTP, SourceKind.REST}:
         candidate = _http_candidate(cfg, source)
         return () if candidate is None else (candidate,)
     if source.kind is SourceKind.RSYNC:
         return _rsync_candidates(cfg, source)
-    return None
+    return ()
 
 
 def _content_id(path: Path) -> ContentId:
@@ -243,7 +243,7 @@ def _adopt_source(
         state.succeeded_operations += 1
 
 
-def _run_status(state: _AdoptionState) -> str:
+def _run_status(state: _AdoptionState) -> RunStatus:
     if state.failed_operations and state.succeeded_operations:
         return "partial"
     if state.failed_operations:

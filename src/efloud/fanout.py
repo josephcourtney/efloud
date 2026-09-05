@@ -9,6 +9,8 @@ import httpx
 
 from efloud.derived import DerivedTask
 from efloud.fs import atomic_write_bytes, atomic_write_text, safe_json_dump
+from efloud.inventory import ChangeToken, IntegrityExpectation, InventoryCoverage, InventoryItem, SourceInventory
+from efloud.repository_models import ArtifactKey, SourceId
 from efloud.transport.http import HttpCache, HttpCacheConfig
 
 if TYPE_CHECKING:
@@ -28,6 +30,23 @@ class FanoutItem:
     item_id: str
     request_path: str | None = None
     metadata: dict[str, object] | None = None
+    change_token: ChangeToken | None = None
+    expected_integrity: tuple[IntegrityExpectation, ...] = ()
+
+
+@dataclass(frozen=True)
+class FanoutEnumeration:
+    """Membership evidence returned by a collection enumerator."""
+
+    items: tuple[FanoutItem, ...]
+    complete: bool = True
+    upstream_identity: str | None = None
+
+    def __post_init__(self) -> None:
+        item_ids = [item.item_id for item in self.items]
+        if len(set(item_ids)) != len(item_ids):
+            msg = "Fanout enumeration contains duplicate item identifiers."
+            raise ValueError(msg)
 
 
 class FanoutEnumerator(Protocol):
@@ -37,17 +56,64 @@ class FanoutEnumerator(Protocol):
         sync_root: Path,
         manifest: NormalizedManifest,
         sources: tuple[SourceDefinition, ...],
-    ) -> Sequence[FanoutItem]: ...
+    ) -> Sequence[FanoutItem] | FanoutEnumeration: ...
 
 
 class BucketStrategy(Protocol):
     def __call__(self, item_id: str) -> Path: ...
 
 
+def normalize_fanout_enumeration(
+    value: Sequence[FanoutItem] | FanoutEnumeration,
+) -> FanoutEnumeration:
+    if isinstance(value, FanoutEnumeration):
+        return value
+    return FanoutEnumeration(tuple(value))
+
+
+def fanout_source_inventory(
+    *,
+    source_id: SourceId | str,
+    base_url: str,
+    enumeration: FanoutEnumeration,
+    observed_at: float,
+) -> SourceInventory:
+    """Convert collection membership evidence into the generic source inventory model."""
+
+    normalized_source = SourceId(str(source_id))
+    items = tuple(
+        InventoryItem(
+            item_id=item.item_id,
+            artifact_key=ArtifactKey(f"source:{normalized_source}:item:{item.item_id}"),
+            locator=f"{base_url.rstrip('/')}/{(item.request_path or item.item_id).lstrip('/')}",
+            change_token=item.change_token,
+            expected_integrity=item.expected_integrity,
+        )
+        for item in sorted(enumeration.items, key=lambda candidate: candidate.item_id)
+    )
+    return SourceInventory(
+        source_id=normalized_source,
+        observed_at=observed_at,
+        coverage=InventoryCoverage(complete=enumeration.complete),
+        items=items,
+        upstream_identity=enumeration.upstream_identity,
+        metadata={"transport": "REST_BASE", "collection": True},
+    )
+
+
 def two_char_bucket(item_id: str, *, suffix: str = ".json") -> Path:
     text = item_id.lower()
     bucket = text[1:3] if len(text) >= MIN_BUCKET_SOURCE_LENGTH else "xx"
     return Path(bucket) / f"{text}{suffix}"
+
+
+def _inventory_evidence(item: FanoutItem) -> JsonObject:
+    payload: JsonObject = {
+        "expected_integrity": [expectation.to_dict() for expectation in item.expected_integrity],
+    }
+    if item.change_token is not None:
+        payload["change_token"] = item.change_token.to_dict()
+    return payload
 
 
 @dataclass(frozen=True)
@@ -96,7 +162,9 @@ class RestBaseFanoutTask(DerivedTask):
             msg = f"Unknown source identifier for fanout task: {self.source_id!r}"
             raise ValueError(msg)
 
-        items = list(await self.enumerator(sync_root=sync_root, manifest=manifest, sources=sources))
+        raw_enumeration = await self.enumerator(sync_root=sync_root, manifest=manifest, sources=sources)
+        enumeration = normalize_fanout_enumeration(raw_enumeration)
+        items = list(enumeration.items)
         dest_root = sync_root / self.dest_subdir
         dest_root.mkdir(parents=True, exist_ok=True)
 
@@ -133,6 +201,13 @@ class RestBaseFanoutTask(DerivedTask):
 
         ok_n = sum(1 for row in statuses.values() if row.get("status") == "ok")
         err_n = len(statuses) - ok_n
+        enumeration_payload: dict[str, object] = {
+            "complete": enumeration.complete,
+            "item_count": len(items),
+            "model": "source-inventory-v1",
+        }
+        if enumeration.upstream_identity is not None:
+            enumeration_payload["upstream_identity"] = enumeration.upstream_identity
         return {
             "source_id": source.id,
             "kind": source.kind.value,
@@ -143,10 +218,7 @@ class RestBaseFanoutTask(DerivedTask):
                 "response_mode": self.response_mode,
                 "concurrency": self.concurrency,
             },
-            "enumeration": {
-                "complete": True,
-                "item_count": len(items),
-            },
+            "enumeration": enumeration_payload,
             "entries": statuses,
             "ok": ok_n,
             "err": err_n,
@@ -195,6 +267,7 @@ async def _materialize_fanout_item(
         "request_path": request_path,
         "fanout_path": str(dest.relative_to(dest_root)),
     }
+    inventory = _inventory_evidence(item)
 
     try:
         status_code = await _fetch_and_write_fanout_item(
@@ -212,6 +285,7 @@ async def _materialize_fanout_item(
                 "dest": str(dest),
                 "item_id": item.item_id,
                 "metadata": dict(item.metadata or {}),
+                "inventory": inventory,
             }
     except (httpx.HTTPError, OSError, TypeError, ValueError) as exc:
         return {
@@ -221,6 +295,7 @@ async def _materialize_fanout_item(
             "dest": str(dest),
             "item_id": item.item_id,
             "metadata": dict(item.metadata or {}),
+            "inventory": inventory,
         }
 
     return {
@@ -229,6 +304,7 @@ async def _materialize_fanout_item(
         "dest": str(dest),
         "item_id": item.item_id,
         "metadata": dict(item.metadata or {}),
+        "inventory": inventory,
     }
 
 
@@ -256,6 +332,9 @@ async def _run_fanout_item(
         return {
             "status": "error",
             "error": f"UNCAUGHT {type(exc).__name__}: {exc}",
+            "item_id": item.item_id,
+            "metadata": dict(item.metadata or {}),
+            "inventory": _inventory_evidence(item),
         }
 
 
@@ -317,9 +396,12 @@ def _source_by_id(source_id: str, sources: Iterable[SourceDefinition]) -> Source
 
 __all__ = [
     "BucketStrategy",
+    "FanoutEnumeration",
     "FanoutEnumerator",
     "FanoutItem",
     "ResponseMode",
     "RestBaseFanoutTask",
+    "fanout_source_inventory",
+    "normalize_fanout_enumeration",
     "two_char_bucket",
 ]

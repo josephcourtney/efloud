@@ -58,8 +58,20 @@ def _source_definition(source: SourceDefinition) -> JsonObject:
         "tags": list(source.tags),
         "adoption_registered": True,
     }
+    if source.cache_name is not None:
+        payload["cache_name"] = source.cache_name
     if source.local_subpath is not None:
         payload["local_subpath"] = source.local_subpath
+    if source.mirror_mode is not None:
+        payload["mirror_mode"] = source.mirror_mode.value
+    if source.mirror_paths is not None:
+        payload["mirror_paths"] = list(source.mirror_paths)
+    if source.port is not None:
+        payload["port"] = source.port
+    if source.include is not None:
+        payload["include"] = list(source.include)
+    if source.exclude is not None:
+        payload["exclude"] = list(source.exclude)
     if source.role is not None:
         payload["role"] = source.role
     return payload

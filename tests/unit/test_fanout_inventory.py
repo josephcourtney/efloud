@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import importlib
 from pathlib import Path
 
@@ -104,7 +103,6 @@ async def test_fanout_task_serializes_inventory_independently_of_retrieval_resul
     async def enumerator(*, sync_root, manifest, sources):
         del manifest, sources
         assert sync_root == tmp_path
-        await asyncio.sleep(0)
         return FanoutEnumeration(
             items=(FanoutItem("alpha", change_token=token), FanoutItem("beta")),
             complete=False,
@@ -113,15 +111,15 @@ async def test_fanout_task_serializes_inventory_independently_of_retrieval_resul
 
     async def fake_materialize_fanout(**kwargs):
         assert tuple(item.item_id for item in kwargs["items"]) == ("alpha", "beta")
-        await asyncio.sleep(0)
         return {"alpha": {"status": "ok"}}
 
     class FakeHttpCache:
         def __init__(self, config):
             self.config = config
 
-        async def aclose(self) -> None:
-            await asyncio.sleep(0)
+        @staticmethod
+        async def aclose() -> None:
+            return None
 
     monkeypatch.setattr(fanout_mod, "HttpCache", FakeHttpCache)
     monkeypatch.setattr(fanout_mod, "_materialize_fanout", fake_materialize_fanout)

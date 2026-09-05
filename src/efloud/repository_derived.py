@@ -227,7 +227,7 @@ def _enumeration_count_matches(payload: JsonMapping, item_count: int) -> bool:
     )
 
 
-def _serialized_collection_inventory(
+def _serialized_collection_inventory(  # ruff: ignore[too-many-locals]
     *,
     source_id: SourceId,
     payload: JsonMapping,
@@ -243,18 +243,18 @@ def _serialized_collection_inventory(
     raw_items = serialized.get("items")
     if not isinstance(raw_items, list):
         msg = "Serialized collection inventory has no item list."
-        raise ValueError(msg)
+        raise TypeError(msg)
 
     items: list[InventoryItem] = []
     for raw in raw_items:
         mapping = json_mapping_or_none(raw)
         if mapping is None:
             msg = "Serialized collection inventory contains a non-object item."
-            raise ValueError(msg)
+            raise TypeError(msg)
         item_id = mapping.get("item_id")
         if not isinstance(item_id, str):
             msg = "Serialized collection inventory item has no string item_id."
-            raise ValueError(msg)
+            raise TypeError(msg)
         locator_value = mapping.get("locator")
         locator = locator_value if isinstance(locator_value, str) else None
         source_path_value = mapping.get("source_path")
@@ -624,7 +624,7 @@ def _entries_by_item_id(entries: JsonMapping) -> dict[str, tuple[str, JsonValue]
     return indexed
 
 
-def _record_collection(
+def _record_collection(  # ruff: ignore[too-many-locals]
     repository: Repository,
     *,
     source_id: SourceId,

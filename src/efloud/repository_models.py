@@ -61,18 +61,37 @@ def stable_id(prefix: str, value: object) -> str:
     return f"{prefix}:{digest}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ContentRef:
+    """Semantic description of immutable content, independent of physical storage."""
+
     content_id: ContentId
     byte_size: int
-    storage_key: str
     media_type: str | None = None
+    _legacy_storage_key: str | None = field(default=None, repr=False, compare=False)
+
+    def __init__(
+        self,
+        content_id: ContentId,
+        byte_size: int,
+        storage_key: str | None = None,
+        media_type: str | None = None,
+    ) -> None:
+        """Build a semantic content reference while accepting legacy storage metadata."""
+        object.__setattr__(self, "content_id", content_id)
+        object.__setattr__(self, "byte_size", byte_size)
+        object.__setattr__(self, "media_type", media_type)
+        object.__setattr__(self, "_legacy_storage_key", storage_key)
+
+    @property
+    def storage_key(self) -> str:
+        """Return legacy SQLite storage metadata; not part of content semantics."""
+        return self._legacy_storage_key or str(self.content_id)
 
     def to_dict(self) -> JsonObject:
         payload: JsonObject = {
             "content_id": str(self.content_id),
             "byte_size": self.byte_size,
-            "storage_key": self.storage_key,
         }
         if self.media_type is not None:
             payload["media_type"] = self.media_type

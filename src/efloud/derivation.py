@@ -59,7 +59,6 @@ def derivation_key_for(
     inputs: Iterable[ArtifactObservation],
 ) -> DerivationKey:
     """Compute the canonical identity of one declared derivation."""
-
     return DerivationKey(
         stable_id(
             "derivation",

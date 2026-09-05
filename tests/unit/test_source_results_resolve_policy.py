@@ -88,10 +88,7 @@ def test_manifest_section_and_entry_helpers_resolve_sources_and_aliases(sources,
     assert manifest_section_for_kind(SourceKind.REST_BASE) == "derived"
 
     assert manifest_entry_for_source_id(manifest, "http-id") == manifest["results"]["http"]["http-id"]
-    assert (
-        manifest_entry_for_source_id(manifest, "http-id", aliases=aliases)
-        == manifest["results"]["http"]["http-id"]
-    )
+    assert manifest_entry_for_source_id(manifest, "http-id", aliases=aliases) == manifest["results"]["http"]["http-id"]
     assert (
         manifest_entry_for_source_id(manifest, "legacy-http", aliases=aliases)
         == manifest["results"]["http"]["legacy-http"]
@@ -106,10 +103,7 @@ def test_manifest_section_and_entry_helpers_resolve_sources_and_aliases(sources,
         manifest_entry_for_source_result(manifest, sources[0], aliases=aliases)
         == manifest["results"]["http"]["http-id"]
     )
-    assert (
-        iter_manifest_entries(manifest, sources, aliases=aliases)[2][1]
-        == manifest["results"]["derived"]["fanout"]
-    )
+    assert iter_manifest_entries(manifest, sources, aliases=aliases)[2][1] == manifest["results"]["derived"]["fanout"]
 
 
 @pytest.mark.small
@@ -137,9 +131,7 @@ def test_resolve_helpers_locate_mirror_and_materialized_paths(sources, manifest,
     assert mirror_root_subdir_for_source(sources[0]) is None
     assert manifest_http_dest_for_url(sync_result, "https://example.test/file") == tmp_path / "http.json"
     assert manifest_http_dest_for_url(sync_result, "https://missing.test") is None
-    assert (
-        manifest_entry_for_source_aliasable(manifest, sources[1]) == manifest["results"]["rsync"]["rsync-id"]
-    )
+    assert manifest_entry_for_source_aliasable(manifest, sources[1]) == manifest["results"]["rsync"]["rsync-id"]
     assert materialized_path_for_source(manifest, sources[2]) == tmp_path / "fanout"
     assert manifest_entry_for_source(manifest, sources[0]) == manifest["results"]["http"]["http-id"]
     assert manifest_entry_for_source(None, None) is None
@@ -155,13 +147,10 @@ def test_default_sync_policy_uses_refresh_flags_and_rsync_paths(tmp_path: Path, 
     refresh_all_cfg = EngineConfig(root=tmp_path, sources=sources, refresh_all=True)
     assert DefaultSyncPolicy.should_refresh(sources[1], refresh_all_cfg) is True
 
-    assert DefaultSyncPolicy.rsync_paths_for_source(
-        source=sources[1], cache_root=tmp_path, manifest=None
-    ) == ("subset",)
-    assert (
-        DefaultSyncPolicy.rsync_paths_for_source(source=sources[0], cache_root=tmp_path, manifest=None)
-        is None
+    assert DefaultSyncPolicy.rsync_paths_for_source(source=sources[1], cache_root=tmp_path, manifest=None) == (
+        "subset",
     )
+    assert DefaultSyncPolicy.rsync_paths_for_source(source=sources[0], cache_root=tmp_path, manifest=None) is None
 
 
 @pytest.mark.small

@@ -194,9 +194,7 @@ def resolve_dataset(
 ) -> DatasetManifest:
     resolved: list[tuple[ArtifactObservation, str | None]] = []
     for selection in definition.selections:
-        resolved.extend(
-            (observation, selection.role) for observation in selection.selector.resolve(repository)
-        )
+        resolved.extend((observation, selection.role) for observation in selection.selector.resolve(repository))
 
     resolved.sort(key=lambda item: (str(item[0].artifact_key), item[1] or "", str(item[0].observation_id)))
     seen: set[str] = set()

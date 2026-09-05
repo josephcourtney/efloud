@@ -161,15 +161,11 @@ def _replace_subtree(
     replacement: MirrorStateNode | None,
 ) -> MirrorStateNode:
     if root.path_type != "dir":
-        root = MirrorStateNode(
-            path_type="dir", hash=_hash_directory([]), file_count=0, dir_count=1, children=None
-        )
+        root = MirrorStateNode(path_type="dir", hash=_hash_directory([]), file_count=0, dir_count=1, children=None)
 
     if not parts:
         if replacement is None:
-            return MirrorStateNode(
-                path_type="dir", hash=_hash_directory([]), file_count=0, dir_count=1, children=None
-            )
+            return MirrorStateNode(path_type="dir", hash=_hash_directory([]), file_count=0, dir_count=1, children=None)
         return replacement
 
     children: dict[str, MirrorStateNode] = dict(root.children or {})
@@ -223,11 +219,7 @@ def update_hash_tree_for_subdirs(
         replacement = build_hash_tree(
             mirrors_root / rel,
             on_progress=(
-                (
-                    lambda files, dirs, current_path, rel_path=rel: on_progress(
-                        rel_path, files, dirs, current_path
-                    )
-                )
+                (lambda files, dirs, current_path, rel_path=rel: on_progress(rel_path, files, dirs, current_path))
                 if on_progress is not None
                 else None
             ),
@@ -280,9 +272,7 @@ def _append_tree_diffs(
         return
     if expected.path_type != actual.path_type:
         diffs.append(
-            "type mismatch at "
-            f"{_describe_tree_path(path)}: expected {expected.path_type}, "
-            f"found {actual.path_type}",
+            f"type mismatch at {_describe_tree_path(path)}: expected {expected.path_type}, found {actual.path_type}",
         )
         return
     if expected.hash != actual.hash:
@@ -367,11 +357,7 @@ class MirrorState:
         cache_root = raw.get("cache_root")
         mirrors_root = raw.get("mirrors_root")
         hash_algo = raw.get("hash_algo")
-        if (
-            not isinstance(cache_root, str)
-            or not isinstance(mirrors_root, str)
-            or not isinstance(hash_algo, str)
-        ):
+        if not isinstance(cache_root, str) or not isinstance(mirrors_root, str) or not isinstance(hash_algo, str):
             return None
         manifest_path = raw.get("manifest_path")
         if manifest_path is not None and not isinstance(manifest_path, str):

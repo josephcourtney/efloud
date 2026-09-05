@@ -73,10 +73,7 @@ def _path_in_scope(path: str, scope: tuple[str, ...]) -> bool:
     if not scope:
         return True
     normalized = path.strip("/")
-    return any(
-        normalized == item.rstrip("/") or normalized.startswith(item.rstrip("/") + "/")
-        for item in scope
-    )
+    return any(normalized == item.rstrip("/") or normalized.startswith(item.rstrip("/") + "/") for item in scope)
 
 
 def _baseline_snapshot(

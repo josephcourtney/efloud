@@ -324,7 +324,7 @@ class DerivedIndexRegistry:
                     "output_observation_id": str(observation.observation_id),
                 },
             )
-        except Exception as exc:  # noqa: BLE001 - index builders are caller supplied and may raise arbitrary errors.
+        except Exception as exc:
             repository.finish_operation(
                 operation_id,
                 status="failed",

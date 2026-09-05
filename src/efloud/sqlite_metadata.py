@@ -212,10 +212,7 @@ def _run_terminal_status(status: str) -> str:
 
 
 def _operation_terminal_status(status: str) -> str:
-    if status == "partial":
-        normalized = "failed"
-    else:
-        normalized = "succeeded" if status == "success" else status
+    normalized = "failed" if status == "partial" else "succeeded" if status == "success" else status
     if normalized not in _OPERATION_TERMINAL:
         msg = f"Invalid terminal operation status: {status!r}"
         raise ValueError(msg)
@@ -270,16 +267,12 @@ class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
         ).fetchone()
         if row is None:
             return None
-        return SourceRecord(
-            source_id=SourceId(row["source_id"]), definition=_load_object(row["definition_json"])
-        )
+        return SourceRecord(source_id=SourceId(row["source_id"]), definition=_load_object(row["definition_json"]))
 
     def sources(self) -> tuple[SourceRecord, ...]:
         rows = self._connection.execute("SELECT * FROM sources ORDER BY source_id").fetchall()
         return tuple(
-            SourceRecord(
-                source_id=SourceId(row["source_id"]), definition=_load_object(row["definition_json"])
-            )
+            SourceRecord(source_id=SourceId(row["source_id"]), definition=_load_object(row["definition_json"]))
             for row in rows
         )
 
@@ -467,8 +460,7 @@ class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
                 (str(content.content_id),),
             ).fetchone()
             if existing is not None and (
-                int(existing["byte_size"]) != content.byte_size
-                or existing["storage_key"] != content.storage_key
+                int(existing["byte_size"]) != content.byte_size or existing["storage_key"] != content.storage_key
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)
@@ -764,9 +756,7 @@ class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
         )
 
     def artifact_keys(self) -> tuple[ArtifactKey, ...]:
-        rows = self._connection.execute(
-            "SELECT artifact_key FROM logical_artifacts ORDER BY artifact_key"
-        ).fetchall()
+        rows = self._connection.execute("SELECT artifact_key FROM logical_artifacts ORDER BY artifact_key").fetchall()
         return tuple(ArtifactKey(row["artifact_key"]) for row in rows)
 
     def record_tree(self, tree_id: TreeId, entries: Iterable[TreeEntry], *, created_at: float) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -18,6 +18,9 @@ from efloud.json_types import json_mapping_or_none
 from efloud.reconciliation import PreviousInventoryItem, reconcile_inventory
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_models import ArtifactKey, ContentId, SourceId
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 fanout_mod = importlib.import_module("efloud.fanout")
 

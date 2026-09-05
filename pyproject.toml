@@ -67,29 +67,18 @@
 # ==================================== lint ====================================
 [tool.ruff]
   extend         = "./ruff.default.toml"
-  extend-exclude = ["tests/fixtures/rules"]
+  extend-exclude = []
 
   [tool.ruff.lint]
-    ignore = [
-      "TD002",   # Missing author in TODO; try: `# TODO(<author_name>): ...` or `# TODO @<author_name>: ...`
-      "TD003",   # Missing issue link for this TODO
-      "FIX002",  # Line contains TODO, consider resolving the issue
-      "PLC1901", # `{expression} != ""` can be simplified to `{expression}` as an empty string is falsey
+    extend-ignore = [
+      ## example:
+      # "PLC1901", # `{expression} != ""` can be simplified to `{expression}` as an empty string is falsey
     ]
-    [tool.ruff.lint.per-file-ignores]
-      "tests/**/*" = [
-        "ANN",     # Type annotations
-        "S101",    # Use of `assert` detected
-        "SLF001",  # Private member accessed
-        "PLR2004", # Magic value used in comparison, consider replacing with a constant variable
-        "ARG001",  # Unused function argument
-        "ARG002",  # Unused method argument
-        "ARG005",  # Unused lambda argument
-        "PLC0415", # `import` should be at the top-level of a file
-        # "PLC2701",
-        "INP001",  # File is part of an implicit namespace package
-        "PLC1901", # `r.stderr.strip() != ""` can be simplified to `r.stderr.strip()` as an empty string is falsey
-      ]
+    [tool.ruff.lint.extend-per-file-ignores]
+      ## example:
+      # "src/efloud/repository.py"      = [
+      #   "PLC0415", # import should be at the top-level of a file
+      # ]
 
 # =================================== test ===================================
 [tool.pytest.ini_options]

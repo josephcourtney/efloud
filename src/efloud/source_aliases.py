@@ -57,9 +57,7 @@ class SourceAliasResolver:
                 return candidate
         return None
 
-    def source_by_id[TSource: SupportsSourceId](
-        self, source_id: str, sources: Sequence[TSource]
-    ) -> TSource | None:
+    def source_by_id[TSource: SupportsSourceId](self, source_id: str, sources: Sequence[TSource]) -> TSource | None:
         resolved = self.resolve_id(source_id, sources)
         if resolved is None:
             return None

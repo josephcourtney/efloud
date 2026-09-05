@@ -98,12 +98,8 @@ def test_dataset_exact_and_content_equivalence(tmp_path: Path) -> None:
         second = repo.ingest_bytes(
             "artifact:a", b"hello", run_id=run, operation_id=op, source_id=source, observed_at=102.0
         )
-        old_dataset = repo.resolve_dataset(
-            DatasetDefinition.from_selectors(ExactObservation(first.observation_id))
-        )
-        new_dataset = repo.resolve_dataset(
-            DatasetDefinition.from_selectors(ExactObservation(second.observation_id))
-        )
+        old_dataset = repo.resolve_dataset(DatasetDefinition.from_selectors(ExactObservation(first.observation_id)))
+        new_dataset = repo.resolve_dataset(DatasetDefinition.from_selectors(ExactObservation(second.observation_id)))
         assert old_dataset.id != new_dataset.id
         assert old_dataset.content_identity == new_dataset.content_identity
         assert old_dataset.verify()
@@ -114,12 +110,8 @@ def test_dataset_exact_and_content_equivalence(tmp_path: Path) -> None:
 def test_latest_before_dataset_selection(tmp_path: Path) -> None:
     with Repository(tmp_path) as repo:
         source, run, op = _run(repo)
-        old = repo.ingest_bytes(
-            "artifact:a", b"old", run_id=run, operation_id=op, source_id=source, observed_at=101.0
-        )
-        repo.ingest_bytes(
-            "artifact:a", b"new", run_id=run, operation_id=op, source_id=source, observed_at=103.0
-        )
+        old = repo.ingest_bytes("artifact:a", b"old", run_id=run, operation_id=op, source_id=source, observed_at=101.0)
+        repo.ingest_bytes("artifact:a", b"new", run_id=run, operation_id=op, source_id=source, observed_at=103.0)
         dataset = repo.resolve_dataset(DatasetDefinition.from_selectors(LatestBefore("artifact:a", 102.0)))
         assert dataset.artifact("artifact:a").observation_id == old.observation_id
         latest = repo.resolve_dataset(DatasetDefinition.from_selectors(Latest("artifact:a")))
@@ -190,9 +182,7 @@ def test_schema_v1_migrates_to_absence_capable_v2(tmp_path: Path) -> None:
         assert version == 2
         names = {
             row[0]
-            for row in metadata._connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in metadata._connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "artifact_absences" in names
         assert "sentinel" in names

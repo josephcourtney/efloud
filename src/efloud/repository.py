@@ -46,10 +46,7 @@ _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
 
 
 def _canonical_terminal_status(status: str, *, operation: bool) -> str:
-    if operation and status == "partial":
-        normalized = "failed"
-    else:
-        normalized = "succeeded" if status == "success" else status
+    normalized = "failed" if operation and status == "partial" else "succeeded" if status == "success" else status
     allowed = _OPERATION_TERMINAL if operation else _RUN_TERMINAL
     if normalized not in allowed:
         kind = "operation" if operation else "run"
@@ -123,9 +120,7 @@ class Repository:  # ruff: ignore[too-many-public-methods]
             msg = f"Run {run_id} cannot transition from {run.status!r}."
             raise ValueError(msg)
         running_operations = [
-            operation
-            for operation in self.metadata.operations_for_run(run_id)
-            if operation.status == "running"
+            operation for operation in self.metadata.operations_for_run(run_id) if operation.status == "running"
         ]
         if running_operations:
             msg = f"Run {run_id} cannot finish while operations are still running."
@@ -471,8 +466,7 @@ class Repository:  # ruff: ignore[too-many-public-methods]
             metadata=metadata,
         )
         edges = tuple(
-            ProvenanceEdge(output_observation_id=observation_id, input_observation_id=input_id)
-            for input_id in inputs
+            ProvenanceEdge(output_observation_id=observation_id, input_observation_id=input_id) for input_id in inputs
         )
         self.metadata.record_observation_bundle(
             content=content,

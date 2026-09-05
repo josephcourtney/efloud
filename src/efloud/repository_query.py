@@ -229,9 +229,7 @@ class RepositoryQueryService:
             "target_kind": "artifact",
             "artifact_key": artifact_key,
             "state": state.to_dict() if state is not None else None,
-            "history": [
-                observation.to_dict() for observation in self.repository.observations_for(artifact_key)
-            ],
+            "history": [observation.to_dict() for observation in self.repository.observations_for(artifact_key)],
         }
         if locator is None:
             return payload

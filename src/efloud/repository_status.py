@@ -68,9 +68,7 @@ class RepositoryStatusService:
         return {
             "target_kind": "repository",
             "sources": [_source_record_payload(source) for source in self.repository.metadata.sources()],
-            "recent_runs": [
-                _run_record_payload(run) for run in self.repository.metadata.recent_runs(limit=run_limit)
-            ],
+            "recent_runs": [_run_record_payload(run) for run in self.repository.metadata.recent_runs(limit=run_limit)],
         }
 
     def source_payload(self, source_id: SourceId | str) -> JsonObject:

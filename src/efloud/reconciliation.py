@@ -134,7 +134,6 @@ def reconcile_inventory(
     previous_items: tuple[PreviousInventoryItem, ...] = (),
 ) -> ReconciliationResult:
     """Classify normalized source inventory without protocol-specific repository logic."""
-
     previous_by_id = _previous_map(previous_items)
     decisions = [
         _classify_present(current, previous_by_id.get(current.item_id))

@@ -43,7 +43,6 @@ def rsync_change_token(
     target: str | None = None,
 ) -> ChangeToken | None:
     """Return rsync list evidence suitable for change detection, never content identity."""
-
     if modified is None:
         return None
     if kind == "file":
@@ -65,7 +64,6 @@ def rsync_source_inventory(
     upstream_root: str,
 ) -> SourceInventory:
     """Convert transport-specific rsync enumeration into normalized source evidence."""
-
     normalized_source = SourceId(str(source_id))
     items: list[InventoryItem] = []
     for entry in inventory.entries:
@@ -216,9 +214,7 @@ def enumerate_rsync(
             errors.append(f"{requested_scope or '.'}: {type(exc).__name__}: {exc}")
             continue
         if completed.returncode != 0:
-            detail = (
-                completed.stderr.strip() or completed.stdout.strip() or f"rsync exited {completed.returncode}"
-            )
+            detail = completed.stderr.strip() or completed.stdout.strip() or f"rsync exited {completed.returncode}"
             errors.append(f"{requested_scope or '.'}: {detail}")
             continue
         prefix = requested_scope.rstrip("/")

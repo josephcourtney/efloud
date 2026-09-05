@@ -76,9 +76,7 @@ def _entry_for_candidate_ids(
     return None
 
 
-def _derived_entry_for_candidate_ids(
-    section: JsonMapping, candidate_ids: tuple[str, ...]
-) -> JsonMapping | None:
+def _derived_entry_for_candidate_ids(section: JsonMapping, candidate_ids: tuple[str, ...]) -> JsonMapping | None:
     for value in section.values():
         value_mapping = json_mapping_or_none(value)
         if value_mapping is None:

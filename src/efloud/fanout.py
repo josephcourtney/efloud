@@ -10,7 +10,13 @@ import httpx
 
 from efloud.derived import DerivedTask
 from efloud.fs import atomic_write_bytes, atomic_write_text, safe_json_dump
-from efloud.inventory import ChangeToken, IntegrityExpectation, InventoryCoverage, InventoryItem, SourceInventory
+from efloud.inventory import (
+    ChangeToken,
+    IntegrityExpectation,
+    InventoryCoverage,
+    InventoryItem,
+    SourceInventory,
+)
 from efloud.repository_models import ArtifactKey, SourceId
 from efloud.transport.http import HttpCache, HttpCacheConfig
 
@@ -81,7 +87,6 @@ def fanout_source_inventory(
     observed_at: float,
 ) -> SourceInventory:
     """Convert collection membership evidence into the generic source inventory model."""
-
     normalized_source = SourceId(str(source_id))
     items = tuple(
         InventoryItem(
@@ -187,9 +192,7 @@ class RestBaseFanoutTask(DerivedTask):
                 headers=dict(self.request_headers or {}),
                 timeout=self.timeout_seconds,
                 cache_db_path=str(cache_root / self.cache_db_filename),
-                rate_limit_storage=f"sqlite:///{
-                    (rate_root / self.rate_limit_db_filename).resolve().as_posix()
-                }",
+                rate_limit_storage=f"sqlite:///{(rate_root / self.rate_limit_db_filename).resolve().as_posix()}",
                 retries=self.retries,
             ),
         )

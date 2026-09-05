@@ -370,9 +370,7 @@ def _discover_existing_pdb_mmcif_buckets(source: SourceDefinition) -> set[str] |
         )
         return None
     discovered = _parse_rsync_list_only_dir_names(proc.stdout)
-    return {
-        f"mmCIF/{name.lower()}/" for name in discovered if len(name) == _MMCIF_BUCKET_WIDTH and name.isalnum()
-    }
+    return {f"mmCIF/{name.lower()}/" for name in discovered if len(name) == _MMCIF_BUCKET_WIDTH and name.isalnum()}
 
 
 def _should_prefilter_pdb_mmcif_buckets(
@@ -975,9 +973,7 @@ def _node_integrity_counts(node: MirrorStateNode | None) -> dict[str, int] | Non
 
 
 def _mirror_source_info(cfg: EngineConfig) -> list[tuple[str, str]]:
-    return [
-        (source.id, source.local_subpath or "") for source in cfg.sources if source.local_subpath is not None
-    ]
+    return [(source.id, source.local_subpath or "") for source in cfg.sources if source.local_subpath is not None]
 
 
 def _normalized_subdir(path: str) -> str:
@@ -1118,9 +1114,7 @@ def _build_incremental_state(
 ) -> MirrorState:
     source_info = _mirror_source_info(cfg)
     source_subdirs = (
-        touched_subdirs
-        if touched_subdirs is not None
-        else sorted({subdir for _, subdir in source_info if subdir})
+        touched_subdirs if touched_subdirs is not None else sorted({subdir for _, subdir in source_info if subdir})
     )
     tree = previous_state.tree
     if source_subdirs:

@@ -73,9 +73,7 @@ async def test_http_utils_helpers_and_fetchers(tmp_path: Path, monkeypatch):
     assert cache_group_name("https://host.example/a", "custom") == "custom"
     assert rel_dest_name("Example Data", "https://host.example/a/b", "REST").endswith(".json")
 
-    dest = dest_for_http_source(
-        tmp_path, url="https://host.example/a/b", description="Example Data", kind="REST"
-    )
+    dest = dest_for_http_source(tmp_path, url="https://host.example/a/b", description="Example Data", kind="REST")
     assert dest.parent.name == "host_example"
 
     response = FakeResponse(
@@ -215,9 +213,7 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
 
 
 @pytest.mark.small
-def test_build_rsync_cmd_logs_exact_argv_and_shell_rendering(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-):
+def test_build_rsync_cmd_logs_exact_argv_and_shell_rendering(tmp_path: Path, caplog: pytest.LogCaptureFixture):
     cfg = RsyncMirrorConfig(
         name="mirror",
         remote="rsync://host/module",
@@ -378,9 +374,7 @@ async def test_rsync_mirror_skips_fresh_and_updates_paths(tmp_path: Path, monkey
 
     def fake_run(cfg, *, cmd, remote, local):
         del cfg, cmd, remote, local
-        return OpResult(
-            status="success", detail="ok", returncode=0, stdout=">f++++ file.txt", updated=["file.txt"]
-        )
+        return OpResult(status="success", detail="ok", returncode=0, stdout=">f++++ file.txt", updated=["file.txt"])
 
     monkeypatch.setattr("efloud.transport.rsync.time.time", lambda: 200.0)
     monkeypatch.setattr("efloud.transport.rsync._build_rsync_cmd", fake_build)

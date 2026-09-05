@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-import subprocess  # ruff: ignore[suspicious-subprocess-import]
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -19,7 +19,7 @@ def _run(
     cwd: Path,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+    return subprocess.run(
         cmd,
         cwd=cwd,
         check=True,

@@ -77,9 +77,7 @@ class HttpCache:
             # Build transport: either plain httpx, or hishel-wrapped httpx transport
             transport: httpx.AsyncBaseTransport | None = None
 
-            use_hishel = (
-                cfg.enable_cache and AsyncCacheTransport is not None and AsyncSqliteStorage is not None
-            )
+            use_hishel = cfg.enable_cache and AsyncCacheTransport is not None and AsyncSqliteStorage is not None
 
             if use_hishel:
                 # Choose DB path. If not provided, keep it deterministic per cache name.

@@ -10,8 +10,8 @@ from efloud.indexing import DerivedIndexDefinition, DerivedIndexRegistry
 from efloud.models import EngineConfig, SyncResult
 from efloud.query import index_payload
 from efloud.repository import Repository
-from efloud.repository_recording import RepositorySyncRecorder
 from efloud.repository_models import ProducerRef
+from efloud.repository_recording import RepositorySyncRecorder
 
 if TYPE_CHECKING:
     from pathlib import Path

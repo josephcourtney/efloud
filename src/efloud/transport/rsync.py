@@ -458,10 +458,7 @@ def _result_phase(result: OpResult) -> str:
         )
     ):
         return "connecting"
-    if any(
-        marker in text
-        for marker in ("to-check=", "xfr#", "speedup is", ">f", "<f", "cd", "created directory")
-    ):
+    if any(marker in text for marker in ("to-check=", "xfr#", "speedup is", ">f", "<f", "cd", "created directory")):
         return "transferring files"
     if "receiving file list" in text:
         return "receiving file list"
@@ -618,10 +615,7 @@ def _observe_runtime_phase(text: str, phase_state: dict[str, str | float | bool 
     if "receiving file list" in lowered:
         phase_state["phase"] = "receiving file list"
         return
-    if any(
-        marker in lowered
-        for marker in ("to-check=", "xfr#", "speedup is", ">f", "<f", "cd", "created directory")
-    ):
+    if any(marker in lowered for marker in ("to-check=", "xfr#", "speedup is", ">f", "<f", "cd", "created directory")):
         phase_state["phase"] = "transferring files"
 
 
@@ -643,9 +637,7 @@ def _maybe_emit_file_list_stall_warning(
     last_output_at = phase_state.get("last_output_at")
     if isinstance(last_output_at, float):
         idle_seconds = max(0.0, time.perf_counter() - last_output_at)
-    idle_suffix = (
-        f"; last rsync output {_format_clock_duration(idle_seconds)} ago" if idle_seconds is not None else ""
-    )
+    idle_suffix = f"; last rsync output {_format_clock_duration(idle_seconds)} ago" if idle_seconds is not None else ""
     file_list_count = phase_state.get("file_list_count")
     count_suffix = f"; discovered {file_list_count:,} files" if isinstance(file_list_count, int) else ""
     _emit_runtime_message(

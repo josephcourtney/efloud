@@ -291,9 +291,7 @@ def _repository_source_payload(
             return payload
 
         if source.kind.value in {"HTTP", "REST"}:
-            repository_payload = RepositoryQueryService(repository).query(
-                f"artifact:source:{source.id}#{locator}"
-            )
+            repository_payload = RepositoryQueryService(repository).query(f"artifact:source:{source.id}#{locator}")
             locator_payload = repository_payload.get("locator")
             payload["locator"] = locator_payload
             if isinstance(locator_payload, dict):
@@ -309,9 +307,7 @@ def _repository_source_payload(
             "error": None,
         }
         if local_path is None:
-            result["error"] = (
-                "No repository-backed source materialization is available for locator evaluation."
-            )
+            result["error"] = "No repository-backed source materialization is available for locator evaluation."
         else:
             absolute = local_path if local_path.is_absolute() else Path(cfg.root) / local_path
             value, err, resolved_locator = resolve_locator_from_file(absolute, locator)

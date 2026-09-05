@@ -79,8 +79,10 @@ def test_complete_inventory_classifies_new_changed_unchanged_and_absent() -> Non
     assert result.counts() == {"new": 1, "changed": 1, "unchanged": 1, "absent": 1}
     same_decision = result.decision_for("same")
     gone_decision = result.decision_for("gone")
-    assert same_decision is not None and same_decision.state == "unchanged"
-    assert gone_decision is not None and gone_decision.state == "absent"
+    assert same_decision is not None
+    assert same_decision.state == "unchanged"
+    assert gone_decision is not None
+    assert gone_decision.state == "absent"
 
 
 @pytest.mark.small
@@ -125,7 +127,8 @@ def test_weak_change_evidence_does_not_authorize_content_reuse() -> None:
     )
     result = reconcile_inventory(inventory, (_previous("item", token=weak),))
     decision = result.decision_for("item")
-    assert decision is not None and decision.state == "changed"
+    assert decision is not None
+    assert decision.state == "changed"
 
 
 @pytest.mark.small

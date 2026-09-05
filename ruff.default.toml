@@ -27,8 +27,8 @@ exclude = [
   "venv",
 ]
 
-target-version    = "py312"
-line-length       = 110
+target-version    = "py314"
+line-length       = 120
 indent-width      = 4
 output-format     = "concise"
 show-fixes        = true
@@ -41,111 +41,123 @@ respect-gitignore = true
   preview = true
 
   select = [
-    "F",     # Pyflakes
-    "E",     # pycodestyle Error
-    "W",     # pycodestyle Warning
-    "C90",   # mccabe
-    "I",     # isort
-    "N",     # pep8-naming
-    "D",     # pydocstyle
-    "UP",    # pyupgrade
-    "YTT",   # flake8-2020
-    "ANN",   # flake8-annotations
-    "ASYNC", # flake8-async
-    "S",     # flake8-bandit
-    "BLE",   # flake8-blind-except
-    "FBT",   # flake8-boolean-trap
-    "B",     # flake8-bugbear
     "A",     # flake8-builtins
+    "AIR",   # Airflow
+    "ANN",   # flake8-annotations
+    "ARG",   # flake8-unused-arguments
+    "ASYNC", # flake8-async
+    "B",     # flake8-bugbear
+    "BLE",   # flake8-blind-except
+    "C4",    # flake8-comprehensions
+    "C90",   # mccabe
     "COM",   # flake8-commas
     "CPY",   # flake8-copyright
-    "C4",    # flake8-comprehensions
-    "DTZ",   # flake8-datetimez
-    "T10",   # flake8-debugger
+    "D",     # pydocstyle
     "DJ",    # flake8-django
-    "EM",    # flake8-errmsg
-    "EXE",   # flake8-executable
-    "FA",    # flake8-future-annotations
-    "ISC",   # flake8-implicit-str-concat
-    "ICN",   # flake8-import-conventions
-    "G",     # flake8-logging-format
-    "INP",   # flake8-no-pep420
-    "PIE",   # flake8-pie
-    "T20",   # flake8-print
-    "PYI",   # flake8-pyi
-    "PT",    # flake8-pytest-style
-    "Q",     # flake8-quotes
-    "RSE",   # flake8-raise
-    "RET",   # flake8-return
-    "SLF",   # flake8-self
-    "SLOT",  # flake8-slots
-    "SIM",   # flake8-simplify
-    "TID",   # flake8-tidy-imports
-    "TCH",   # flake8-type-checking
-    "INT",   # flake8-gettext
-    "ARG",   # flake8-unused-arguments
-    "PTH",   # flake8-use-pathlib
-    "TD",    # flake8-todos
-    "FIX",   # flake8-fixme
-    "ERA",   # eradicate
-    "PD",    # pandas-vet
-    "PGH",   # pygrep-hooks
-    "PL",    # Pylint
-    "TRY",   # tryceratops
-    "FLY",   # flynt
-    "NPY",   # NumPy-specific rules
-    "AIR",   # Airflow
-    "PERF",  # Perflint
-    "FURB",  # refurb
-    "LOG",   # flake8-logging
-    "RUF",   # Ruff-specific rules
+    # "DOC",    # pydoclint
+    "DTZ", # flake8-datetimez
+    "E",   # pycodestyle Error
+    "EM",  # flake8-errmsg
+    "ERA", # eradicate
+    "EXE", # flake8-executable
+    "F",   # Pyflakes
+    "FA",  # flake8-future-annotations
+    # "FAST",   #  FastAPI
+    "FBT",  # flake8-boolean-trap
+    "FIX",  # flake8-fixme
+    "FLY",  # flynt
+    "FURB", # refurb
+    "G",    # flake8-logging-format
+    "I",    # isort
+    "ICN",  # flake8-import-conventions
+    "INP",  # flake8-no-pep420
+    "INT",  # flake8-gettext
+    "ISC",  # flake8-implicit-str-concat
+    "LOG",  # flake8-logging
+    "N",    # pep8-naming
+    "NPY",  # NumPy-specific rules
+    "PD",   # pandas-vet
+    "PERF", # Perflint
+    "PGH",  # pygrep-hooks
+    "PIE",  # flake8-pie
+    "PLC",  # pylint-convention
+    "PLE",  # pylint-error
+    "PLR",  # pylint-refactor
+    "PLW",  # pylint-warning
+    "PT",   # flake8-pytest-style
+    "PTH",  # flake8-use-pathlib
+    "PYI",  # flake8-pyi
+    "Q",    # flake8-quotes
+    "RET",  # flake8-return
+    "RSE",  # flake8-raise
+    "RUF",  # Ruff-specific rules
+    "S",    # flake8-bandit
+    "SIM",  # flake8-simplify
+    "SLF",  # flake8-self
+    "SLOT", # flake8-slots
+    "T10",  # flake8-debugger
+    "T20",  # flake8-print
+    "TC",   # flake8-type-checking
+    "TD",   # flake8-todos
+    "TID",  # flake8-tidy-imports
+    "TRY",  # tryceratops
+    "UP",   # pyupgrade
+    "W",    # pycodestyle Warning
+    "YTT",  # flake8-2020
+
   ]
 
-  # for development
+  # disable autofix when linting
+  unfixable = [
+    "F401", # delete unused imports
+    "F841", # remove assignment to unused variable
+  ]
+
   # ignore when linting
   ignore = [
-    "ERA001", # Found commented-out code
+    # Project policy
     "CPY001", # Missing copyright notice at top of file
 
+    # Do not require docstrings merely because an object is public.
     "D100", # Missing docstring in public module
     "D101", # Missing docstring in public class
     "D102", # Missing docstring in public method
     "D103", # Missing docstring in public function
     "D104", # Missing docstring in public package
 
+    # TODOs are allowed and need neither an owner nor an issue.
+    "TD002",  # Missing author in TODO; try: `# TODO(<author_name>): ...` or `# TODO @<author_name>: ...`
+    "TD003",  # Missing issue link for this TODO
+    "FIX002", # Line contains TODO, consider resolving the issue
+
     "T201", # `print` found
 
+    # High false-positive rate; `x != ""` is not necessarily equivalent
+    # to `bool(x)` when x is not known to be str.
+    "PLC1901", # `{expression} != ""` can be simplified to `{expression}` as an empty string is falsey
+
+    # Project does not use argument-count limits as a design constraint.
     "PLR0913", # Too many arguments in function definition
     "PLR0917", # Too many positional arguments
 
-    # "ANN101", # Missing type annotation for `self` in method
-    # "ANN002", # Missing type annotation for *args
-    # "ANN003", # Missing type annotation for **kwargs
-
-    # conflict with formatting
+    # Redundant/incompatible with formatting.
     "COM812", # missing trailing comma
-    "ISC001", # implicitly concatenated string literals on one line
   ]
 
   [lint.per-file-ignores]
-    # These are intentionally broad semantic facades/stores. Splitting them solely
-    # to satisfy a method-count rule would weaken the repository boundary. Dataset
-    # imports stay lazy in Repository to keep that higher-level API out of the core
-    # repository module's import-time dependency graph.
-    "src/efloud/repository.py" = ["PLR0904", "D105", "PLC0415"]
-    "src/efloud/sqlite_metadata.py" = ["PLR0904"]
-
     "tests/**/*.py" = [
-      "ANN202",  # Missing return type annotation for private function
-      "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed in `renderable`
+      "ANN", # Type annotations
+
       "ARG001",  # Unused function argument
       "ARG002",  # Unused method argument
       "ARG005",  # Unused lambda argument
       "D105",    # Missing docstring in magic method
       "FBT003",  # Boolean default value in function definition
+      "INP001",  # File is part of an implicit namespace package. Add an `__init__.py`.
       "N803",    # Argument name should be lowercase
       "N806",    # Variable in function should be lowercase
       "PLC0415", # `import` should be at the top-level of a file
+      "PLC1901", # `*.strip() != ""` can be simplified to `*.strip()` as an empty string is falsey
       "PLC2701", # Private name import from external module
       "PLR2004", # Magic value used in comparison
       "PLR6301", # Method could be a function
@@ -153,31 +165,7 @@ respect-gitignore = true
       "S404",    # `subprocess` module is possibly insecure
       "S603",    # `subprocess` call: check for execution of untrusted
       "SLF001",  # Private member accessed
-      "INP001",  # File is part of an implicit namespace package. Add an `__init__.py`.
     ]
-
-    # disable autofix when linting
-    unfixable = [
-      "F401", # delete unused imports
-      "F841", # remove assignment to unused variable
-    ]
-
-
-    # # for release
-    # # ignore when linting
-    # ignore = [
-    #     # "CPY001", # Missing copyright notice at top of file
-    #
-    #     "PLR0913", # Too many arguments in function definition
-    #     "PLR0917", # Too many positional arguments
-    #
-    #     # conflict with formatting
-    #     "COM812", # missing trailing comma
-    #     "ISC001", # implicitly concatenated string literals on one line
-    # ]
-    #
-    # # disable autofix when linting
-    # unfixable = []
 
   [lint.pydocstyle]
     convention = "numpy"

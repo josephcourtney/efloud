@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import starmap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from efloud.derived import RepositoryDerivedTask
 from efloud.fanout import FanoutEnumeration, FanoutItem, fanout_source_inventory
-from efloud.inventory import ChangeToken, IntegrityExpectation, InventoryCoverage, InventoryItem, SourceInventory
+from efloud.inventory import (
+    ChangeToken,
+    IntegrityExpectation,
+    InventoryCoverage,
+    InventoryItem,
+    SourceInventory,
+)
 from efloud.json_types import (
     JsonMapping,
     JsonObject,
@@ -90,11 +97,7 @@ def _current_inputs(repository: Repository, source_ids: tuple[str, ...]) -> tupl
     observations: list[ObservationId] = []
     for artifact_key in repository.artifact_keys():
         state = repository.latest_state(artifact_key)
-        if (
-            isinstance(state, ArtifactObservation)
-            and state.source_id is not None
-            and str(state.source_id) in wanted
-        ):
+        if isinstance(state, ArtifactObservation) and state.source_id is not None and str(state.source_id) in wanted:
             observations.append(state.observation_id)
     return tuple(sorted(observations, key=str))
 
@@ -220,11 +223,7 @@ def _enumeration_count_matches(payload: JsonMapping, item_count: int) -> bool:
     declared_count = enumeration.get("item_count")
     if declared_count is None:
         return True
-    return (
-        isinstance(declared_count, int)
-        and not isinstance(declared_count, bool)
-        and declared_count == item_count
-    )
+    return isinstance(declared_count, int) and not isinstance(declared_count, bool) and declared_count == item_count
 
 
 def _serialized_collection_inventory(  # ruff: ignore[too-many-locals]
@@ -312,7 +311,7 @@ def _legacy_collection_inventory(
     identity_value = enumeration.get("upstream_identity")
     identity = identity_value if isinstance(identity_value, str) else None
     fanout_enumeration = FanoutEnumeration(
-        items=tuple(_fanout_item_from_entry(key, raw_entry) for key, raw_entry in sorted(entries.items())),
+        items=tuple(starmap(_fanout_item_from_entry, sorted(entries.items()))),
         complete=enumeration.get("complete") is True and _enumeration_count_matches(payload, len(entries)),
         upstream_identity=identity,
     )

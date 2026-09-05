@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -14,6 +13,8 @@ from efloud.repository_derived import import_derived_results
 from efloud.repository_models import SourceId
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from efloud.json_types import JsonObject
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]

@@ -26,10 +26,7 @@ def _repository_health(repository: Repository, cfg: EngineConfig) -> dict[str, A
         if source.kind is SourceKind.RSYNC:
             snapshot = repository.latest_source_snapshot(source.id)
             mirror_timestamps[source.id] = snapshot.observed_at if snapshot is not None else None
-            if (
-                source.local_subpath is None
-                or not (Path(cfg.root) / cfg.mirrors_dir / source.local_subpath).exists()
-            ):
+            if source.local_subpath is None or not (Path(cfg.root) / cfg.mirrors_dir / source.local_subpath).exists():
                 missing_roots.append(source.id)
             rsync_results[source.id] = entry
         elif source.kind in {SourceKind.HTTP, SourceKind.REST}:
@@ -70,9 +67,7 @@ def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]
     warnings.extend(manifest_warnings)
 
     sync_res = (
-        SyncResult(ok=True, root=root, manifest_path=manifest_path, manifest=manifest)
-        if manifest is not None
-        else None
+        SyncResult(ok=True, root=root, manifest_path=manifest_path, manifest=manifest) if manifest is not None else None
     )
 
     mirror_roots = {
@@ -83,9 +78,7 @@ def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]
 
     payload = {
         "mirror_root": str(root),
-        "manifest_path": str(sync_res.manifest_path)
-        if sync_res is not None and sync_res.manifest_path
-        else None,
+        "manifest_path": str(sync_res.manifest_path) if sync_res is not None and sync_res.manifest_path else None,
         "repository_metadata": None,
         "repository_authoritative": False,
         "source_count": len(cfg.sources),

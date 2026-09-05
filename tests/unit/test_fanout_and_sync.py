@@ -589,9 +589,7 @@ async def test_sync_marks_rsync_transport_failures_as_errors(tmp_path: Path, mon
         ],
     )
 
-    async def _fake_update_paths(
-        self: object, paths: list[str], *, force: bool = False
-    ) -> dict[str, OpResult]:
+    async def _fake_update_paths(self: object, paths: list[str], *, force: bool = False) -> dict[str, OpResult]:
         del self, force
         await asyncio.sleep(0)
         return {
@@ -638,9 +636,7 @@ async def test_run_rsync_phase_skips_missing_pdb_mmcif_bucket_dirs(tmp_path: Pat
     paths = prepare_paths(tmp_path, cfg)
     recorder = ManifestRecorder(root=tmp_path, cfg=cfg)
 
-    async def _fake_update_paths(
-        self: object, paths: list[str], *, force: bool = False
-    ) -> dict[str, OpResult]:
+    async def _fake_update_paths(self: object, paths: list[str], *, force: bool = False) -> dict[str, OpResult]:
         del self, force
         await asyncio.sleep(0)
         return {
@@ -690,9 +686,7 @@ async def test_run_rsync_phase_prefilters_missing_pdb_mmcif_buckets(tmp_path: Pa
     seen_messages: list[str] = []
     monkeypatch.setattr(sync_mod, "_emit_sync_runtime_message", lambda _cfg, text: seen_messages.append(text))
 
-    async def _fake_update_paths(
-        self: object, paths: list[str], *, force: bool = False
-    ) -> dict[str, OpResult]:
+    async def _fake_update_paths(self: object, paths: list[str], *, force: bool = False) -> dict[str, OpResult]:
         del self, force
         await asyncio.sleep(0)
         assert paths == ["mmCIF/0s/"]
@@ -714,9 +708,7 @@ async def test_run_rsync_phase_prefilters_missing_pdb_mmcif_buckets(tmp_path: Pa
     assert entry["ok"] is True
     assert cast("dict[str, Any]", per_path_results["mmCIF/0s/"])["status"] == "success"
     assert cast("dict[str, Any]", per_path_results["mmCIF/0r/"])["status"] == "success"
-    assert (
-        cast("dict[str, Any]", per_path_results["mmCIF/0r/"])["detail"] == "Skipped: remote shard not present"
-    )
+    assert cast("dict[str, Any]", per_path_results["mmCIF/0r/"])["detail"] == "Skipped: remote shard not present"
     assert any("skipping 1 missing remote buckets" in message for message in seen_messages)
 
 
@@ -745,9 +737,7 @@ def test_rsync_transport_retries_transient_failures(monkeypatch, tmp_path: Path)
         return OpResult(status="success", detail="ok", returncode=0, updated=["file.txt"])
 
     monkeypatch.setattr(transport_mod, "_run_rsync_process_once", fake_once)
-    monkeypatch.setattr(
-        transport_mod, "_preflight_connectivity", lambda _cfg, *, remote: messages.append(remote)
-    )
+    monkeypatch.setattr(transport_mod, "_preflight_connectivity", lambda _cfg, *, remote: messages.append(remote))
     monkeypatch.setattr(transport_mod, "_emit_runtime_message", lambda _cfg, text: messages.append(text))
     monkeypatch.setattr(transport_mod.time, "sleep", sleeps.append)
 
@@ -918,9 +908,7 @@ def test_record_manifest_hash_state_persists_source_counts(tmp_path: Path):
     manifest_payload = cast("dict[str, Any]", recorder.manifest)
     mirror_state = cast("dict[str, Any]", manifest_payload["mirror_state"])
     assert mirror_state["root"]["file_count"] == 1
-    source_payload = cast(
-        "dict[str, Any]", recorder.manifest["results"]["rsync"]["pdb_unified_nmr"]["integrity"]
-    )
+    source_payload = cast("dict[str, Any]", recorder.manifest["results"]["rsync"]["pdb_unified_nmr"]["integrity"])
     assert source_payload["source_root"]["file_count"] == 1
     assert source_payload["subtrees"]["nmr_data"]["file_count"] == 1
 
@@ -1021,8 +1009,7 @@ def test_rsync_transport_does_not_retry_host_key_or_path_failures(monkeypatch, t
             detail="rsync failed",
             returncode=23,
             stderr=(
-                'rsync: [sender] change_dir "data/structures/all/mmcif" '
-                "(in ftp) failed: No such file or directory (2)"
+                'rsync: [sender] change_dir "data/structures/all/mmcif" (in ftp) failed: No such file or directory (2)'
             ),
         ),
     ]
@@ -1058,10 +1045,7 @@ def test_rsync_transport_does_not_retry_host_key_or_path_failures(monkeypatch, t
 def test_remote_display_target_uses_rsync_daemon_module_syntax() -> None:
     transport_mod = importlib.import_module("efloud.transport.rsync")
 
-    assert (
-        transport_mod._remote_display_target("rsync.rcsb.org::ftp_data/structures/all/")
-        == "rsync.rcsb.org:873"
-    )
+    assert transport_mod._remote_display_target("rsync.rcsb.org::ftp_data/structures/all/") == "rsync.rcsb.org:873"
     assert (
         transport_mod._remote_display_target(
             "rsync.rcsb.org::ftp_data/structures/all/",

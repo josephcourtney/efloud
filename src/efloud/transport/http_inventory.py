@@ -45,12 +45,7 @@ def http_source_inventory(
     metadata: JsonObject | None = None,
 ) -> SourceInventory:
     """Represent one HTTP/REST resource using the normalized inventory model."""
-
-    expectations = (
-        (IntegrityExpectation.sha256(expected_sha256),)
-        if expected_sha256 is not None
-        else ()
-    )
+    expectations = (IntegrityExpectation.sha256(expected_sha256),) if expected_sha256 is not None else ()
     item_metadata: JsonObject = {}
     if status_code is not None:
         item_metadata["status_code"] = status_code

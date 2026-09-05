@@ -27,10 +27,7 @@ class InventoryCoverage:
         if source_path is None:
             return False
         normalized = source_path.strip("/")
-        return any(
-            normalized == item.strip("/") or normalized.startswith(item.strip("/") + "/")
-            for item in self.scope
-        )
+        return any(normalized == item.strip("/") or normalized.startswith(item.strip("/") + "/") for item in self.scope)
 
     def to_dict(self) -> JsonObject:
         return {"scope": list(self.scope), "complete": self.complete}
@@ -186,9 +183,7 @@ class IntegrityExpectationError(ValueError):
     def __init__(self, checks: tuple[IntegrityCheck, ...]) -> None:
         self.checks = checks
         failed = [check for check in checks if check.expectation.required and not check.ok]
-        summary = ", ".join(
-            f"{check.expectation.algorithm}:{check.expectation.digest}" for check in failed
-        )
+        summary = ", ".join(f"{check.expectation.algorithm}:{check.expectation.digest}" for check in failed)
         super().__init__(f"Required integrity expectation failed: {summary}")
 
 
@@ -197,7 +192,6 @@ def check_integrity(
     expectations: Iterable[IntegrityExpectation],
 ) -> tuple[IntegrityCheck, ...]:
     """Compare upstream assertions with the independently computed content identity."""
-
     return tuple(
         IntegrityCheck(
             expectation=expectation,

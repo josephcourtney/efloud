@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import click
 from smartratelimit import RateLimiter
@@ -134,8 +134,8 @@ class RsyncMirrorMeta:
         return payload
 
     @staticmethod
-    # Stored metadata is read from disk and can contain arbitrary payloads.
-    def from_json(obj: Any) -> RsyncMirrorMeta:  # ruff: ignore[any-type]
+    def from_json(obj: JsonValue) -> RsyncMirrorMeta:
+        """Decode persisted rsync metadata from any valid JSON value."""
         json_obj = json_object_or_none(obj)
         if json_obj is None:
             return RsyncMirrorMeta()
@@ -156,7 +156,7 @@ def read_rsync_mirror_meta(root: Path) -> RsyncMirrorMeta | None:
     if not meta_path.exists():
         return None
     try:
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        data: JsonValue = json.loads(meta_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     return RsyncMirrorMeta.from_json(data)
@@ -1081,7 +1081,7 @@ def _remove_empty_dirs(root: Path) -> None:
             p.rmdir()
 
 
-def _updated_paths(value: Any) -> list[str]:  # ruff: ignore[any-type] - persisted metadata may contain arbitrary values
+def _updated_paths(value: JsonValue) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]

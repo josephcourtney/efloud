@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 from efloud.derived import RepositoryDerivedTask
 from efloud.fanout import FanoutEnumeration, FanoutItem, fanout_source_inventory
-from efloud.inventory import ChangeToken, IntegrityExpectation
+from efloud.inventory import ChangeToken, IntegrityExpectation, SourceInventory
 from efloud.json_types import (
     JsonMapping,
     JsonObject,
@@ -46,7 +46,6 @@ class DerivedImportResult:
 class _CollectionImportState:
     observations: list[ObservationId] = field(default_factory=list)
     tree_entries: list[TreeEntry] = field(default_factory=list)
-    current_item_ids: set[str] = field(default_factory=set)
     unresolved_count: int = 0
     absent_count: int = 0
     content_count: int = 0
@@ -219,7 +218,7 @@ def _collection_inventory(
     source_id: SourceId,
     payload: JsonMapping,
     observed_at: float,
-):
+) -> SourceInventory:
     entries = json_mapping_or_none(payload.get("entries")) or {}
     enumeration = json_mapping_or_none(payload.get("enumeration")) or {}
     request = json_mapping_or_none(payload.get("request")) or {}
@@ -389,7 +388,6 @@ def _record_collection_entry(
 
     raw_item_id = entry.get("item_id")
     item_id = raw_item_id if isinstance(raw_item_id, str) else key
-    state.current_item_ids.add(item_id)
     relative_path = _collection_relative_path(item_id, entry)
     locator = _collection_locator(entry)
     item_metadata = _collection_item_metadata(item_id, entry, task_name)
@@ -445,7 +443,7 @@ def _record_collection_entry(
     state.unresolved_count += 1
 
 
-def _record_removed_collection_items(
+def _record_collection_membership_absences(
     repository: Repository,
     *,
     source_id: SourceId,
@@ -514,7 +512,7 @@ def _record_collection(
             decision=decision,
         )
 
-    removed = _record_removed_collection_items(
+    removed = _record_collection_membership_absences(
         repository,
         source_id=source_id,
         run_id=run_id,
@@ -524,6 +522,12 @@ def _record_collection(
         decisions=reconciliation.decisions,
     )
     state.observations.extend(removed)
+    classification_counts: JsonObject = {
+        "new": len(reconciliation.by_state("new")),
+        "changed": len(reconciliation.by_state("changed")),
+        "unchanged": len(reconciliation.by_state("unchanged")),
+        "absent": len(reconciliation.by_state("absent")),
+    }
     evidence: JsonObject = {
         "collection": True,
         "task": task_name,
@@ -535,7 +539,7 @@ def _record_collection(
         "unresolved_item_count": state.unresolved_count,
         "removed_item_count": len(removed),
         "acquisition_complete": state.unresolved_count == 0,
-        "classification_counts": reconciliation.counts(),
+        "classification_counts": classification_counts,
     }
     if inventory.upstream_identity is not None:
         evidence["upstream_identity"] = inventory.upstream_identity

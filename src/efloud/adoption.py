@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from efloud.artifacts import sha256_hex
 from efloud.registry import SourceKind
-from efloud.repository_models import ContentId, ObservationId, RunId, SourceId
+from efloud.repository_models import ContentId, ObservationId, OperationId, RunId, SourceId
 from efloud.transport.http_utils import dest_for_http_source
 
 if TYPE_CHECKING:
@@ -83,7 +83,7 @@ def _adopt_file(
     configured_source_id: str,
     source_relative_path: str | None,
     run_id: RunId,
-    operation_id,
+    operation_id: OperationId,
     observed_at: float,
 ) -> ObservationId | None:
     content_id = _content_id(path)
@@ -161,11 +161,14 @@ def adopt_existing_store(
 
         operation_id = repository.start_operation(
             run_id=run_id,
-            source_id=source.id,
+            source_id=None,
             kind="adoption",
             subject=source.id,
             started_at=observed,
-            parameters={"historical_provenance_known": False},
+            parameters={
+                "configured_source_id": source.id,
+                "historical_provenance_known": False,
+            },
         )
         source_errors: list[str] = []
         adopted_count = 0
@@ -196,6 +199,7 @@ def adopt_existing_store(
 
         details: JsonObject = {
             "adoption": True,
+            "configured_source_id": source.id,
             "historical_provenance_known": False,
             "candidate_count": len(candidates),
             "adopted_count": adopted_count,

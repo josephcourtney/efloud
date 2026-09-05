@@ -61,13 +61,15 @@ def _base_source_entry(
     source: SourceDefinition,
     operation_payload: JsonObject | None,
 ) -> JsonObject:
-    return {
+    entry: JsonObject = {
         "source_id": source.id,
         "kind": source.kind.value,
         "url": source.url,
-        "ok": operation_payload is None or operation_payload.get("status") == "success",
         "repository_backed": True,
     }
+    if operation_payload is not None:
+        entry["ok"] = operation_payload.get("status") == "success"
+    return entry
 
 
 def _add_operation(entry: JsonObject, operation_payload: JsonObject | None) -> None:

@@ -167,7 +167,7 @@ class IndexRegistry:
 
         try:
             loaded = load_index(path, definition.parser)
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover - defensive cache parse failures are environment-dependent.
             return IndexStatus(
                 index_id=index_id,
                 path=path,

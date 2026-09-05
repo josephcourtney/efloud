@@ -141,6 +141,7 @@ class SourceInventory:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Reject duplicate identities and items outside declared coverage."""
         item_ids = [item.item_id for item in self.items]
         if len(set(item_ids)) != len(item_ids):
             msg = "Source inventory contains duplicate item identifiers."

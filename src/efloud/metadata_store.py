@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from efloud.json_types import json_mapping_or_none
+from efloud.repository_models import ProducerRef
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -55,6 +58,13 @@ class OperationRecord:
     status: str
     parameters: JsonObject
     details: JsonObject
+
+    @property
+    def producer(self) -> ProducerRef:
+        raw = json_mapping_or_none(self.parameters.get("producer"))
+        if raw is None:
+            return ProducerRef("efloud:legacy", "0")
+        return ProducerRef.from_mapping(raw)
 
 
 @dataclass(frozen=True, slots=True)

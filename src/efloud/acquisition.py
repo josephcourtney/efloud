@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
+import httpx
+
 from efloud.fs import delete_http_cache_files, prune_orphan_mirrors
+from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.models import SyncResult
 from efloud.sync import (
     ManifestRecorder,
@@ -51,15 +55,13 @@ async def acquire(cfg: EngineConfig) -> SyncResult:
                         manifest=recorder.manifest,
                         sources=tuple(cfg.sources),
                     )
-                except Exception as exc:  # noqa: BLE001 - task failures are recorded as acquisition evidence.
+                except (OSError, RuntimeError, TypeError, ValueError, httpx.HTTPError) as exc:
                     recorder.error(
                         phase="derived",
                         error=f"{type(exc).__name__}: {exc}",
                         name=task.name,
                     )
                     continue
-                from efloud.json_types import copy_json_mapping, json_mapping_or_none
-
                 mapping = json_mapping_or_none(payload)
                 recorder.record_derived(
                     name=task.name,
@@ -67,10 +69,8 @@ async def acquire(cfg: EngineConfig) -> SyncResult:
                 )
     finally:
         for cache in http_caches.values():
-            try:
+            with contextlib.suppress(OSError, RuntimeError):
                 await cache.aclose()
-            except (OSError, RuntimeError):
-                pass
         recorder.finish()
 
     return SyncResult(

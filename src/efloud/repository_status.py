@@ -12,6 +12,10 @@ if TYPE_CHECKING:
     from efloud.repository_models import SourceSnapshot
 
 
+def _compatibility_status(status: str) -> str:
+    return "success" if status == "succeeded" else status
+
+
 def _source_record_payload(record: SourceRecord) -> JsonObject:
     return {
         "source_id": str(record.source_id),
@@ -23,7 +27,8 @@ def _run_record_payload(record: RunRecord) -> JsonObject:
     payload: JsonObject = {
         "run_id": str(record.run_id),
         "started_at": record.started_at,
-        "status": record.status,
+        "status": _compatibility_status(record.status),
+        "lifecycle_status": record.status,
         "metadata": dict(record.metadata),
     }
     if record.finished_at is not None:
@@ -38,7 +43,9 @@ def _operation_record_payload(record: OperationRecord) -> JsonObject:
         "kind": record.kind,
         "subject": record.subject,
         "started_at": record.started_at,
-        "status": record.status,
+        "status": _compatibility_status(record.status),
+        "lifecycle_status": record.status,
+        "producer": record.producer.to_dict(),
         "parameters": dict(record.parameters),
         "details": dict(record.details),
     }

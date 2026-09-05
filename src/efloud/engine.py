@@ -4,12 +4,12 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
+from efloud.acquisition import acquire as legacy_sync
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
 from efloud.repository import Repository
-from efloud.repository_compat import repository_manifest, write_repository_manifest
+from efloud.repository_compat import repository_manifest
+from efloud.repository_outputs import publish_repository_outputs
 from efloud.repository_recording import RepositorySyncRecorder
-from efloud.repository_state import write_repository_mirror_state
-from efloud.sync import sync as legacy_sync
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -50,6 +50,7 @@ class EngineSyncResult:
 
     @property
     def legacy_manifest(self) -> NormalizedManifest:
+        """Return transient acquisition evidence retained for compatibility/debugging."""
         return self.sync_result.manifest
 
 
@@ -104,6 +105,7 @@ class Engine:
             )
 
     async def sync(self) -> EngineSyncResult:
+        """Acquire transient evidence, commit it, then publish repository-derived views."""
         recorder = RepositorySyncRecorder(self.repository, self.config)
         try:
             sync_result = await legacy_sync(self.config)
@@ -125,20 +127,15 @@ class Engine:
                 run_id=recorder.run_id,
             )
             with contextlib.suppress(OSError):
-                current_manifest, manifest_path = write_repository_manifest(
+                outputs = publish_repository_outputs(
                     self.repository,
                     cfg=self.config,
                     run_id=recorder.run_id,
                 )
-            run = self.repository.metadata.run(recorder.run_id)
-            generated_at = run.finished_at if run is not None else None
-            with contextlib.suppress(OSError):
-                mirror_state, mirror_state_path = write_repository_mirror_state(
-                    self.repository,
-                    cfg=self.config,
-                    manifest_path=manifest_path,
-                    generated_at=generated_at,
-                )
+                current_manifest = outputs.manifest
+                manifest_path = outputs.canonical_manifest_path
+                mirror_state = outputs.mirror_state
+                mirror_state_path = outputs.mirror_state_path
 
         return EngineSyncResult(
             sync_result=sync_result,

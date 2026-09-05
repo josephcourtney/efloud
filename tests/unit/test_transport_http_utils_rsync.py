@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 import pytest
 
+from efloud.json_types import JsonValue
 from efloud.transport import rsync as rsync_mod
 from efloud.transport.http_utils import (
     cache_group_name,
@@ -393,7 +394,7 @@ async def test_rsync_mirror_skips_fresh_and_updates_paths(tmp_path: Path, monkey
 
 @pytest.mark.medium
 def test_rsync_meta_round_trip_and_invalid_read(tmp_path: Path):
-    payload = {"version": 2, "paths": {"a": {"updated_at_unix": 1, "updated": ["x"]}}}
+    payload: JsonValue = {"version": 2, "paths": {"a": {"updated_at_unix": 1, "updated": ["x"]}}}
     meta = RsyncMirrorMeta.from_json(payload)
     assert meta.to_json() == payload
 

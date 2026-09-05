@@ -21,7 +21,7 @@ from efloud.derivation import (
     DerivedTaskSpec,
     derivation_key_for,
 )
-from efloud.derived import RepositoryDerivedTask, SpecifiedDerivedTask
+from efloud.derived import RepositoryDerivedTask
 from efloud.engine import Engine, EngineSyncResult
 from efloud.fanout import (
     FanoutEnumeration,
@@ -231,7 +231,6 @@ __all__ = [
     "SourceKind",
     "SourceRecord",
     "SourceSnapshot",
-    "SpecifiedDerivedTask",
     "StoreMetadataProvider",
     "StorePathKind",
     "StoreSpec",

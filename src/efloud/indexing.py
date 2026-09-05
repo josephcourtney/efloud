@@ -5,17 +5,18 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, Self
 
-from efloud.derivation import DependencySemantics, DerivedTaskSpec, derivation_key_for
+from efloud.derivation import DerivedTaskSpec, derivation_key_for
 from efloud.fs import atomic_write_text, safe_json_dump
 from efloud.json_types import JsonMapping, JsonObject, JsonValue, copy_json_mapping, json_mapping_or_none
-from efloud.repository_models import ArtifactKey, ArtifactObservation, canonical_json_bytes
+from efloud.repository_models import ArtifactKey, canonical_json_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from efloud.derivation import DependencySemantics
     from efloud.repository import Repository
-    from efloud.repository_models import RunId
+    from efloud.repository_models import ArtifactObservation, RunId
 
 
 class CachedIndex(Protocol):

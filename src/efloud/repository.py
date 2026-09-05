@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, BinaryIO, Self
 
 from efloud.blob_store import BlobStore, FilesystemBlobStore
 from efloud.datasets import DatasetDefinition, DatasetManifest, ImmutableDataset, resolve_dataset
+from efloud.derivation import DerivationKey
 from efloud.repository_models import (
     ArtifactAbsence,
     ArtifactKey,
@@ -15,6 +16,7 @@ from efloud.repository_models import (
     DatasetId,
     ObservationId,
     OperationId,
+    ProducerRef,
     ProvenanceEdge,
     RunId,
     SnapshotId,
@@ -37,7 +39,21 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from efloud.json_types import JsonObject
-    from efloud.metadata_store import MetadataStore
+    from efloud.metadata_store import MetadataStore, OperationRecord
+
+_DEFAULT_PRODUCER = ProducerRef("efloud:repository", "1")
+_RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
+_OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
+
+
+def _canonical_terminal_status(status: str, *, operation: bool) -> str:
+    normalized = "succeeded" if status == "success" else status
+    allowed = _OPERATION_TERMINAL if operation else _RUN_TERMINAL
+    if normalized not in allowed:
+        kind = "operation" if operation else "run"
+        msg = f"Invalid terminal {kind} status: {status!r}"
+        raise ValueError(msg)
+    return normalized
 
 
 class Repository:  # ruff: ignore[too-many-public-methods]
@@ -92,11 +108,33 @@ class Repository:  # ruff: ignore[too-many-public-methods]
         return run_id
 
     def finish_run(self, run_id: RunId, *, status: str, finished_at: float | None = None) -> None:
+        run = self.metadata.run(run_id)
+        if run is None:
+            msg = f"Unknown run: {run_id}"
+            raise KeyError(msg)
+        if run.status != "running":
+            msg = f"Run {run_id} cannot transition from {run.status!r}."
+            raise ValueError(msg)
+        running_operations = [
+            operation
+            for operation in self.metadata.operations_for_run(run_id)
+            if operation.status == "running"
+        ]
+        if running_operations:
+            msg = f"Run {run_id} cannot finish while operations are still running."
+            raise ValueError(msg)
         self.metadata.finish_run(
             run_id,
             finished_at=time.time() if finished_at is None else finished_at,
-            status=status,
+            status=_canonical_terminal_status(status, operation=False),
         )
+
+    def _operation_record(self, operation_id: OperationId) -> OperationRecord | None:
+        for run in self.metadata.recent_runs(limit=100_000):
+            for operation in self.metadata.operations_for_run(run.run_id):
+                if operation.operation_id == operation_id:
+                    return operation
+        return None
 
     def start_operation(
         self,
@@ -107,9 +145,19 @@ class Repository:  # ruff: ignore[too-many-public-methods]
         source_id: SourceId | str | None = None,
         started_at: float | None = None,
         parameters: JsonObject | None = None,
+        producer: ProducerRef | None = None,
     ) -> OperationId:
+        run = self.metadata.run(run_id)
+        if run is None:
+            msg = f"Unknown run: {run_id}"
+            raise KeyError(msg)
+        if run.status != "running":
+            msg = f"Cannot start an operation in terminal run {run_id}."
+            raise ValueError(msg)
         operation_id = operation_id_for(run_id=run_id, kind=kind, subject=subject)
         normalized_source_id = SourceId(str(source_id)) if source_id is not None else None
+        operation_parameters: JsonObject = dict(parameters or {})
+        operation_parameters["producer"] = (producer or _DEFAULT_PRODUCER).to_dict()
         self.metadata.start_operation(
             operation_id,
             run_id=run_id,
@@ -117,7 +165,7 @@ class Repository:  # ruff: ignore[too-many-public-methods]
             kind=kind,
             subject=subject,
             started_at=time.time() if started_at is None else started_at,
-            parameters=parameters or {},
+            parameters=operation_parameters,
         )
         return operation_id
 
@@ -129,10 +177,17 @@ class Repository:  # ruff: ignore[too-many-public-methods]
         finished_at: float | None = None,
         details: JsonObject | None = None,
     ) -> None:
+        operation = self._operation_record(operation_id)
+        if operation is None:
+            msg = f"Unknown operation: {operation_id}"
+            raise KeyError(msg)
+        if operation.status != "running":
+            msg = f"Operation {operation_id} cannot transition from {operation.status!r}."
+            raise ValueError(msg)
         self.metadata.finish_operation(
             operation_id,
             finished_at=time.time() if finished_at is None else finished_at,
-            status=status,
+            status=_canonical_terminal_status(status, operation=True),
             details=details or {},
         )
 
@@ -259,6 +314,108 @@ class Repository:  # ruff: ignore[too-many-public-methods]
                 metadata={},
             )
         return observation
+
+    def reusable_derived_content(
+        self,
+        derivation_key: DerivationKey | str,
+        artifact_key: ArtifactKey | str,
+    ) -> ContentId | None:
+        """Return prior deterministic output content for an identical derivation."""
+        wanted = str(derivation_key)
+        for observation in reversed(self.observations_for(artifact_key)):
+            if observation.metadata.get("derivation_key") == wanted:
+                return observation.content_id
+        return None
+
+    def record_derived_path(
+        self,
+        artifact_key: ArtifactKey | str,
+        path: Path,
+        *,
+        derivation_key: DerivationKey | str | None,
+        run_id: RunId,
+        operation_id: OperationId,
+        inputs: Iterable[ArtifactObservation],
+        observed_at: float | None = None,
+        media_type: str | None = None,
+        metadata: JsonObject | None = None,
+        materialization_kind: str | None = None,
+    ) -> ArtifactObservation:
+        """Record a derived file, reusing deterministic output content when possible."""
+        input_observations = tuple(inputs)
+        input_ids = tuple(observation.observation_id for observation in input_observations)
+        payload: JsonObject = {**(metadata or {}), "derived_artifact": True}
+        if derivation_key is not None:
+            payload["derivation_key"] = str(derivation_key)
+            reusable = self.reusable_derived_content(derivation_key, artifact_key)
+            if reusable is not None:
+                payload["derivation_reused"] = True
+                return self.observe_content(
+                    artifact_key,
+                    reusable,
+                    run_id=run_id,
+                    operation_id=operation_id,
+                    observed_at=observed_at,
+                    metadata=payload,
+                    inputs=input_ids,
+                    materialization_kind=materialization_kind,
+                    materialization_path=path,
+                )
+        payload["derivation_reused"] = False
+        return self.ingest_path(
+            artifact_key,
+            path,
+            run_id=run_id,
+            operation_id=operation_id,
+            observed_at=observed_at,
+            media_type=media_type,
+            metadata=payload,
+            inputs=input_ids,
+            materialization_kind=materialization_kind,
+        )
+
+    def record_derived_bytes(
+        self,
+        artifact_key: ArtifactKey | str,
+        data: bytes,
+        *,
+        derivation_key: DerivationKey | str | None,
+        run_id: RunId,
+        operation_id: OperationId,
+        inputs: Iterable[ArtifactObservation],
+        observed_at: float | None = None,
+        media_type: str | None = None,
+        metadata: JsonObject | None = None,
+    ) -> ArtifactObservation:
+        """Record derived bytes with deterministic content reuse and fresh provenance."""
+        input_observations = tuple(inputs)
+        input_ids = tuple(observation.observation_id for observation in input_observations)
+        payload: JsonObject = {**(metadata or {}), "derived_artifact": True}
+        if derivation_key is not None:
+            payload["derivation_key"] = str(derivation_key)
+            reusable = self.reusable_derived_content(derivation_key, artifact_key)
+            if reusable is not None:
+                payload["derivation_reused"] = True
+                return self.observe_content(
+                    artifact_key,
+                    reusable,
+                    run_id=run_id,
+                    operation_id=operation_id,
+                    observed_at=observed_at,
+                    metadata=payload,
+                    inputs=input_ids,
+                )
+        payload["derivation_reused"] = False
+        return self.ingest_bytes(
+            artifact_key,
+            data,
+            run_id=run_id,
+            operation_id=operation_id,
+            observed_at=observed_at,
+            media_type=media_type,
+            metadata=payload,
+            inputs=input_ids,
+        )
 
     def _record_content_observation(
         self,
@@ -478,7 +635,6 @@ class Repository:  # ruff: ignore[too-many-public-methods]
         *,
         created_at: float | None = None,
     ) -> ImmutableDataset:
-
         manifest = resolve_dataset(self, definition, created_at=created_at)
         existing = self.metadata.dataset(manifest.dataset_id)
         if existing is None:
@@ -488,7 +644,6 @@ class Repository:  # ruff: ignore[too-many-public-methods]
         return ImmutableDataset(self, manifest)
 
     def dataset(self, dataset_id: DatasetId | str) -> ImmutableDataset:
-
         record = self.metadata.dataset(DatasetId(str(dataset_id)))
         if record is None:
             msg = f"Unknown dataset: {dataset_id}"

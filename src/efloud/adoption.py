@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,12 +11,13 @@ from efloud.repository_models import ContentId, ObservationId, OperationId, RunI
 from efloud.transport.http_utils import dest_for_http_source
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from efloud.json_types import JsonObject
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
+
+
+type _AdoptionCandidate = tuple[str, Path, str | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,23 @@ class AdoptionResult:
     @property
     def ok(self) -> bool:
         return not self.errors
+
+
+@dataclass(slots=True)
+class _AdoptionState:
+    observations: list[ObservationId] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    succeeded_operations: int = 0
+    failed_operations: int = 0
+
+
+@dataclass(slots=True)
+class _SourceAdoptionState:
+    adopted_count: int = 0
+    unchanged_count: int = 0
+    errors: list[str] = field(default_factory=list)
 
 
 def _source_definition(source: SourceDefinition) -> JsonObject:
@@ -47,7 +65,7 @@ def _source_definition(source: SourceDefinition) -> JsonObject:
     return payload
 
 
-def _http_candidate(cfg: EngineConfig, source: SourceDefinition) -> tuple[str, Path]:
+def _http_candidate(cfg: EngineConfig, source: SourceDefinition) -> _AdoptionCandidate | None:
     path = dest_for_http_source(
         Path(cfg.root) / cfg.http_dir,
         url=source.url,
@@ -55,20 +73,29 @@ def _http_candidate(cfg: EngineConfig, source: SourceDefinition) -> tuple[str, P
         kind=source.kind.value,
         cache_name=source.cache_name,
     )
-    return f"adopted:{source.id}:http", path
+    return (f"adopted:{source.id}:http", path, None) if path.is_file() else None
 
 
-def _rsync_candidates(cfg: EngineConfig, source: SourceDefinition) -> Iterable[tuple[str, Path, str]]:
+def _rsync_candidates(cfg: EngineConfig, source: SourceDefinition) -> tuple[_AdoptionCandidate, ...]:
     root = Path(cfg.root) / cfg.mirrors_dir / (source.local_subpath or source.id)
     if not root.is_dir():
         return ()
-    candidates: list[tuple[str, Path, str]] = []
+    candidates: list[_AdoptionCandidate] = []
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or not path.is_file() or path.name in {".mirror_meta.json", ".DS_Store"}:
             continue
         relative = path.relative_to(root).as_posix()
         candidates.append((f"adopted:{source.id}:path:{relative}", path, relative))
     return tuple(candidates)
+
+
+def _source_candidates(cfg: EngineConfig, source: SourceDefinition) -> tuple[_AdoptionCandidate, ...] | None:
+    if source.kind in {SourceKind.HTTP, SourceKind.REST}:
+        candidate = _http_candidate(cfg, source)
+        return () if candidate is None else (candidate,)
+    if source.kind is SourceKind.RSYNC:
+        return _rsync_candidates(cfg, source)
+    return None
 
 
 def _content_id(path: Path) -> ContentId:
@@ -112,6 +139,106 @@ def _adopt_file(
     return observation.observation_id
 
 
+def _record_candidate_result(
+    state: _AdoptionState,
+    source_state: _SourceAdoptionState,
+    *,
+    artifact_key: str,
+    observation_id: ObservationId | None,
+) -> None:
+    if observation_id is None:
+        state.unchanged.append(artifact_key)
+        source_state.unchanged_count += 1
+        return
+    state.observations.append(observation_id)
+    source_state.adopted_count += 1
+
+
+def _source_operation_details(
+    source: SourceDefinition,
+    candidates: tuple[_AdoptionCandidate, ...],
+    state: _SourceAdoptionState,
+) -> JsonObject:
+    details: JsonObject = {
+        "adoption": True,
+        "configured_source_id": source.id,
+        "historical_provenance_known": False,
+        "candidate_count": len(candidates),
+        "adopted_count": state.adopted_count,
+        "unchanged_count": state.unchanged_count,
+        "error_count": len(state.errors),
+    }
+    if state.errors:
+        details["errors"] = list(state.errors)
+    return details
+
+
+def _adopt_source(
+    repository: Repository,
+    *,
+    source: SourceDefinition,
+    candidates: tuple[_AdoptionCandidate, ...],
+    run_id: RunId,
+    observed_at: float,
+    state: _AdoptionState,
+) -> None:
+    operation_id = repository.start_operation(
+        run_id=run_id,
+        source_id=None,
+        kind="adoption",
+        subject=source.id,
+        started_at=observed_at,
+        parameters={
+            "configured_source_id": source.id,
+            "historical_provenance_known": False,
+        },
+    )
+    source_state = _SourceAdoptionState()
+    for artifact_key, path, relative in candidates:
+        try:
+            observation_id = _adopt_file(
+                repository,
+                artifact_key=artifact_key,
+                path=path,
+                configured_source_id=source.id,
+                source_relative_path=relative,
+                run_id=run_id,
+                operation_id=operation_id,
+                observed_at=observed_at,
+            )
+        except (OSError, ValueError) as exc:
+            detail = f"{source.id}:{path}: {type(exc).__name__}: {exc}"
+            source_state.errors.append(detail)
+            state.errors.append(detail)
+            continue
+        _record_candidate_result(
+            state,
+            source_state,
+            artifact_key=artifact_key,
+            observation_id=observation_id,
+        )
+
+    failed = bool(source_state.errors)
+    repository.finish_operation(
+        operation_id,
+        status="failed" if failed else "succeeded",
+        finished_at=observed_at,
+        details=_source_operation_details(source, candidates, source_state),
+    )
+    if failed:
+        state.failed_operations += 1
+    else:
+        state.succeeded_operations += 1
+
+
+def _run_status(state: _AdoptionState) -> str:
+    if state.failed_operations and state.succeeded_operations:
+        return "partial"
+    if state.failed_operations:
+        return "failed"
+    return "succeeded"
+
+
 def adopt_existing_store(
     repository: Repository,
     *,
@@ -133,100 +260,29 @@ def adopt_existing_store(
         started_at=observed,
         metadata={"adoption": True, "historical_provenance_known": False},
     )
-
-    observations: list[ObservationId] = []
-    unchanged: list[str] = []
-    skipped: list[str] = []
-    errors: list[str] = []
-    succeeded_operations = 0
-    failed_operations = 0
+    state = _AdoptionState()
 
     for source in cfg.sources:
-        candidates: tuple[tuple[str, Path, str | None], ...]
-        if source.kind in {SourceKind.HTTP, SourceKind.REST}:
-            artifact_key, path = _http_candidate(cfg, source)
-            candidates = ((artifact_key, path, None),) if path.is_file() else ()
-        elif source.kind is SourceKind.RSYNC:
-            candidates = tuple(
-                (artifact_key, path, relative)
-                for artifact_key, path, relative in _rsync_candidates(cfg, source)
-            )
-        else:
-            skipped.append(source.id)
-            continue
-
+        candidates = _source_candidates(cfg, source)
         if not candidates:
-            skipped.append(source.id)
+            state.skipped.append(source.id)
             continue
-
-        operation_id = repository.start_operation(
+        _adopt_source(
+            repository,
+            source=source,
+            candidates=candidates,
             run_id=run_id,
-            source_id=None,
-            kind="adoption",
-            subject=source.id,
-            started_at=observed,
-            parameters={
-                "configured_source_id": source.id,
-                "historical_provenance_known": False,
-            },
+            observed_at=observed,
+            state=state,
         )
-        source_errors: list[str] = []
-        adopted_count = 0
-        unchanged_count = 0
-        for artifact_key, path, relative in candidates:
-            try:
-                observation_id = _adopt_file(
-                    repository,
-                    artifact_key=artifact_key,
-                    path=path,
-                    configured_source_id=source.id,
-                    source_relative_path=relative,
-                    run_id=run_id,
-                    operation_id=operation_id,
-                    observed_at=observed,
-                )
-            except (OSError, ValueError) as exc:
-                detail = f"{source.id}:{path}: {type(exc).__name__}: {exc}"
-                source_errors.append(detail)
-                errors.append(detail)
-                continue
-            if observation_id is None:
-                unchanged.append(artifact_key)
-                unchanged_count += 1
-            else:
-                observations.append(observation_id)
-                adopted_count += 1
 
-        details: JsonObject = {
-            "adoption": True,
-            "configured_source_id": source.id,
-            "historical_provenance_known": False,
-            "candidate_count": len(candidates),
-            "adopted_count": adopted_count,
-            "unchanged_count": unchanged_count,
-            "error_count": len(source_errors),
-        }
-        if source_errors:
-            details["errors"] = list(source_errors)
-            repository.finish_operation(operation_id, status="failed", finished_at=observed, details=details)
-            failed_operations += 1
-        else:
-            repository.finish_operation(operation_id, status="succeeded", finished_at=observed, details=details)
-            succeeded_operations += 1
-
-    if failed_operations and succeeded_operations:
-        run_status = "partial"
-    elif failed_operations:
-        run_status = "failed"
-    else:
-        run_status = "succeeded"
-    repository.finish_run(run_id, status=run_status, finished_at=observed)
+    repository.finish_run(run_id, status=_run_status(state), finished_at=observed)
     return AdoptionResult(
         run_id=run_id,
-        observations=tuple(observations),
-        unchanged_artifacts=tuple(sorted(unchanged)),
-        skipped_source_ids=tuple(sorted(set(skipped))),
-        errors=tuple(errors),
+        observations=tuple(state.observations),
+        unchanged_artifacts=tuple(sorted(state.unchanged)),
+        skipped_source_ids=tuple(sorted(set(state.skipped))),
+        errors=tuple(state.errors),
     )
 
 

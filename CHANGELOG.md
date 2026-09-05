@@ -27,6 +27,7 @@ Items should be categorized under these headings:
 - add authoritative rsync inventory and coverage-aware reconciliation, including complete/scoped source snapshots, unchanged-content reuse, and explicit absence observations when enumeration proves deletion
 - add normalized `SourceInventory`, `InventoryCoverage`, `InventoryItem`, `ChangeToken`, and `IntegrityExpectation` models for protocol-independent source evidence
 - add generic reconciliation that classifies normalized inventory items as new, changed, unchanged, or absent while restricting absence to proven complete coverage
+- add explicit `FanoutEnumeration` membership evidence with complete/partial coverage, upstream enumeration identity, change tokens, and integrity expectations
 
 ### Changed
 - change temporal dataset resolution to treat an explicit later absence as authoritative instead of falling back to an older content-bearing observation
@@ -36,6 +37,8 @@ Items should be categorized under these headings:
 - change initialized-repository `source:` queries and source status rows to prefer SQLite/blob repository state while preserving manifest fallback for older stores without repository metadata
 - expose the repository, immutable dataset selectors/types, repository identities, query service, and repository status service through the package public API
 - route rsync inventory classification through the generic reconciliation layer while preserving repository observations, unchanged-content reuse, scoped snapshots, and deletion semantics
+- route collection/fanout membership through `SourceInventory` and generic reconciliation so removed-item absence is inferred only from complete enumeration coverage
+- preserve the latest complete collection snapshot as the reconciliation baseline across intervening partial enumerations
 
 ### Deprecated
 

@@ -7,13 +7,11 @@ from typing import TYPE_CHECKING, Any
 
 from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.locator import resolve_locator_from_file
-from efloud.manifest import load_latest_manifest
 from efloud.query_targets import parse_query_target
 from efloud.repository import Repository
 from efloud.repository_compat import repository_exists, repository_source_entry
 from efloud.repository_query import RepositoryQueryService
 from efloud.source_aliases import source_by_id_or_alias
-from efloud.source_results import local_materialized_path, manifest_entry_for_source
 from efloud.store_inspection import (
     StoreSpec,
     generic_store_metadata,
@@ -320,6 +318,44 @@ def _repository_source_payload(
         return payload
 
 
+def _uninitialized_source_payload(
+    source: SourceDefinition,
+    *,
+    source_query: str | None,
+    locator: str | None,
+    fetch_requested: bool,
+) -> dict[str, Any]:
+    warning = (
+        "Repository metadata is not initialized; compatibility manifests are not consulted for source state. "
+        "Run a repository sync or adopt retained local data."
+    )
+    warnings = [warning]
+    if source_query is not None and not fetch_requested:
+        warnings.append("--fetch was not requested; query overrides are informational only.")
+    payload: dict[str, Any] = {
+        "target_kind": "source",
+        "source_id": source.id,
+        "kind": source.kind.value,
+        "description": source.description,
+        "url": source.url,
+        "query": source_query,
+        "local_path": None,
+        "manifest_entry": None,
+        "repository_entry": None,
+        "repository_backed": False,
+        "repository_status": "uninitialized",
+        "warnings": warnings,
+    }
+    if locator is not None:
+        payload["locator"] = {
+            "path": locator,
+            "resolved_locator": None,
+            "value": None,
+            "error": "Repository state is not initialized; locator evaluation has no authoritative source state.",
+        }
+    return payload
+
+
 def source_payload(
     source: SourceDefinition,
     *,
@@ -336,60 +372,9 @@ def source_payload(
             fetch_requested=fetch_requested,
             cfg=cfg,
         )
-
-    root = Path(cfg.root)
-    manifest, manifest_warnings, _ = load_latest_manifest(
-        root / cfg.log_dir,
-        cfg.manifest_filename,
-        expected_root=root,
-    )
-    warnings = list(manifest_warnings)
-    manifest_entry = manifest_entry_for_source(
-        manifest if isinstance(manifest, Mapping) else None,
+    return _uninitialized_source_payload(
         source,
-        aliases=cfg.source_aliases,
+        source_query=source_query,
+        locator=locator,
+        fetch_requested=fetch_requested,
     )
-
-    local_path = local_materialized_path(manifest_entry)
-
-    payload: dict[str, Any] = {
-        "target_kind": "source",
-        "source_id": source.id,
-        "kind": source.kind.value,
-        "description": source.description,
-        "url": source.url,
-        "query": source_query,
-        "local_path": str(local_path) if local_path is not None else None,
-        "manifest_entry": dict(manifest_entry) if isinstance(manifest_entry, Mapping) else None,
-        "repository_backed": False,
-        "warnings": warnings,
-    }
-
-    if source_query is not None and not fetch_requested:
-        warnings.append("--fetch was not requested; query overrides are informational only.")
-
-    if locator is None:
-        return payload
-
-    result: dict[str, Any] = {
-        "path": locator,
-        "resolved_locator": None,
-        "value": None,
-        "error": None,
-    }
-
-    if local_path is None:
-        result["error"] = "No cached source artifact is available for locator evaluation."
-    else:
-        absolute = local_path
-        if not absolute.is_absolute():
-            absolute = root / absolute
-        value, err, resolved_locator = resolve_locator_from_file(absolute, locator)
-        result["value"] = value
-        result["error"] = err
-        result["resolved_locator"] = resolved_locator
-        if err:
-            warnings.append(err)
-
-    payload["locator"] = result
-    return payload

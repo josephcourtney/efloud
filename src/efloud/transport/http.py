@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 import httpx
-from hishel import AsyncSqliteStorage, CacheOptions, SpecificationPolicy
+from hishel import AsyncSqliteStorage, FilterPolicy, SpecificationPolicy
 from hishel.httpx import AsyncCacheTransport
 from smartratelimit import RateLimiter
 from smartratelimit.async_client import AsyncRateLimiter
@@ -90,26 +90,12 @@ class HttpCache:
                 )
 
                 next_transport = httpx.AsyncHTTPTransport()
-                # Optionally force caching even without cache headers
-                policy = None
-                if cfg.force_cache and SpecificationPolicy is not None and CacheOptions is not None:
-                    # hishel's CacheOptions API varies by version. Older versions exposed an
-                    # `always_cache` knob; newer ones do not. If unsupported, ignore force_cache
-                    # rather than crashing at runtime.
-                    try:
-                        cache_options = CacheOptions(always_cache=True)  # ty: ignore[unknown-argument]
-                        policy = SpecificationPolicy(cache_options=cache_options)
-                    except TypeError:
-                        logger.warning(
-                            "HttpCache %s: force_cache unsupported by installed hishel; ignoring",
-                            cfg.name,
-                        )
-                        policy = None
+                policy = FilterPolicy() if cfg.force_cache else SpecificationPolicy()
 
                 transport = AsyncCacheTransport(
                     next_transport=next_transport,
-                    storage=cast("Any", storage),
-                    policy=cast("Any", policy),
+                    storage=storage,
+                    policy=policy,
                 )
 
                 client = httpx.AsyncClient(

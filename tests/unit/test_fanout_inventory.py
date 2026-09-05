@@ -119,7 +119,7 @@ async def test_fanout_task_serializes_inventory_independently_of_retrieval_resul
 
         @staticmethod
         async def aclose() -> None:
-            return None
+            pass
 
     monkeypatch.setattr(fanout_mod, "HttpCache", FakeHttpCache)
     monkeypatch.setattr(fanout_mod, "_materialize_fanout", fake_materialize_fanout)

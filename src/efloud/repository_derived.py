@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from efloud.derived import RepositoryDerivedTask
+from efloud.fanout import FanoutEnumeration, FanoutItem, fanout_source_inventory
+from efloud.inventory import ChangeToken, IntegrityExpectation
 from efloud.json_types import (
     JsonMapping,
     JsonObject,
@@ -12,8 +14,10 @@ from efloud.json_types import (
     copy_json_mapping,
     json_mapping_or_none,
 )
+from efloud.reconciliation import PreviousInventoryItem, ReconciliationDecision, reconcile_inventory
 from efloud.registry import SourceKind
 from efloud.repository_models import (
+    ArtifactKey,
     ArtifactObservation,
     ObservationId,
     OperationId,
@@ -154,51 +158,132 @@ def _collection_item_metadata(item_id: str, entry: JsonMapping, task_name: str) 
     return payload
 
 
+def _change_token_from_mapping(value: object) -> ChangeToken | None:
+    mapping = json_mapping_or_none(value)
+    if mapping is None:
+        return None
+    kind = mapping.get("kind")
+    token_value = mapping.get("value")
+    if not isinstance(kind, str) or not isinstance(token_value, str):
+        return None
+    raw_reliability = mapping.get("reliability")
+    reliability: Literal["weak", "strong"] = "weak" if raw_reliability == "weak" else "strong"
+    return ChangeToken(kind=kind, value=token_value, reliability=reliability)
+
+
+def _integrity_expectations_from_mapping(value: object) -> tuple[IntegrityExpectation, ...]:
+    if not isinstance(value, list):
+        return ()
+    expectations: list[IntegrityExpectation] = []
+    for raw in value:
+        mapping = json_mapping_or_none(raw)
+        if mapping is None:
+            continue
+        algorithm = mapping.get("algorithm")
+        digest = mapping.get("digest")
+        if not isinstance(algorithm, str) or not isinstance(digest, str):
+            continue
+        required = mapping.get("required") is not False
+        metadata = json_mapping_or_none(mapping.get("metadata"))
+        expectations.append(
+            IntegrityExpectation(
+                algorithm=algorithm,
+                digest=digest,
+                required=required,
+                metadata=copy_json_mapping(metadata) if metadata is not None else {},
+            )
+        )
+    return tuple(expectations)
+
+
+def _fanout_item_from_entry(key: str, raw_entry: JsonValue) -> FanoutItem:
+    entry = json_mapping_or_none(raw_entry)
+    if entry is None:
+        return FanoutItem(item_id=key)
+    raw_item_id = entry.get("item_id")
+    item_id = raw_item_id if isinstance(raw_item_id, str) else key
+    request = json_mapping_or_none(entry.get("request")) or {}
+    request_path_value = request.get("request_path")
+    request_path = request_path_value if isinstance(request_path_value, str) else None
+    evidence = json_mapping_or_none(entry.get("inventory")) or {}
+    return FanoutItem(
+        item_id=item_id,
+        request_path=request_path,
+        change_token=_change_token_from_mapping(evidence.get("change_token")),
+        expected_integrity=_integrity_expectations_from_mapping(evidence.get("expected_integrity")),
+    )
+
+
+def _collection_inventory(
+    *,
+    source_id: SourceId,
+    payload: JsonMapping,
+    observed_at: float,
+):
+    entries = json_mapping_or_none(payload.get("entries")) or {}
+    enumeration = json_mapping_or_none(payload.get("enumeration")) or {}
+    request = json_mapping_or_none(payload.get("request")) or {}
+    base_url_value = request.get("base_url")
+    base_url = base_url_value if isinstance(base_url_value, str) else ""
+    identity_value = enumeration.get("upstream_identity")
+    identity = identity_value if isinstance(identity_value, str) else None
+    fanout_enumeration = FanoutEnumeration(
+        items=tuple(_fanout_item_from_entry(key, raw_entry) for key, raw_entry in sorted(entries.items())),
+        complete=enumeration.get("complete") is True,
+        upstream_identity=identity,
+    )
+    return fanout_source_inventory(
+        source_id=source_id,
+        base_url=base_url,
+        enumeration=fanout_enumeration,
+        observed_at=observed_at,
+    )
+
+
+def _tree_change_token(tree_entry: TreeEntry) -> ChangeToken | None:
+    return _change_token_from_mapping(tree_entry.metadata.get("change_token"))
+
+
 def _previous_collection_items(
     repository: Repository,
     source_id: SourceId,
-) -> dict[str, TreeEntry]:
-    snapshot = repository.latest_source_snapshot(source_id)
-    if snapshot is None or not snapshot.complete or snapshot.tree_id is None:
-        return {}
-    previous: dict[str, TreeEntry] = {}
+) -> tuple[PreviousInventoryItem, ...]:
+    snapshot = next(
+        (
+            candidate
+            for candidate in repository.metadata.source_snapshots_for(source_id, limit=200)
+            if candidate.complete and candidate.tree_id is not None
+        ),
+        None,
+    )
+    if snapshot is None or snapshot.tree_id is None:
+        return ()
+    previous: list[PreviousInventoryItem] = []
     for tree_entry in repository.tree_entries(snapshot.tree_id):
         item_id = tree_entry.metadata.get("item_id")
-        if isinstance(item_id, str):
-            previous[item_id] = tree_entry
-    return previous
-
-
-def _record_removed_collection_items(
-    repository: Repository,
-    *,
-    source_id: SourceId,
-    run_id: RunId,
-    operation_id: OperationId,
-    observed_at: float,
-    previous: dict[str, TreeEntry],
-    current_item_ids: set[str],
-    task_name: str,
-) -> list[ObservationId]:
-    removed: list[ObservationId] = []
-    for item_id, old_entry in sorted(previous.items()):
-        if item_id in current_item_ids:
+        if not isinstance(item_id, str):
             continue
-        absence = repository.record_absence(
-            f"source:{source_id}:item:{item_id}",
-            run_id=run_id,
-            operation_id=operation_id,
-            source_id=source_id,
-            observed_at=observed_at,
-            source_path=old_entry.relative_path,
-            metadata={
-                "collection_task": task_name,
-                "item_id": item_id,
-                "reason": "removed-from-complete-enumeration",
-            },
+        previous.append(
+            PreviousInventoryItem(
+                item_id=item_id,
+                artifact_key=ArtifactKey(f"source:{source_id}:item:{item_id}"),
+                content_id=tree_entry.content_id,
+                source_path=tree_entry.relative_path,
+                change_token=_tree_change_token(tree_entry),
+                metadata={"kind": tree_entry.kind},
+            )
         )
-        removed.append(absence.observation_id)
-    return removed
+    return tuple(previous)
+
+
+def _tree_metadata(item_id: str, decision: ReconciliationDecision) -> JsonObject:
+    metadata: JsonObject = {
+        "item_id": item_id,
+        "reconciliation_state": decision.state,
+    }
+    if decision.current is not None and decision.current.change_token is not None:
+        metadata["change_token"] = decision.current.change_token.to_dict()
+    return metadata
 
 
 def _record_collection_content(
@@ -215,10 +300,11 @@ def _record_collection_content(
     media_type: str | None,
     item_metadata: JsonObject,
     destination: str,
+    decision: ReconciliationDecision,
 ) -> None:
     path = Path(destination)
     observation = repository.ingest_path(
-        f"source:{source_id}:item:{item_id}",
+        decision.artifact_key,
         path,
         run_id=run_id,
         operation_id=operation_id,
@@ -227,7 +313,7 @@ def _record_collection_content(
         source_path=relative_path,
         upstream_locator=locator,
         media_type=media_type,
-        metadata=item_metadata,
+        metadata={**item_metadata, "reconciliation_state": decision.state},
         materialization_kind="compatibility-fanout",
     )
     state.observations.append(observation.observation_id)
@@ -237,7 +323,7 @@ def _record_collection_content(
             kind="file",
             content_id=observation.content_id,
             byte_size=path.stat().st_size,
-            metadata={"item_id": item_id},
+            metadata=_tree_metadata(item_id, decision),
         )
     )
     state.content_count += 1
@@ -255,20 +341,29 @@ def _record_collection_absence(
     relative_path: str,
     locator: str | None,
     item_metadata: JsonObject,
+    decision: ReconciliationDecision,
 ) -> None:
     absence = repository.record_absence(
-        f"source:{source_id}:item:{item_id}",
+        decision.artifact_key,
         run_id=run_id,
         operation_id=operation_id,
         source_id=source_id,
         observed_at=observed_at,
         source_path=relative_path,
         upstream_locator=locator,
-        metadata={**item_metadata, "http_status": 404},
+        metadata={
+            **item_metadata,
+            "http_status": 404,
+            "reconciliation_state": decision.state,
+        },
     )
     state.observations.append(absence.observation_id)
     state.tree_entries.append(
-        TreeEntry(relative_path=relative_path, kind="absent", metadata={"item_id": item_id})
+        TreeEntry(
+            relative_path=relative_path,
+            kind="absent",
+            metadata=_tree_metadata(item_id, decision),
+        )
     )
     state.absent_count += 1
 
@@ -285,6 +380,7 @@ def _record_collection_entry(
     media_type: str | None,
     key: str,
     raw_entry: JsonValue,
+    decision: ReconciliationDecision,
 ) -> None:
     entry = json_mapping_or_none(raw_entry)
     if entry is None:
@@ -314,6 +410,7 @@ def _record_collection_entry(
             media_type=media_type,
             item_metadata=item_metadata,
             destination=destination,
+            decision=decision,
         )
         return
 
@@ -330,6 +427,7 @@ def _record_collection_entry(
             relative_path=relative_path,
             locator=locator,
             item_metadata=item_metadata,
+            decision=decision,
         )
         return
 
@@ -338,10 +436,45 @@ def _record_collection_entry(
         TreeEntry(
             relative_path=relative_path,
             kind="unresolved",
-            metadata={"item_id": item_id, "error": error_text},
+            metadata={
+                **_tree_metadata(item_id, decision),
+                "error": error_text,
+            },
         )
     )
     state.unresolved_count += 1
+
+
+def _record_removed_collection_items(
+    repository: Repository,
+    *,
+    source_id: SourceId,
+    run_id: RunId,
+    operation_id: OperationId,
+    observed_at: float,
+    task_name: str,
+    decisions: tuple[ReconciliationDecision, ...],
+) -> list[ObservationId]:
+    removed: list[ObservationId] = []
+    for decision in decisions:
+        if decision.state != "absent" or decision.previous is None:
+            continue
+        absence = repository.record_absence(
+            decision.artifact_key,
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=source_id,
+            observed_at=observed_at,
+            source_path=decision.previous.source_path,
+            metadata={
+                "collection_task": task_name,
+                "item_id": decision.item_id,
+                "reason": "removed-from-complete-enumeration",
+                "reconciliation_state": decision.state,
+            },
+        )
+        removed.append(absence.observation_id)
+    return removed
 
 
 def _record_collection(
@@ -355,14 +488,18 @@ def _record_collection(
     observed_at: float,
 ) -> tuple[list[ObservationId], str]:
     entries = json_mapping_or_none(payload.get("entries")) or {}
-    enumeration = json_mapping_or_none(payload.get("enumeration")) or {}
-    enumeration_complete = enumeration.get("complete") is True
     request = json_mapping_or_none(payload.get("request")) or {}
     media_type = "application/json" if request.get("response_mode") == "json" else None
-    previous = _previous_collection_items(repository, source_id) if enumeration_complete else {}
+    inventory = _collection_inventory(source_id=source_id, payload=payload, observed_at=observed_at)
+    reconciliation = reconcile_inventory(inventory, _previous_collection_items(repository, source_id))
+    decisions_by_id = {decision.item_id: decision for decision in reconciliation.decisions}
     state = _CollectionImportState()
 
     for key, raw_entry in sorted(entries.items()):
+        entry = json_mapping_or_none(raw_entry)
+        raw_item_id = entry.get("item_id") if entry is not None else None
+        item_id = raw_item_id if isinstance(raw_item_id, str) else key
+        decision = decisions_by_id[item_id]
         _record_collection_entry(
             repository,
             state=state,
@@ -374,40 +511,41 @@ def _record_collection(
             media_type=media_type,
             key=key,
             raw_entry=raw_entry,
+            decision=decision,
         )
 
-    removed = (
-        _record_removed_collection_items(
-            repository,
-            source_id=source_id,
-            run_id=run_id,
-            operation_id=operation_id,
-            observed_at=observed_at,
-            previous=previous,
-            current_item_ids=state.current_item_ids,
-            task_name=task_name,
-        )
-        if enumeration_complete
-        else []
+    removed = _record_removed_collection_items(
+        repository,
+        source_id=source_id,
+        run_id=run_id,
+        operation_id=operation_id,
+        observed_at=observed_at,
+        task_name=task_name,
+        decisions=reconciliation.decisions,
     )
     state.observations.extend(removed)
+    evidence: JsonObject = {
+        "collection": True,
+        "task": task_name,
+        "inventory_model": "source-inventory-v1",
+        "enumeration_complete": inventory.coverage.complete,
+        "enumerated_item_count": len(inventory.items),
+        "content_item_count": state.content_count,
+        "absent_item_count": state.absent_count,
+        "unresolved_item_count": state.unresolved_count,
+        "removed_item_count": len(removed),
+        "acquisition_complete": state.unresolved_count == 0,
+        "classification_counts": reconciliation.counts(),
+    }
+    if inventory.upstream_identity is not None:
+        evidence["upstream_identity"] = inventory.upstream_identity
     snapshot = repository.record_tree_snapshot(
         source_id=source_id,
         run_id=run_id,
         entries=state.tree_entries,
-        complete=enumeration_complete,
+        complete=inventory.coverage.complete,
         observed_at=observed_at,
-        evidence={
-            "collection": True,
-            "task": task_name,
-            "enumeration_complete": enumeration_complete,
-            "enumerated_item_count": len(state.current_item_ids),
-            "content_item_count": state.content_count,
-            "absent_item_count": state.absent_count,
-            "unresolved_item_count": state.unresolved_count,
-            "removed_item_count": len(removed),
-            "acquisition_complete": state.unresolved_count == 0,
-        },
+        evidence=evidence,
     )
     return state.observations, str(snapshot.snapshot_id)
 

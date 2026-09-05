@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from efloud.derived import RepositoryDerivedTask
 from efloud.fanout import FanoutEnumeration, FanoutItem, fanout_source_inventory
-from efloud.inventory import ChangeToken, IntegrityExpectation, SourceInventory
+from efloud.inventory import ChangeToken, IntegrityExpectation
 from efloud.json_types import (
     JsonMapping,
     JsonObject,
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from efloud.derived import DerivedTask
+    from efloud.inventory import SourceInventory
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
@@ -165,9 +166,10 @@ def _change_token_from_mapping(value: object) -> ChangeToken | None:
     token_value = mapping.get("value")
     if not isinstance(kind, str) or not isinstance(token_value, str):
         return None
-    raw_reliability = mapping.get("reliability")
-    reliability: Literal["weak", "strong"] = "weak" if raw_reliability == "weak" else "strong"
-    return ChangeToken(kind=kind, value=token_value, reliability=reliability)
+    reliability = mapping.get("reliability")
+    if reliability == "strong":
+        return ChangeToken(kind=kind, value=token_value, reliability="strong")
+    return ChangeToken(kind=kind, value=token_value, reliability="weak")
 
 
 def _integrity_expectations_from_mapping(value: object) -> tuple[IntegrityExpectation, ...]:
@@ -226,9 +228,15 @@ def _collection_inventory(
     base_url = base_url_value if isinstance(base_url_value, str) else ""
     identity_value = enumeration.get("upstream_identity")
     identity = identity_value if isinstance(identity_value, str) else None
+    declared_count = enumeration.get("item_count")
+    count_matches = (
+        not isinstance(declared_count, int)
+        or isinstance(declared_count, bool)
+        or declared_count == len(entries)
+    )
     fanout_enumeration = FanoutEnumeration(
         items=tuple(_fanout_item_from_entry(key, raw_entry) for key, raw_entry in sorted(entries.items())),
-        complete=enumeration.get("complete") is True,
+        complete=enumeration.get("complete") is True and count_matches,
         upstream_identity=identity,
     )
     return fanout_source_inventory(

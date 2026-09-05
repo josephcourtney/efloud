@@ -15,15 +15,19 @@ SHA256_HEX_LENGTH = 64
 
 
 class BlobStore(Protocol):
+    """Semantic immutable-content store independent of physical storage layout."""
+
     def put_path(self, path: Path, *, media_type: str | None = None) -> ContentRef: ...
 
     def put_bytes(self, data: bytes, *, media_type: str | None = None) -> ContentRef: ...
 
-    def path_for(self, content_id: ContentId) -> Path: ...
-
     def open(self, content_id: ContentId) -> BinaryIO: ...
 
+    def contains(self, content_id: ContentId) -> bool: ...
+
     def verify(self, content_id: ContentId) -> bool: ...
+
+    def delete(self, content_id: ContentId) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +66,7 @@ class FilesystemBlobStore:
         return digest
 
     def path_for(self, content_id: ContentId) -> Path:
+        """Return the local CAS path for callers that explicitly require this backend capability."""
         digest = self._digest_from_content_id(content_id)
         return self.root / "sha256" / digest[:2] / digest
 
@@ -73,12 +78,11 @@ class FilesystemBlobStore:
         media_type: str | None,
     ) -> ContentRef:
         content_id = ContentId(f"sha256:{digest}")
-        path = self.path_for(content_id)
-        storage_key = path.relative_to(self.root).as_posix()
+        legacy_storage_key = self.path_for(content_id).relative_to(self.root).as_posix()
         return ContentRef(
             content_id=content_id,
             byte_size=byte_size,
-            storage_key=storage_key,
+            storage_key=legacy_storage_key,
             media_type=media_type,
         )
 
@@ -150,12 +154,23 @@ class FilesystemBlobStore:
     def open(self, content_id: ContentId) -> BinaryIO:
         return self.path_for(content_id).open("rb")
 
+    def contains(self, content_id: ContentId) -> bool:
+        return self.path_for(content_id).is_file()
+
     def verify(self, content_id: ContentId) -> bool:
         path = self.path_for(content_id)
         if not path.is_file():
             return False
         digest, _ = self._digest_path(path)
         return f"sha256:{digest}" == str(content_id)
+
+    def delete(self, content_id: ContentId) -> bool:
+        path = self.path_for(content_id)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
 
 __all__ = [

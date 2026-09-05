@@ -17,7 +17,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.m
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from efloud.json_types import JsonObject
+    from efloud.json_types import JsonArray, JsonObject
 
 
 async def _unused_enumerator(*, sync_root, manifest, sources):
@@ -62,7 +62,7 @@ def _collection_payload(
     upstream_identity: str | None = None,
 ) -> JsonObject:
     entries: JsonObject = {}
-    inventory_items: list[JsonObject] = []
+    inventory_items: JsonArray = []
     for item_id in items:
         dest = root / "fanout" / f"{item_id}.json"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -194,8 +194,8 @@ def test_complete_collection_records_items_absence_snapshot_and_execution(tmp_pa
             "absent": 0,
         }
         assert snapshot.tree_id is not None
-        entries = repository.tree_entries(snapshot.tree_id)
-        assert {entry.metadata["item_id"] for entry in entries} == {"alpha", "missing"}
+        tree_entries = repository.tree_entries(snapshot.tree_id)
+        assert {entry.metadata["item_id"] for entry in tree_entries} == {"alpha", "missing"}
 
         execution = repository.latest_observation("derived:fanout:execution")
         assert execution is not None

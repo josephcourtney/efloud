@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 import pytest
 
-from efloud.json_types import JsonValue
 from efloud.transport import rsync as rsync_mod
 from efloud.transport.http_utils import (
     cache_group_name,
@@ -30,6 +29,8 @@ from efloud.transport.rsync import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from efloud.json_types import JsonValue
 
 pytestmark = [pytest.mark.unit]
 

@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import TYPE_CHECKING
 
-from efloud.json_types import json_mapping_or_none
+from efloud.json_types import json_mapping_or_none, json_object_or_none
 from efloud.metadata_store import (
     DatasetMemberRecord,
     DatasetRecord,
@@ -189,10 +189,11 @@ def _dump(value: JsonObject | list[str]) -> str:
 
 def _load_object(value: str) -> JsonObject:
     decoded = json.loads(value)
-    if not isinstance(decoded, dict) or not all(isinstance(key, str) for key in decoded):
+    json_object = json_object_or_none(decoded)
+    if json_object is None:
         msg = "Expected a JSON object in repository metadata."
         raise ValueError(msg)
-    return decoded
+    return json_object
 
 
 def _load_string_tuple(value: str) -> tuple[str, ...]:
@@ -229,7 +230,7 @@ def _operation_parameters(parameters: JsonObject) -> JsonObject:
     return normalized
 
 
-class SQLiteMetadataStore:  # ruff: ignore[too-many-public-methods]
+class SQLiteMetadataStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)

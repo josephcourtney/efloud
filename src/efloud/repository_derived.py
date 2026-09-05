@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from efloud.derived import RepositoryDerivedTask
 from efloud.fanout import FanoutEnumeration, FanoutItem, fanout_source_inventory
-from efloud.inventory import ChangeToken, IntegrityExpectation
+from efloud.inventory import ChangeToken, IntegrityExpectation, InventoryCoverage, InventoryItem, SourceInventory
 from efloud.json_types import (
     JsonMapping,
     JsonObject,
@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from efloud.derived import DerivedTask
-    from efloud.inventory import SourceInventory
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
@@ -50,6 +49,7 @@ class _CollectionImportState:
     unresolved_count: int = 0
     absent_count: int = 0
     content_count: int = 0
+    unexpected_entry_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,7 +215,90 @@ def _fanout_item_from_entry(key: str, raw_entry: JsonValue) -> FanoutItem:
     )
 
 
-def _collection_inventory(
+def _enumeration_count_matches(payload: JsonMapping, item_count: int) -> bool:
+    enumeration = json_mapping_or_none(payload.get("enumeration")) or {}
+    declared_count = enumeration.get("item_count")
+    if declared_count is None:
+        return True
+    return (
+        isinstance(declared_count, int)
+        and not isinstance(declared_count, bool)
+        and declared_count == item_count
+    )
+
+
+def _serialized_collection_inventory(
+    *,
+    source_id: SourceId,
+    payload: JsonMapping,
+    observed_at: float,
+) -> SourceInventory | None:
+    serialized = json_mapping_or_none(payload.get("inventory"))
+    if serialized is None:
+        return None
+    serialized_source = serialized.get("source_id")
+    if isinstance(serialized_source, str) and serialized_source != str(source_id):
+        msg = f"Collection inventory source mismatch: {serialized_source!r} != {source_id!s!r}"
+        raise ValueError(msg)
+    raw_items = serialized.get("items")
+    if not isinstance(raw_items, list):
+        msg = "Serialized collection inventory has no item list."
+        raise ValueError(msg)
+
+    items: list[InventoryItem] = []
+    for raw in raw_items:
+        mapping = json_mapping_or_none(raw)
+        if mapping is None:
+            msg = "Serialized collection inventory contains a non-object item."
+            raise ValueError(msg)
+        item_id = mapping.get("item_id")
+        if not isinstance(item_id, str):
+            msg = "Serialized collection inventory item has no string item_id."
+            raise ValueError(msg)
+        locator_value = mapping.get("locator")
+        locator = locator_value if isinstance(locator_value, str) else None
+        source_path_value = mapping.get("source_path")
+        source_path = source_path_value if isinstance(source_path_value, str) else None
+        metadata = json_mapping_or_none(mapping.get("metadata"))
+        items.append(
+            InventoryItem(
+                item_id=item_id,
+                artifact_key=ArtifactKey(f"source:{source_id}:item:{item_id}"),
+                locator=locator,
+                source_path=source_path,
+                change_token=_change_token_from_mapping(mapping.get("change_token")),
+                expected_integrity=_integrity_expectations_from_mapping(mapping.get("expected_integrity")),
+                metadata=copy_json_mapping(metadata) if metadata is not None else {},
+            )
+        )
+
+    coverage = json_mapping_or_none(serialized.get("coverage")) or {}
+    enumeration = json_mapping_or_none(payload.get("enumeration")) or {}
+    complete = coverage.get("complete") is True
+    if enumeration and enumeration.get("complete") is not True:
+        complete = False
+    if not _enumeration_count_matches(payload, len(items)):
+        complete = False
+    identity_value = serialized.get("upstream_identity")
+    identity = identity_value if isinstance(identity_value, str) else None
+    observed_value = serialized.get("observed_at")
+    inventory_observed_at = (
+        float(observed_value)
+        if isinstance(observed_value, (int, float)) and not isinstance(observed_value, bool)
+        else observed_at
+    )
+    metadata = json_mapping_or_none(serialized.get("metadata"))
+    return SourceInventory(
+        source_id=source_id,
+        observed_at=inventory_observed_at,
+        coverage=InventoryCoverage(complete=complete),
+        items=tuple(items),
+        upstream_identity=identity,
+        metadata=copy_json_mapping(metadata) if metadata is not None else {},
+    )
+
+
+def _legacy_collection_inventory(
     *,
     source_id: SourceId,
     payload: JsonMapping,
@@ -228,21 +311,35 @@ def _collection_inventory(
     base_url = base_url_value if isinstance(base_url_value, str) else ""
     identity_value = enumeration.get("upstream_identity")
     identity = identity_value if isinstance(identity_value, str) else None
-    declared_count = enumeration.get("item_count")
-    count_matches = (
-        not isinstance(declared_count, int)
-        or isinstance(declared_count, bool)
-        or declared_count == len(entries)
-    )
     fanout_enumeration = FanoutEnumeration(
         items=tuple(_fanout_item_from_entry(key, raw_entry) for key, raw_entry in sorted(entries.items())),
-        complete=enumeration.get("complete") is True and count_matches,
+        complete=enumeration.get("complete") is True and _enumeration_count_matches(payload, len(entries)),
         upstream_identity=identity,
     )
     return fanout_source_inventory(
         source_id=source_id,
         base_url=base_url,
         enumeration=fanout_enumeration,
+        observed_at=observed_at,
+    )
+
+
+def _collection_inventory(
+    *,
+    source_id: SourceId,
+    payload: JsonMapping,
+    observed_at: float,
+) -> SourceInventory:
+    serialized = _serialized_collection_inventory(
+        source_id=source_id,
+        payload=payload,
+        observed_at=observed_at,
+    )
+    if serialized is not None:
+        return serialized
+    return _legacy_collection_inventory(
+        source_id=source_id,
+        payload=payload,
         observed_at=observed_at,
     )
 
@@ -392,6 +489,13 @@ def _record_collection_entry(
     entry = json_mapping_or_none(raw_entry)
     if entry is None:
         state.unresolved_count += 1
+        state.tree_entries.append(
+            TreeEntry(
+                relative_path=decision.current.source_path if decision.current is not None and decision.current.source_path else key,
+                kind="unresolved",
+                metadata={**_tree_metadata(decision.item_id, decision), "error": "invalid acquisition result"},
+            )
+        )
         return
 
     raw_item_id = entry.get("item_id")
@@ -451,6 +555,29 @@ def _record_collection_entry(
     state.unresolved_count += 1
 
 
+def _record_missing_collection_entry(
+    state: _CollectionImportState,
+    decision: ReconciliationDecision,
+) -> None:
+    current = decision.current
+    relative_path = (
+        current.source_path
+        if current is not None and current.source_path is not None
+        else decision.item_id
+    )
+    state.tree_entries.append(
+        TreeEntry(
+            relative_path=relative_path,
+            kind="unresolved",
+            metadata={
+                **_tree_metadata(decision.item_id, decision),
+                "error": "enumerated item has no acquisition result",
+            },
+        )
+    )
+    state.unresolved_count += 1
+
+
 def _record_collection_membership_absences(
     repository: Repository,
     *,
@@ -483,6 +610,19 @@ def _record_collection_membership_absences(
     return removed
 
 
+def _entries_by_item_id(entries: JsonMapping) -> dict[str, tuple[str, JsonValue]]:
+    indexed: dict[str, tuple[str, JsonValue]] = {}
+    for key, raw_entry in sorted(entries.items()):
+        entry = json_mapping_or_none(raw_entry)
+        raw_item_id = entry.get("item_id") if entry is not None else None
+        item_id = raw_item_id if isinstance(raw_item_id, str) else key
+        if item_id in indexed:
+            msg = f"Collection acquisition results contain duplicate item identifier: {item_id!r}"
+            raise ValueError(msg)
+        indexed[item_id] = (key, raw_entry)
+    return indexed
+
+
 def _record_collection(
     repository: Repository,
     *,
@@ -499,13 +639,19 @@ def _record_collection(
     inventory = _collection_inventory(source_id=source_id, payload=payload, observed_at=observed_at)
     reconciliation = reconcile_inventory(inventory, _previous_collection_items(repository, source_id))
     decisions_by_id = {decision.item_id: decision for decision in reconciliation.decisions}
-    state = _CollectionImportState()
+    entries_by_id = _entries_by_item_id(entries)
+    inventory_ids = {item.item_id for item in inventory.items}
+    state = _CollectionImportState(
+        unexpected_entry_count=len(set(entries_by_id) - inventory_ids),
+    )
 
-    for key, raw_entry in sorted(entries.items()):
-        entry = json_mapping_or_none(raw_entry)
-        raw_item_id = entry.get("item_id") if entry is not None else None
-        item_id = raw_item_id if isinstance(raw_item_id, str) else key
-        decision = decisions_by_id[item_id]
+    for item in inventory.items:
+        decision = decisions_by_id[item.item_id]
+        acquired = entries_by_id.get(item.item_id)
+        if acquired is None:
+            _record_missing_collection_entry(state, decision)
+            continue
+        key, raw_entry = acquired
         _record_collection_entry(
             repository,
             state=state,
@@ -545,8 +691,9 @@ def _record_collection(
         "content_item_count": state.content_count,
         "absent_item_count": state.absent_count,
         "unresolved_item_count": state.unresolved_count,
+        "unexpected_entry_count": state.unexpected_entry_count,
         "removed_item_count": len(removed),
-        "acquisition_complete": state.unresolved_count == 0,
+        "acquisition_complete": state.unresolved_count == 0 and state.unexpected_entry_count == 0,
         "classification_counts": classification_counts,
     }
     if inventory.upstream_identity is not None:
@@ -556,7 +703,7 @@ def _record_collection(
         run_id=run_id,
         entries=state.tree_entries,
         complete=inventory.coverage.complete,
-        observed_at=observed_at,
+        observed_at=inventory.observed_at,
         evidence=evidence,
     )
     return state.observations, str(snapshot.snapshot_id)

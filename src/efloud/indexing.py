@@ -14,9 +14,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from efloud.derivation import DependencySemantics
+    from efloud.derivation import DependencySemantics, DerivationKey
     from efloud.repository import Repository
-    from efloud.repository_models import ArtifactObservation, RunId
+    from efloud.repository_models import ArtifactObservation, OperationId, RunId
 
 
 class CachedIndex(Protocol):
@@ -263,6 +263,43 @@ class DerivedIndexRegistry:
             raise TypeError(msg)
         return copy_json_mapping(mapping)
 
+    def _materialize(
+        self,
+        definition: DerivedIndexDefinition,
+        *,
+        repository: Repository,
+        run_id: RunId,
+        operation_id: OperationId,
+        input_observations: tuple[ArtifactObservation, ...],
+        derivation_key: DerivationKey,
+        observed_at: float | None,
+    ) -> DerivedIndexResult:
+        reusable = repository.reusable_derived_content(derivation_key, definition.artifact_key)
+        if reusable is None:
+            payload = definition.build(repository=repository, inputs=input_observations)
+            data = canonical_json_bytes(payload)
+        else:
+            payload = {}
+            data = b""
+        observation = repository.record_derived_bytes(
+            definition.artifact_key,
+            data,
+            derivation_key=derivation_key,
+            run_id=run_id,
+            operation_id=operation_id,
+            inputs=input_observations,
+            observed_at=observed_at,
+            media_type="application/json",
+            metadata={"index_id": definition.index_id, "semantic_index": True},
+        )
+        if reusable is not None:
+            payload = self._payload_for_observation(repository, observation)
+        return DerivedIndexResult(
+            observation=observation,
+            payload=payload,
+            reused=reusable is not None,
+        )
+
     def build(
         self,
         index_id: str,
@@ -293,36 +330,15 @@ class DerivedIndexRegistry:
                 "derivation_key": str(derivation_key),
             },
         )
-        reusable = repository.reusable_derived_content(derivation_key, definition.artifact_key)
-        payload: JsonObject
         try:
-            if reusable is None:
-                payload = definition.build(repository=repository, inputs=input_observations)
-                data = canonical_json_bytes(payload)
-            else:
-                payload = {}
-                data = b""
-            observation = repository.record_derived_bytes(
-                definition.artifact_key,
-                data,
-                derivation_key=derivation_key,
+            result = self._materialize(
+                definition,
+                repository=repository,
                 run_id=run_id,
                 operation_id=operation_id,
-                inputs=input_observations,
+                input_observations=input_observations,
+                derivation_key=derivation_key,
                 observed_at=observed_at,
-                media_type="application/json",
-                metadata={"index_id": index_id, "semantic_index": True},
-            )
-            if reusable is not None:
-                payload = self._payload_for_observation(repository, observation)
-            repository.finish_operation(
-                operation_id,
-                status="succeeded",
-                details={
-                    "derivation_key": str(derivation_key),
-                    "reused": reusable is not None,
-                    "output_observation_id": str(observation.observation_id),
-                },
             )
         except Exception as exc:
             repository.finish_operation(
@@ -331,11 +347,16 @@ class DerivedIndexRegistry:
                 details={"error": f"{type(exc).__name__}: {exc}"},
             )
             raise
-        return DerivedIndexResult(
-            observation=observation,
-            payload=payload,
-            reused=reusable is not None,
+        repository.finish_operation(
+            operation_id,
+            status="succeeded",
+            details={
+                "derivation_key": str(derivation_key),
+                "reused": result.reused,
+                "output_observation_id": str(result.observation.observation_id),
+            },
         )
+        return result
 
 
 def write_index(path: Path, index: CachedIndex) -> None:

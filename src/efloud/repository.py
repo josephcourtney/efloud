@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, BinaryIO, Self
 
 from efloud.blob_store import BlobStore, FilesystemBlobStore
 from efloud.datasets import DatasetDefinition, DatasetManifest, ImmutableDataset, resolve_dataset
-from efloud.derivation import DerivationKey
 from efloud.repository_models import (
     ArtifactAbsence,
     ArtifactKey,
@@ -38,6 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
+    from efloud.derivation import DerivationKey
     from efloud.json_types import JsonObject
     from efloud.metadata_store import MetadataStore, OperationRecord
 

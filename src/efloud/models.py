@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from efloud.derived import DerivedTask
-    from efloud.indexing import IndexRegistry
+    from efloud.indexing import DerivedIndexRegistry, IndexRegistry
     from efloud.json_types import JsonObject
     from efloud.policy import SyncPolicy
     from efloud.registry import SourceDefinition
@@ -91,6 +91,7 @@ class EngineConfig:
     derived_tasks: tuple[DerivedTask, ...] = ()
     source_aliases: AliasMap | None = None
     index_registry: IndexRegistry | None = None
+    derived_index_registry: DerivedIndexRegistry | None = None
 
 
 @dataclass(frozen=True)

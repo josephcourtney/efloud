@@ -4,11 +4,13 @@ File Purpose: Current project state and continuity notes for the next developmen
 
 ## Current Focus
 
-Phases 6 and 7 of the repository-centered migration are implemented and their full
-quality gate has been reported clean. Phase 8 is implemented on `main`; its new
-producer/lifecycle/derivation/index semantics still need the normal repository-wide
-quality gate. After that verification, the active implementation frontier is Phase 9:
-removing local-filesystem assumptions from the generic `BlobStore` contract.
+Phases 6 through 8 of the repository-centered migration are implemented, and the
+reported Phase 8 quality-gate regressions have been repaired. Phase 9 is now
+implemented on `main`: generic blob/content semantics no longer require local
+filesystem paths or backend storage locators. The Phase 9 repository-wide quality
+gate remains to be run locally. Once clean, the active implementation frontier is
+Phase 10: completing the repository-authority cutover for internal reads and
+compatibility exports.
 
 ## Current State
 
@@ -57,13 +59,26 @@ Implemented on `main`:
   index persistence is repository history rather than process-local cache state
 - compatibility manifests/state and source status serializers remain reproducible
   from canonical repository lifecycle state
+- a storage-location-independent `BlobStore` protocol with semantic
+  `put_path`/`put_bytes`/`open`/`contains`/`verify`/`delete` operations
+- `FilesystemBlobStore.path_for()` retained only as a concrete optional capability,
+  not part of the generic blob-store contract
+- `ContentRef` semantic equality and serialization independent of physical blob
+  placement; obsolete `storage_key` constructor input is accepted only for legacy
+  SQLite compatibility and is not retained
+- pathless in-memory blob-store coverage proving repository ingestion, content
+  opening/verification, immutable datasets, and backend replacement do not require a
+  local blob path
+- interrupted-ingestion coverage proving a successful blob write followed by a
+  metadata failure can leave a safe unreachable orphan without committing content or
+  observation metadata
 
 Still transitional:
 
 - acquisition still executes through the legacy sync/fanout machinery before
   repository recording; planner/adapter cutover remains later work
-- generic `BlobStore`/`ContentRef` semantics still expose filesystem-oriented
-  `storage_key` assumptions; Phase 9 removes that coupling
+- the SQLite `content_objects.storage_key` column remains as a non-semantic legacy
+  compatibility field so existing stores need no destructive schema migration
 - deterministic derivation-key lookup currently uses persisted observation metadata
   rather than a dedicated relational lookup index; correctness is persistent even
   though lookup optimization can be added if measurements justify it
@@ -72,12 +87,13 @@ Still transitional:
   deterministic path
 - compatibility manifests/state and some legacy resolver/control-flow mechanisms
   remain during the authority migration
-- the Phase 8 changes have not yet been verified by the full local
+- the Phase 9 changes have not yet been verified by the full local
   `just lint; just typecheck; just test` gate
 
 ## Continuity
 
-First run the full quality gate on the Phase 8 HEAD and repair any reported issues.
-Once clean, implement Phase 9 by making generic blob-store/content APIs independent
-of local filesystem paths while retaining `FilesystemBlobStore` as the default
-implementation.
+Run the full Phase 9 quality gate and repair any reported issues. Once clean,
+implement Phase 10 by moving remaining current-state/freshness/status/planning reads
+off compatibility manifests, mirror-state files, and mirror rescans; those files
+should become generated compatibility/export views of authoritative repository
+state.

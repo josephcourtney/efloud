@@ -53,15 +53,15 @@ class MemoryBlobStore:
         return self._data.pop(content_id, None) is not None
 
 
-def _run(repo: Repository):
+def _run(repo: Repository, *, started_at: float = 100.0):
     source = repo.register_source(SourceId("memory-source"), {"kind": "memory"})
-    run = repo.start_run(source_ids=(source,), started_at=100.0)
+    run = repo.start_run(source_ids=(source,), started_at=started_at)
     operation = repo.start_operation(
         run_id=run,
         source_id=source,
         kind="fetch",
         subject="memory",
-        started_at=100.0,
+        started_at=started_at,
     )
     return source, run, operation
 
@@ -110,6 +110,36 @@ def test_repository_and_dataset_work_with_pathless_blob_store(tmp_path: Path) ->
         assert dataset.verify()
         with dataset.open("artifact:memory") as stream:
             assert stream.read() == b"payload"
+
+
+def test_existing_sqlite_content_can_be_reobserved_with_pathless_backend(tmp_path: Path) -> None:
+    with Repository(tmp_path) as repo:
+        source, run, operation = _run(repo)
+        original = repo.ingest_bytes(
+            "artifact:memory",
+            b"payload",
+            run_id=run,
+            operation_id=operation,
+            source_id=source,
+            observed_at=101.0,
+        )
+
+    blob_store = MemoryBlobStore()
+    seeded = blob_store.put_bytes(b"payload")
+    assert seeded.content_id == original.content_id
+
+    with Repository(tmp_path, blob_store=blob_store) as repo:
+        source, run, operation = _run(repo, started_at=200.0)
+        repeated = repo.ingest_bytes(
+            "artifact:memory",
+            b"payload",
+            run_id=run,
+            operation_id=operation,
+            source_id=source,
+            observed_at=201.0,
+        )
+        assert repeated.content_id == original.content_id
+        assert repo.verify_content(repeated.content_id)
 
 
 def test_pathless_blob_store_contains_verify_and_delete() -> None:

@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+import importlib
+from pathlib import Path
+
 import pytest
 
 from efloud.fanout import (
     FanoutEnumeration,
     FanoutItem,
+    RestBaseFanoutTask,
     fanout_source_inventory,
     normalize_fanout_enumeration,
 )
 from efloud.inventory import ChangeToken, IntegrityExpectation, InventoryCoverage
 from efloud.reconciliation import PreviousInventoryItem, reconcile_inventory
+from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_models import ArtifactKey, ContentId, SourceId
+
+fanout_mod = importlib.import_module("efloud.fanout")
 
 pytestmark = [pytest.mark.unit, pytest.mark.small]
 
@@ -83,3 +91,76 @@ def test_fanout_inventory_preserves_change_and_integrity_evidence() -> None:
 def test_duplicate_fanout_item_ids_are_rejected_at_enumeration_boundary() -> None:
     with pytest.raises(ValueError, match="duplicate item identifiers"):
         FanoutEnumeration(items=(FanoutItem("alpha"), FanoutItem("alpha")))
+
+
+@pytest.mark.asyncio
+async def test_fanout_task_serializes_inventory_independently_of_retrieval_results(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    token = ChangeToken("api-revision", "17", reliability="strong")
+
+    async def enumerator(*, sync_root, manifest, sources):
+        del manifest, sources
+        assert sync_root == tmp_path
+        await asyncio.sleep(0)
+        return FanoutEnumeration(
+            items=(FanoutItem("alpha", change_token=token), FanoutItem("beta")),
+            complete=False,
+            upstream_identity="catalog-page-1",
+        )
+
+    async def fake_materialize_fanout(**kwargs):
+        assert tuple(item.item_id for item in kwargs["items"]) == ("alpha", "beta")
+        await asyncio.sleep(0)
+        return {"alpha": {"status": "ok"}}
+
+    class FakeHttpCache:
+        def __init__(self, config):
+            self.config = config
+
+        async def aclose(self) -> None:
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(fanout_mod, "HttpCache", FakeHttpCache)
+    monkeypatch.setattr(fanout_mod, "_materialize_fanout", fake_materialize_fanout)
+
+    source = SourceDefinition(
+        "collection",
+        "Collection",
+        "https://api.example.test/items",
+        SourceKind.REST_BASE,
+    )
+    task = RestBaseFanoutTask(
+        name="fanout",
+        source_id=source.id,
+        base_url="https://api.example.test/items",
+        enumerator=enumerator,
+        dest_subdir="fanout",
+    )
+    payload = await task.run(
+        sync_root=tmp_path,
+        manifest={
+            "results": {"http": {}, "rsync": {}, "derived": {}},
+            "errors": [],
+            "root": str(tmp_path),
+            "version": 1,
+        },
+        sources=(source,),
+    )
+
+    inventory = payload["inventory"]
+    assert isinstance(inventory, dict)
+    assert inventory["source_id"] == "collection"
+    assert inventory["coverage"] == {"scope": [], "complete": False}
+    items = inventory["items"]
+    assert isinstance(items, list)
+    assert [item["item_id"] for item in items] == ["alpha", "beta"]
+    assert items[0]["change_token"] == token.to_dict()
+    assert payload["enumeration"] == {
+        "complete": False,
+        "item_count": 2,
+        "model": "source-inventory-v1",
+        "upstream_identity": "catalog-page-1",
+    }
+    assert payload["entries"] == {"alpha": {"status": "ok"}}

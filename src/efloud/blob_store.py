@@ -76,19 +76,16 @@ class FilesystemBlobStore:
         digest = self._digest_from_content_id(content_id)
         return self.root / "sha256" / digest[:2] / digest
 
+    @staticmethod
     def _content_ref(
-        self,
         *,
         digest: str,
         byte_size: int,
         media_type: str | None,
     ) -> ContentRef:
-        content_id = ContentId(f"sha256:{digest}")
-        legacy_storage_key = self.path_for(content_id).relative_to(self.root).as_posix()
         return ContentRef(
-            content_id=content_id,
+            content_id=ContentId(f"sha256:{digest}"),
             byte_size=byte_size,
-            storage_key=legacy_storage_key,
             media_type=media_type,
         )
 

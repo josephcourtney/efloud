@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from efloud.fanout import RestBaseFanoutTask
+from efloud.json_types import json_mapping_or_none
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
@@ -35,6 +36,23 @@ def _fanout_task(source_id: str) -> RestBaseFanoutTask:
     )
 
 
+def _inventory_item(item_id: str, *, with_change_token: bool) -> JsonObject:
+    item: JsonObject = {
+        "item_id": item_id,
+        "artifact_key": f"source:collection:item:{item_id}",
+        "locator": f"https://api.example.test/items/{item_id}",
+        "expected_integrity": [],
+        "metadata": {},
+    }
+    if with_change_token:
+        item["change_token"] = {
+            "kind": "fixture-version",
+            "value": f"v-{item_id}",
+            "reliability": "strong",
+        }
+    return item
+
+
 def _collection_payload(
     root: Path,
     *,
@@ -44,6 +62,7 @@ def _collection_payload(
     upstream_identity: str | None = None,
 ) -> JsonObject:
     entries: JsonObject = {}
+    inventory_items: list[JsonObject] = []
     for item_id in items:
         dest = root / "fanout" / f"{item_id}.json"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +86,7 @@ def _collection_payload(
                 "expected_integrity": [],
             },
         }
+        inventory_items.append(_inventory_item(item_id, with_change_token=True))
     for item_id in missing:
         entries[item_id] = {
             "status": "error",
@@ -81,13 +101,23 @@ def _collection_payload(
             "metadata": {},
             "inventory": {"expected_integrity": []},
         }
+        inventory_items.append(_inventory_item(item_id, with_change_token=False))
+
     enumeration: JsonObject = {
         "complete": complete,
-        "item_count": len(entries),
+        "item_count": len(inventory_items),
         "model": "source-inventory-v1",
+    }
+    inventory: JsonObject = {
+        "source_id": "collection",
+        "observed_at": 9.0,
+        "coverage": {"scope": [], "complete": complete},
+        "items": inventory_items,
+        "metadata": {"transport": "REST_BASE", "collection": True},
     }
     if upstream_identity is not None:
         enumeration["upstream_identity"] = upstream_identity
+        inventory["upstream_identity"] = upstream_identity
     return {
         "source_id": "collection",
         "kind": "REST_BASE",
@@ -96,6 +126,7 @@ def _collection_payload(
             "fanout_root": str(root / "fanout"),
             "response_mode": "json",
         },
+        "inventory": inventory,
         "enumeration": enumeration,
         "entries": entries,
         "ok": len(items),
@@ -150,6 +181,7 @@ def test_complete_collection_records_items_absence_snapshot_and_execution(tmp_pa
         snapshot = repository.latest_source_snapshot("collection")
         assert snapshot is not None
         assert snapshot.complete
+        assert snapshot.observed_at == 9.0
         assert snapshot.evidence["inventory_model"] == "source-inventory-v1"
         assert snapshot.evidence["enumeration_complete"] is True
         assert snapshot.evidence["upstream_identity"] == "catalog-v1"
@@ -261,6 +293,62 @@ def test_partial_collection_enumeration_never_proves_removed_items_absent(tmp_pa
         beta_after = repository.latest_state("source:collection:item:beta")
         assert isinstance(beta_after, ArtifactAbsence)
         assert beta_after.metadata["reason"] == "removed-from-complete-enumeration"
+
+
+def test_enumerated_item_without_retrieval_result_is_unresolved_not_absent(tmp_path: Path) -> None:
+    source, config = _collection_config(tmp_path)
+    payload = _collection_payload(tmp_path, items=("alpha", "beta"))
+    entries = json_mapping_or_none(payload.get("entries"))
+    assert entries is not None
+    payload["entries"] = {key: value for key, value in entries.items() if key != "beta"}
+    payload["ok"] = 1
+
+    with Repository(tmp_path) as repository:
+        repository.register_source(SourceId(source.id), {"kind": source.kind.value})
+        run_id = repository.start_run(source_ids=(source.id,), started_at=10.0)
+        import_derived_results(
+            repository,
+            config=config,
+            run_id=run_id,
+            started_at=10.0,
+            derived_results={"fanout": payload},
+        )
+
+        assert repository.latest_state("source:collection:item:beta") is None
+        snapshot = repository.latest_source_snapshot("collection")
+        assert snapshot is not None
+        assert snapshot.complete is True
+        assert snapshot.evidence["enumerated_item_count"] == 2
+        assert snapshot.evidence["unresolved_item_count"] == 1
+        assert snapshot.evidence["removed_item_count"] == 0
+        assert snapshot.evidence["acquisition_complete"] is False
+        assert snapshot.tree_id is not None
+        tree_entries = repository.tree_entries(snapshot.tree_id)
+        beta = next(entry for entry in tree_entries if entry.metadata.get("item_id") == "beta")
+        assert beta.kind == "unresolved"
+
+
+def test_declared_inventory_count_mismatch_downgrades_complete_coverage(tmp_path: Path) -> None:
+    source, config = _collection_config(tmp_path)
+    payload = _collection_payload(tmp_path, items=("alpha",))
+    enumeration = json_mapping_or_none(payload.get("enumeration"))
+    assert enumeration is not None
+    payload["enumeration"] = {**enumeration, "item_count": 2}
+
+    with Repository(tmp_path) as repository:
+        repository.register_source(SourceId(source.id), {"kind": source.kind.value})
+        run_id = repository.start_run(source_ids=(source.id,), started_at=10.0)
+        import_derived_results(
+            repository,
+            config=config,
+            run_id=run_id,
+            started_at=10.0,
+            derived_results={"fanout": payload},
+        )
+        snapshot = repository.latest_source_snapshot("collection")
+        assert snapshot is not None
+        assert snapshot.complete is False
+        assert snapshot.evidence["enumeration_complete"] is False
 
 
 class DerivedFileTask:

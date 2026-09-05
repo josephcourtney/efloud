@@ -8,50 +8,50 @@ Rules:
 - Remove completed items before committing.
 - Prefer concrete references and explicit acceptance criteria.
 
-## 1. Rerun the repaired Phase 6-7 quality gate
+## 1. Run and repair the Phase 8 quality gate
 
 Files: repository-wide as required
 
 - run `.venv/bin/ruff format src/ tests/`
 - run `.venv/bin/ruff check src/ tests/`
 - run `.venv/bin/ty check src/ tests/`
-- run focused inventory/reconciliation, fanout/collection, repository-derived, and rsync tests
+- run focused provenance/lifecycle/derivation/index tests
+- run existing repository/status/manifest/engine compatibility tests
 - run `.venv/bin/pytest`
-- verify public inventory/fanout imports and existing HTTP, REST, collection/fanout, and rsync behavior
+- verify public imports for `ProducerRef`, `DerivedTaskSpec`, derivation APIs, and derived indexes
 
-Acceptance: the normal project quality gate passes from a clean checkout without regressions in existing acquisition or repository behavior.
+Acceptance: the normal project quality gate passes from a clean checkout without regressions in existing acquisition, manifest/status compatibility, or repository behavior.
 
-## 2. Add stable producer identity and lifecycle semantics
+## 2. Redefine the generic blob-store semantic contract
 
-Files: repository models/store/schema/facade, derived/acquisition recording, tests
+Files: `src/efloud/blob_store.py`, repository/content models, tests
 
-- add a namespaced `ProducerRef` carrying stable producer identity and version
-- attach producer identity/version to repository operations
-- replace free-form run/operation status mutation with explicit lifecycle states
-- reject invalid lifecycle transitions while preserving existing persisted records
-- keep dry-run/planned work out of persisted execution history unless execution begins
+- retain semantic operations for put/open/contains/verify/delete
+- keep path/stream ingestion as convenience rather than identity
+- remove assumptions that generic callers can resolve a local storage path
+- move filesystem-only path access behind `FilesystemBlobStore` or an explicit optional capability
+- preserve idempotent puts and content-addressed identity
 
-Acceptance: every persisted operation identifies its producer/version and invalid run/operation lifecycle transitions are rejected deterministically.
+Acceptance: a fake non-path-backed blob store can satisfy repository ingestion/open/verify behavior without exposing filesystem paths.
 
-## 3. Add deterministic derivation identity and reuse
+## 3. Remove `storage_key` from repository-facing semantics where possible
 
-Files: `src/efloud/derived.py`, repository metadata/query modules, indexing modules, tests
+Files: content/reference models, metadata store/schema/facade/query/dataset code, tests
 
-- define `DerivedTaskSpec` and canonical `DerivationKey`
-- include task identity/version, normalized parameters, declared outputs, and normalized inputs
-- support content-sensitive and observation-sensitive dependency semantics
-- reuse prior deterministic output content when the derivation key matches
-- still record a new current-run output observation and provenance when content is reused
+- separate semantic `ContentRef` fields from backend-specific storage location
+- keep backend location private to the blob-store implementation or storage metadata
+- ensure repository/query/dataset code opens content only through `BlobStore`
+- preserve compatibility for existing SQLite stores during migration
 
-Acceptance: deterministic content-based derivations can reuse prior byte-identical outputs without losing current-run provenance, while observation-sensitive derivations distinguish independent observations of identical bytes.
+Acceptance: relocating the filesystem CAS or replacing it with a non-path backend does not change content/artifact/observation/dataset identity or require repository-facing path logic.
 
-## 4. Migrate persistent semantic indexes onto derivation semantics
+## 4. Characterize interrupted-ingestion/orphan behavior
 
-Files: `src/efloud/indexing.py`, repository metadata/query modules, tests
+Files: blob-store/repository failure tests and documentation
 
-- represent persistent semantic index outputs as specialized derived artifacts
-- replace TTL validity with derivation-key validity where index generation is deterministic
-- retain TTL only for source refresh/acquisition concerns
-- preserve compatibility APIs while repository-backed derivation state becomes authoritative
+- document that blob puts are idempotent
+- test metadata failure after successful blob write
+- verify this can leave an orphan blob but never a committed reference to missing content
+- preserve orphan cleanup for the later GC phase rather than coupling it to transaction rollback
 
-Acceptance: deterministic index freshness/reuse can be decided from producer/version, parameters, and inputs without wall-clock TTL.
+Acceptance: interrupted metadata commits may leave safe unreachable blobs, but repository records never reference unavailable content.

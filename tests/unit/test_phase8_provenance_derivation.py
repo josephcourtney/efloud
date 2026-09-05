@@ -6,6 +6,8 @@ import pytest
 
 from efloud.derivation import DerivedTaskSpec, derivation_key_for
 from efloud.indexing import DerivedIndexDefinition, DerivedIndexRegistry
+from efloud.models import EngineConfig
+from efloud.query import index_payload
 from efloud.repository import Repository
 from efloud.repository_models import ProducerRef
 
@@ -190,6 +192,7 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
             build=build_index,
             dependency_semantics="content",
             parameters={"schema": 2},
+            description="Fixture semantic index",
         )
     ])
 
@@ -207,11 +210,12 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
         assert first.reused is False
         assert len(builds) == 1
 
-        second_run = repo.start_run(started_at=200.0)
-        second_input = _input_observation(repo, second_run, observed_at=201.0)
+    with Repository(tmp_path) as reopened:
+        second_run = reopened.start_run(started_at=200.0)
+        second_input = _input_observation(reopened, second_run, observed_at=201.0)
         second = indexes.build(
             "alpha",
-            repository=repo,
+            repository=reopened,
             run_id=second_run,
             inputs=(second_input,),
             observed_at=202.0,
@@ -223,7 +227,16 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
         assert second.payload == first.payload
         operation = next(
             operation
-            for operation in repo.metadata.operations_for_run(second_run)
+            for operation in reopened.metadata.operations_for_run(second_run)
             if operation.kind == "derive-index"
         )
         assert operation.producer == ProducerRef("efloud:index:alpha", "3")
+
+    cfg = EngineConfig(root=tmp_path, sources=[], derived_index_registry=indexes)
+    queried = index_payload("alpha", cfg=cfg)
+    status = queried["status"]
+    assert isinstance(status, dict)
+    assert status["validity"] == "derivation-key"
+    assert status["present"] is True
+    assert "expired" not in status
+    assert queried["payload"] == first.payload

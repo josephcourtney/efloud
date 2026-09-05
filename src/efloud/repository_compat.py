@@ -21,6 +21,10 @@ def repository_exists(cfg: EngineConfig) -> bool:
     return (Path(cfg.root) / "metadata.sqlite").is_file()
 
 
+def _compatibility_status(status: str) -> str:
+    return "success" if status == "succeeded" else status
+
+
 def _latest_operation_payload(repository: Repository, source_id: SourceId) -> JsonObject | None:
     operations = repository.metadata.operations_for_source(source_id, limit=1)
     if not operations:
@@ -30,7 +34,9 @@ def _latest_operation_payload(repository: Repository, source_id: SourceId) -> Js
         "operation_id": str(operation.operation_id),
         "run_id": str(operation.run_id),
         "kind": operation.kind,
-        "status": operation.status,
+        "status": _compatibility_status(operation.status),
+        "lifecycle_status": operation.status,
+        "producer": operation.producer.to_dict(),
         "started_at": operation.started_at,
         "parameters": dict(operation.parameters),
         "details": dict(operation.details),

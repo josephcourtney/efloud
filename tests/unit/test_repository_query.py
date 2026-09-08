@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from efloud.datasets import DatasetDefinition, Latest
+from efloud.inventory import AbsenceEvidence
 from efloud.json_types import JsonMapping, JsonValue, json_mapping_or_none
 from efloud.repository import Repository
 from efloud.repository_models import SourceId, TreeEntry
@@ -54,10 +55,13 @@ def test_artifact_query_reports_present_and_absent_state(tmp_path: Path) -> None
 
         repo.record_absence(
             "artifact:a",
+            evidence=AbsenceEvidence.direct_negative(
+                source_id=source,
+                observed_at=102.0,
+                locator="test://artifact/a",
+            ),
             run_id=run,
             operation_id=op,
-            source_id=source,
-            observed_at=102.0,
         )
         absent = query.query("artifact:artifact:a")
         absent_state = _mapping(absent.get("state"))

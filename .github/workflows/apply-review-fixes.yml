@@ -38,6 +38,10 @@ jobs:
           text = path.read_text()
           replacements = (
               (
+                  '    count = text.count(old)\n    if count != 1:\n',
+                  '    count = text.count(old)\n    if relative == "CHANGELOG.md" and old in {"### Changed\\n", "### Fixed\\n"}:\n        write(root, relative, text.replace(old, new, 1))\n        return\n    if count != 1:\n',
+              ),
+              (
                   '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n    def start_operation(\n',
                   '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n\n    def start_operation(\n',
               ),

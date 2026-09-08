@@ -476,8 +476,23 @@ class SQLiteMetadataStore:
         provenance_edges: Iterable[ProvenanceEdge] = (),
     ) -> None:
         edges = tuple(provenance_edges)
-        self.record_content(content)
         with self._connection:
+            existing = self._connection.execute(
+                "SELECT byte_size, storage_key FROM content_objects WHERE content_id = ?",
+                (str(content.content_id),),
+            ).fetchone()
+            if existing is not None and (
+                int(existing["byte_size"]) != content.byte_size or existing["storage_key"] != content.storage_key
+            ):
+                msg = f"Conflicting content record for {content.content_id}"
+                raise ValueError(msg)
+            self._connection.execute(
+                """
+                INSERT OR IGNORE INTO content_objects(content_id, byte_size, storage_key, media_type)
+                VALUES (?, ?, ?, ?)
+                """,
+                (str(content.content_id), content.byte_size, content.storage_key, content.media_type),
+            )
             self._connection.execute(
                 "INSERT OR IGNORE INTO logical_artifacts(artifact_key) VALUES (?)",
                 (str(observation.artifact_key),),

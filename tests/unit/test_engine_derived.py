@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.adapters import CollectionAcquisition, CollectionSourceAdapter
+from efloud.adapters import CollectionAcquisition
+from efloud.collection_adapter import CollectionSourceAdapter
 from efloud.engine import Engine
 from efloud.fanout import RestBaseFanoutTask
 from efloud.inventory import InventoryCoverage, InventoryItem, SourceInventory

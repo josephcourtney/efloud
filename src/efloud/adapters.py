@@ -10,6 +10,7 @@ from efloud.repository_models import ProducerRef
 from efloud.transport.rsync_inventory import RsyncInventory
 
 if TYPE_CHECKING:
+    from efloud.inventory import IntegrityExpectation
     from efloud.models import EngineConfig
     from efloud.planning import PlannedOperation
     from efloud.repository import Repository
@@ -82,6 +83,7 @@ class HttpAcquisition:
     size_bytes: int | None = None
     request_headers: JsonObject | None = None
     media_type: str | None = None
+    expected_integrity: tuple[IntegrityExpectation, ...] = ()
     error: str | None = None
 
 

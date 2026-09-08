@@ -10,9 +10,12 @@ from efloud.repository_models import ProducerRef
 from efloud.transport.rsync_inventory import RsyncInventory
 
 if TYPE_CHECKING:
+    from efloud.collection_adapter import CollectionSourceAdapter
+    from efloud.http_adapter import HttpSourceAdapter
     from efloud.models import EngineConfig
     from efloud.planning import PlannedOperation
     from efloud.repository import Repository
+    from efloud.rsync_adapter import RsyncSourceAdapter
 
 
 type AcquisitionStatus = Literal["succeeded", "failed"]
@@ -159,6 +162,22 @@ def builtin_adapter_registry() -> AdapterRegistry:
     return AdapterRegistry(adapters)
 
 
+def __getattr__(name: str) -> type[HttpSourceAdapter] | type[RsyncSourceAdapter] | type[CollectionSourceAdapter]:
+    if name == "HttpSourceAdapter":
+        from efloud.http_adapter import HttpSourceAdapter
+
+        return HttpSourceAdapter
+    if name == "RsyncSourceAdapter":
+        from efloud.rsync_adapter import RsyncSourceAdapter
+
+        return RsyncSourceAdapter
+    if name == "CollectionSourceAdapter":
+        from efloud.collection_adapter import CollectionSourceAdapter
+
+        return CollectionSourceAdapter
+    raise AttributeError(name)
+
+
 __all__ = [
     "AcquisitionStatus",
     "AdapterCapabilities",
@@ -166,8 +185,11 @@ __all__ = [
     "AdapterExecutionContext",
     "AdapterRegistry",
     "CollectionAcquisition",
+    "CollectionSourceAdapter",
     "HttpAcquisition",
+    "HttpSourceAdapter",
     "RsyncAcquisition",
+    "RsyncSourceAdapter",
     "SourceAcquisition",
     "SourceAdapter",
     "builtin_adapter_registry",

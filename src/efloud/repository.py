@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from efloud.derivation import DerivationKey
+    from efloud.inventory import AbsenceEvidence
     from efloud.json_types import JsonObject
     from efloud.metadata_store import MaterializationRecord, MetadataStore, OperationRecord, RunRecord, SourceRecord
     from efloud.repository_models import DatasetSpecification
@@ -543,34 +544,42 @@ class Repository:
         self,
         artifact_key: ArtifactKey | str,
         *,
+        evidence: AbsenceEvidence,
         run_id: RunId,
         operation_id: OperationId,
-        source_id: SourceId | str | None = None,
-        observed_at: float | None = None,
         source_path: str | None = None,
         upstream_locator: str | None = None,
         metadata: JsonObject | None = None,
     ) -> ArtifactAbsence:
-        observed = time.time() if observed_at is None else observed_at
+        """Record authoritative absence established by explicit source evidence."""
+        resolved_path = source_path if source_path is not None else evidence.source_path
+        resolved_locator = upstream_locator if upstream_locator is not None else evidence.locator
+        if evidence.source_path is not None and resolved_path != evidence.source_path:
+            msg = "Absence source path conflicts with the supplied evidence."
+            raise ValueError(msg)
+        if evidence.locator is not None and resolved_locator != evidence.locator:
+            msg = "Absence upstream locator conflicts with the supplied evidence."
+            raise ValueError(msg)
         normalized_key = ArtifactKey(str(artifact_key))
-        normalized_source_id = SourceId(str(source_id)) if source_id is not None else None
+        payload: JsonObject = dict(metadata or {})
+        payload["absence_evidence"] = evidence.to_dict()
         absence = ArtifactAbsence(
             observation_id=absence_id_for(
                 artifact_key=normalized_key,
                 run_id=run_id,
                 operation_id=operation_id,
-                observed_at=observed,
-                source_path=source_path,
-                upstream_locator=upstream_locator,
+                observed_at=evidence.observed_at,
+                source_path=resolved_path,
+                upstream_locator=resolved_locator,
             ),
             artifact_key=normalized_key,
-            source_id=normalized_source_id,
+            source_id=evidence.source_id,
             run_id=run_id,
             operation_id=operation_id,
-            observed_at=observed,
-            source_path=source_path,
-            upstream_locator=upstream_locator,
-            metadata=self._source_evidence(metadata or {}, normalized_source_id),
+            observed_at=evidence.observed_at,
+            source_path=resolved_path,
+            upstream_locator=resolved_locator,
+            metadata=self._source_evidence(payload, evidence.source_id),
         )
         self.metadata.record_absence(absence)
         return absence

@@ -2,637 +2,251 @@
 
 Purpose:
 
-- sequence implementation of the repository-centered architecture in `DESIGN.md`
-- preserve current acquisition behavior while moving authority from mirrors and
-  JSON manifests into the repository
-- define phase boundaries that leave the package runnable and testable after
-  each migration step
-- provide a clear integration path for downstream users such as BVP
+- define the remaining execution strategy for the repository-centered architecture in `DESIGN.md`
+- sequence work so each milestone leaves Efloud runnable, testable, and easier for downstream consumers to use
+- record ordering constraints and transitional considerations without duplicating architectural rationale or project status
 
-Rules:
+This file intentionally omits the completed migration history. Detailed historical evolution belongs in git history; current completion state belongs in `STATUS.md`.
 
-- `DESIGN.md` is authoritative for architecture and invariants; this file defines
-  implementation order
-- prefer replacement and deletion of obsolete mechanisms over permanent dual
-  abstractions
-- keep existing HTTP, REST, collection/fanout, and `rsync` acquisition working
-  throughout the migration
-- do not make existing mirror or manifest state destructive during migration
-- preserve deterministic behavior and test each phase before depending on it
-- add compatibility exports where needed, but do not let compatibility formats
-  remain authoritative internally
-- do not implement deferred replica/ref/Merkle complexity before concrete scale or
-  workflow requirements justify it
+## Execution Rules
 
-## Strategy
+- `DESIGN.md` is authoritative for intended architecture and invariants.
+- Significant durable decisions that are costly to reverse should be captured in ADRs before implementation.
+- Prefer deleting or isolating obsolete migration mechanisms over extending dual implementations.
+- Do not introduce destructive maintenance until repository identity, migration, and coordination semantics are explicit.
+- Keep consumer-facing reads acquisition-free.
+- Keep the default implementation local and service-free.
+- Add protocols, storage backends, plugin discovery, or distributed features only from concrete requirements.
+- CI must verify the committed checkout; it must not make a dirty checkout pass by formatting or autofixing it in-place.
 
-The migration is organized around one change in authority and one normalization
-boundary:
+## Remaining Strategy
 
-```text
-current
+The remaining work is ordered around the consumer boundary first, then cleanup and maintenance:
 
-transports -> files/mirrors -> manifests/state -> queries
-
-                         becomes
-
-source adapters -> SourceInventory / acquisition evidence
-                         |
-                         v
-                   reconciliation
-                         |
-                         v
-                    Repository
-                         |
-              metadata + immutable blobs
-                         |
-          +--------------+---------------+
-          |              |               |
-       queries        datasets       compatibility
-                                    manifests/views
-```
-
-The repository must become complete and trustworthy before the old manifest and
-mirror-state mechanisms are fully demoted to compatibility views.
-
-The remaining implementation order is deliberately:
-
-1. normalize enumeration, coverage, integrity expectations, and reconciliation
-   across source types
-2. migrate collection/fanout through that normalized source model
-3. make producer identity, operation lifecycle, deterministic derivations, and
-   persistent indexes first-class repository concepts
-4. remove local-filesystem assumptions from the generic blob-store contract
-5. complete the repository-authority cutover for all internal reads and
-   compatibility exports
-6. formalize planner/executor/adapter/policy interfaces around the proven
-   semantics
-7. complete validation, temporal dataset policies, retention, and GC
-8. add Git and additional source types from concrete use cases
-9. remove transitional infrastructure
-10. add safe materializations/views and only then optional advanced features
+1. harden persistence, source-definition history, identity semantics, and CI verification
+2. complete immutable dataset selection and temporal/coherence policies
+3. export and materialize immutable datasets safely for consumers that should not need Efloud internals
+4. collapse the public/API compatibility perimeter to one canonical implementation path
+5. add repository audit, coordination, recovery, and safe non-historical garbage collection
+6. add historical retention/pruning only if a concrete storage requirement justifies it
+7. add new source adapters only from concrete source requirements
+8. keep advanced storage/distribution features deferred until measurements or workflows justify them
 
 ## Cross-Phase Invariants
 
 Every phase must preserve these constraints:
 
-- authoritative new mutation goes through a repository-facing service
-- metadata must never commit a reference to blob content that is not durably
-  available
+- authoritative mutation goes through repository-facing services
+- metadata never commits a reference to blob content that is not durably available
 - content objects are immutable and identified by digest
-- generic content semantics never depend on a local path or storage key
-- repeated observation of unchanged bytes must not duplicate content
-- an observation must remain distinct from content identity
-- absence requires successful complete inventory coverage of the relevant scope
-- upstream change tokens and integrity expectations are not content identity
-- source-relative paths are retained as provenance/structure, not used as
-  content identity
-- deterministic derived reuse must still record current-run observations and
-  provenance
-- no consumer-facing read API may implicitly trigger acquisition
-- compatibility manifests, mirrors, and caches may be regenerated from
-  authoritative state once cutover occurs
-- the default implementation remains local and service-free
+- observation identity remains distinct from content identity
+- generic content semantics do not depend on local paths or storage keys
+- absence requires successful complete coverage of the relevant scope
+- source-relative paths are provenance/structure, not content identity
+- source configuration changes must not retroactively change the meaning of historical observations
+- validation evidence is immutable content evidence and failed required validation does not advance source state
+- deterministic derived reuse still records current-run observations and provenance
+- frozen datasets remain immutable after later ingestion
+- compatibility manifests, mirrors, caches, and materializations are projections or conveniences, never authoritative databases
 
-## Phase 0: Freeze The Compatibility Perimeter
-
-Status: substantially complete.
+## Phase 13: Repository And Persistence Hardening
 
 Objective:
 
-- establish the exact behavior that must survive the authority migration
+- make persisted semantics durable enough to support richer temporal datasets and later destructive maintenance
 
-Acceptance criteria remain:
+Ordering constraint:
 
-- every current authoritative read/write path has a planned repository-backed
-  replacement
-- representative current outputs can detect migration drift
-- no retained source data must be moved or deleted to start the migration
-
-## Phase 1: Introduce The Minimal Runtime Seam
-
-Status: superseded by the transitional `Engine` + repository-recording seam.
-
-The exact `Runtime` extraction originally described here is no longer required.
-The architectural requirement is satisfied when acquisition can be recorded
-through repository-facing services without transport code depending on SQLite or
-manifest authority.
-
-## Phase 2: Define Repository Primitives And Storage Contracts
-
-Status: complete for the initial repository model; blob-store cleanup is deferred
-to Phase 9 below.
-
-Established concepts include typed source/artifact/content/observation/run/
-operation/snapshot/dataset identities, repository storage protocols, semantic
-repository operations, and path-independent artifact/content identity.
-
-## Phase 3: Implement SQLite Metadata And Filesystem Blob Storage
-
-Status: complete for the initial local backend.
-
-The remaining storage refinement is to remove generic `BlobStore` dependence on
-local filesystem paths/storage keys in Phase 9.
-
-## Phase 4: Dual-Record Existing HTTP And REST Acquisition
-
-Status: complete.
-
-HTTP/REST acquisition records repository content, observations, provenance, and
-source evidence while compatibility outputs remain available.
-
-## Phase 5: Model File Trees And Convert `rsync`
-
-Status: substantially complete.
-
-Authoritative rsync inventory/reconciliation now supports scoped coverage,
-unchanged-content reuse, changed/new observations, and absence only when
-successful enumeration proves it. A future recursive Merkle representation is a
-scale optimization, not a prerequisite for this phase.
-
-## Phase 6: Normalize Source Inventory And Reconciliation
-
-Objective:
-
-- make membership, coverage, change evidence, expected integrity, and absence
-  semantics protocol-independent
+- complete this phase before expanding dataset selection semantics or implementing GC
 
 Work:
 
-- define `InventoryCoverage`, `InventoryItem`, and `SourceInventory`
-- define `ChangeToken` separately from content identity
-- define `IntegrityExpectation` separately from actual `ContentId`
-- extract the successful rsync reconciliation behavior into a generic reconciler
-- classify inventory items as new, changed, unchanged, or absent
-- permit absence only inside successful complete coverage
-- allow unchanged observations to reuse existing content without unnecessary
-  retrieval/hashing when trustworthy evidence permits it
-- record inventory/reconciliation evidence in source snapshots/operations
+- make the Python 3.14 CI quality job non-mutating and prove that the committed checkout is already formatted/lint-clean
+- introduce explicit ordered SQLite schema migrations with upgrade tests from every supported historical schema version
+- preserve source-definition history instead of overwriting the only definition for a source ID
+- associate historical repository evidence with the source-definition revision required to interpret it reproducibly
+- define the identity relationship among dataset resolution/specification, exact observation membership, and content equivalence
+- record ADRs for source-definition revision semantics and dataset identity semantics if those decisions are not already unambiguous in `DESIGN.md`
 
 Acceptance criteria:
 
-- HTTP, rsync, and synthetic collection fixtures can express their source state
-  through one inventory model
-- failed/incomplete inventories cannot create authoritative absence
-- an upstream checksum is validated against an independently computed
-  `ContentId`
-- ETag/version/change evidence does not masquerade as content identity
-- reconciliation code contains no protocol-specific repository semantics
+- CI fails rather than silently fixing an unformatted or autofixable checkout
+- repositories created under supported older schema versions upgrade deterministically without loss of semantic state
+- changing a source URL, role, tags, filters, or integrity expectations does not change the interpretation of historical observations/snapshots
+- two dataset specifications that resolve to identical membership have explicitly defined identity/equivalence behavior rather than accidentally sharing whichever definition was persisted first
 
-## Phase 7: Migrate Collections Through `SourceInventory`
-
-Objective:
-
-- replace `REST_BASE`/fanout special result semantics with the normalized source
-  model
-
-Work:
-
-- separate collection enumeration from per-item retrieval
-- map enumeration results to `SourceInventory`
-- define deterministic logical artifact naming for collection items
-- apply generic reconciliation/coverage semantics
-- record collection items through ordinary content/observation semantics
-- record collection enumeration identity and coverage in source snapshots
-- preserve compatibility outputs during migration
-
-Acceptance criteria:
-
-- `RestBaseFanoutTask` behavior is expressible without a collection-specific
-  provenance/storage model
-- a complete collection enumeration can establish absence of removed items
-- a partial/failed enumeration cannot establish absence
-- collection item history remains reproducible after compatibility outputs are
-  deleted
-
-## Phase 8: Formalize Provenance Producers, Lifecycle, And Derived Artifacts
-
-Objective:
-
-- make acquisition and deterministic derivation use one explicit provenance
-  model
-
-Work:
-
-- add `ProducerRef` with namespaced stable producer ID and version
-- make operation/run lifecycle states explicit and enforce valid transitions
-- do not persist dry-run/planned operations merely because plans are inspected
-- define `DerivedTaskSpec`
-- define canonical `DerivationKey` from:
-  - task identity/version
-  - normalized parameters
-  - declared outputs
-  - normalized input identities
-- support `dependency_semantics="content"` and `"observation"`
-- allow deterministic reuse of prior output content while recording new current
-  output observations/provenance
-- migrate persistent semantic indexes to specialized derived artifacts
-- reserve TTL for source refresh rather than deterministic derivation validity
-
-Acceptance criteria:
-
-- every operation identifies its producer/version
-- invalid lifecycle transitions are rejected
-- deterministic content-based derivations reuse byte-identical prior results
-  without losing current-run provenance
-- observation-sensitive derivations distinguish independently observed identical
-  bytes
-- derived output staleness/reuse can be determined without wall-clock TTL
-
-## Phase 9: Remove Filesystem Assumptions From `BlobStore`
-
-Objective:
-
-- make repository content semantics independent of local filesystem storage
-
-Work:
-
-- redefine generic `BlobStore` around semantic operations such as:
-  - `put_bytes`
-  - `put_path` or stream-based ingestion convenience
-  - `open`
-  - `contains`
-  - `verify`
-  - `delete`
-- move local-path access to an optional local-store capability
-- remove `storage_key` from semantic content identity/API where possible
-- ensure repository/query/dataset code opens content through the blob-store
-  abstraction rather than resolving a filesystem path
-- document idempotent `put` and orphan-blob failure semantics
-- retain `FilesystemBlobStore` as the default small/auditable implementation
-
-Acceptance criteria:
-
-- repository/query/dataset tests pass against a fake non-path-backed blob store
-- relocating the filesystem CAS does not change any semantic identity
-- no repository-facing model requires a local filesystem path
-- interrupted metadata commits may leave orphan blobs but never committed missing
-  content
-
-## Phase 10: Complete Repository Authority Cutover
-
-Objective:
-
-- finish moving internal reads and compatibility outputs off legacy manifests,
-  mirror-state files, and mirror rescans
-
-Work:
-
-- complete source-result/current-state/freshness/status/integrity queries from
-  repository state
-- make canonical/timestamped manifests serializers of repository state
-- make mirror-state output an explicit compatibility/export view
-- make targeted sync planning remember untouched state through repository records,
-  not manifest merge
-- add conservative adoption/import for existing stores without destructive
-  relocation or invented provenance
-- remove internal fallbacks that treat generated compatibility files as databases
-  once parity tests pass
-
-Cutover rule:
-
-- after this phase, no new internal feature may use a compatibility manifest or
-  mirror-state file as authoritative state
-
-Acceptance criteria:
-
-- deleting generated compatibility manifests does not lose semantic state
-- current supported query/status/manifest behavior can be generated from
-  repository state
-- targeted syncs require no manifest merge to remember untouched artifacts
-- an existing store can be adopted without reacquisition or destructive moves
-
-## Phase 11: Formalize Planner, Executor, Adapters, And Policies
-
-Objective:
-
-- complete orchestration around the now-proven repository/inventory contracts
-
-Work:
-
-- define `SyncRequest`, `SyncPlan`, `PlanningDecision`, and typed operations
-- implement deterministic planning from source definitions plus repository state
-- make dry-run use the same plan as execution
-- define `SourceAdapter`/`AdapterDescriptor` and adapter registry
-- separate declarative `SourceDefinition` from runtime adapter instances
-- move HTTP, REST, rsync, and collection work behind adapters
-- make inventory/fetch capabilities explicit
-- define structured refresh decisions rather than bare booleans
-- add explicit bounded concurrency and operation dependencies
-- retain the small `Engine` facade
-- keep built-in adapter registration direct; add lazy external entry-point discovery
-  only if an actual external-plugin requirement appears
-
-Acceptance criteria:
-
-- adding a built-in protocol does not require editing repository semantics
-- planner output is deterministic for the same repository state/request
-- execution dependencies and concurrency limits are explicit/testable
-- source configuration contains no live clients/sessions
-- adapter identity/version flows into `ProducerRef`
-
-## Phase 12: Complete Validation As Repository Evidence
-
-Objective:
-
-- unify integrity expectations, storage validation, generic encoding validation,
-  and pluggable domain validation
-
-Work:
-
-- retain validation records keyed by content identity plus validator version
-- integrate `IntegrityExpectation` evaluation into acquisition
-- implement/reuse storage-integrity validation against `ContentId`
-- move generic gzip/JSON/container checks into reusable validators where useful
-- define a domain-validator extension contract
-- reuse validation evidence when content and validator identity/version are
-  unchanged
-- expose validation through repository/query APIs
-
-Acceptance criteria:
-
-- required failed integrity expectations prevent successful source advancement
-- unchanged content is not needlessly revalidated by the same validator version
-- validation failures never mutate stored content
-- domain libraries can contribute validators without efloud depending on them
-
-## Phase 13: Complete Immutable Datasets And Temporal Policies
+## Phase 14: Complete Immutable Datasets And Temporal Policies
 
 Objective:
 
 - finish the generic immutable-data boundary required by downstream consumers
 
-Existing foundation:
+Existing foundation to preserve:
 
-- exact/latest/latest-before/latest-all selection
+- exact/latest/latest-before/latest-all selectors
 - frozen exact observation membership
-- dataset identity and content-equivalence identity
+- observation-membership and content-equivalence identities
 - read-only artifact open/verify
 
-Remaining work:
+Work:
 
-- selection by source/tag/role/namespace where needed
-- explicit temporal time basis
-- required-complete-snapshot policies
-- maximum observation skew/same-run policies where requested
-- deterministic dataset export metadata
-- BVP catalog/verification parity gate
+- add snapshot-backed selection, including exact source snapshots and latest complete source snapshots where appropriate
+- add selection by source, role, and tag using authoritative source-definition revisions
+- treat namespace initially as an artifact-key prefix/filter convention unless a concrete requirement justifies first-class namespace metadata
+- define temporal resolution against an explicit time basis; use repository observation time as the initial universal basis
+- enforce complete-snapshot requirements without inferring absence from partial or failed coverage
+- add optional same-run and maximum-observation-skew constraints
+- permit datasets to require already-recorded validation evidence without triggering validation during resolution
+- implement the dataset specification/membership/content identity model established in Phase 13
+- define a versioned deterministic detached dataset manifest/lockfile containing exact members, observation/content IDs, roles, relevant source/snapshot revisions, constraint results, content metadata, and safe logical export paths
+- keep BVP catalog/verification parity as an external acceptance fixture using generic Efloud dataset APIs and detached manifests; do not add BVP-specific repository semantics
 
 Acceptance criteria:
 
-- local blob paths/root relocation do not affect dataset identity
 - a frozen dataset never changes after newer ingestion
+- local repository root or blob placement does not affect semantic dataset identity
 - temporal resolution never infers absence from incomplete coverage
-- downstream BVP generic catalog behavior can be reproduced through efloud
+- snapshot completeness, same-run, skew, and validation requirements are explicit and testable
+- detached dataset metadata is deterministic and sufficient for a downstream consumer to understand exact membership without reading Efloud's SQLite schema
+- downstream BVP catalog behavior can be represented through generic Efloud dataset semantics
 
-## Phase 14: Retention, Reachability, And Garbage Collection
+## Phase 15: Safe Dataset Materialization And Export
 
 Objective:
 
-- make historical retention safe under immutable datasets and provenance
+- provide ordinary filesystem handoff without weakening repository authority or requiring consumers to understand Efloud internals
 
 Work:
 
-- define retention roots over observations/datasets/snapshots/derived provenance
-- implement reachability and dry-run GC reports
-- add grace periods
-- collect orphan blobs from interrupted ingestion
-- never collect content required by retained datasets/provenance
-- keep the initial model local-first: retained content must remain in the
-  canonical/default blob store
+- materialize immutable datasets, and exact source snapshots where useful, from repository content
+- support `auto`, `reflink`, `copy`, and explicit `symlink` strategies
+- make `auto` prefer reflink/CoW and fall back to copy
+- do not use hardlinks as the default user-visible strategy
+- derive output paths only from explicit safe logical paths in immutable export metadata
+- validate path traversal, duplicate paths, and collisions before writing
+- build into a temporary sibling tree and atomically publish where the platform permits
+- include the versioned detached dataset manifest in every self-contained dataset export
 
 Acceptance criteria:
 
-- GC cannot invalidate a retained dataset
-- dry-run explains every proposed deletion
-- orphan blobs can be collected safely
-- shared content referenced by multiple artifacts/datasets is retained correctly
+- deleting or modifying a materialized copy does not affect repository correctness or authoritative CAS content
+- materialization rejects path traversal and collisions before publishing partial output
+- repeated materialization of the same dataset has deterministic structure and metadata
+- a downstream package can consume a detached export without importing Efloud
 
-Deferred:
-
-- remote/offloaded replica tracking
-- safe local drop based on verified alternate replicas
-
-These are separate future capabilities and should not complicate initial GC.
-
-## Phase 15: Git And Additional Source Types
+## Phase 16: Canonical Public API And Migration Cleanup
 
 Objective:
 
-- demonstrate that the normalized inventory/repository model generalizes beyond
-  the original protocols
+- leave one canonical implementation path and a deliberately small public semantic surface
 
 Work:
 
-- implement a first-class Git source/adapter
-- map repository URL/ref/commit/tree/path evidence into `SourceInventory`
-- map selected files to ordinary artifacts/observations
-- use the same source snapshot/reconciliation/dataset mechanisms
-- evaluate additional adapters only from concrete use cases
-
-Acceptance criteria:
-
-- Git requires no repository-schema special case beyond source metadata
-- Git-derived datasets mix freely with artifacts from other protocols
-- Git membership/absence semantics use the same inventory coverage model
-
-## Phase 16: Simplify Public APIs And Remove Transitional Infrastructure
-
-Objective:
-
-- leave one canonical implementation path after repository parity is proven
-
-Work:
-
-- make `Engine`/`Repository` the preferred public surface
-- retain/deprecate `sync(cfg)` according to compatibility policy while delegating
-  to canonical orchestration
-- remove obsolete manifest-merge state machinery from internal control flow
-- remove redundant generic mirror-presence rescans
-- remove duplicate cache/status/provenance abstractions
-- isolate remaining compatibility serializers under explicit compatibility code
-- reduce exports to stable semantic interfaces
+- make `Engine` and `Repository` the canonical operational surfaces
+- make legacy `sync(cfg)` delegate to canonical orchestration and deprecate or remove it according to compatibility policy
+- remove `RepositorySyncRecorder`, transient manifest-import paths, and other migration-only infrastructure when no supported path requires them
+- isolate remaining manifest/mirror serializers and inspectors under explicit compatibility code
+- replace compatibility-manifest-based materialization helpers with repository/dataset-backed equivalents
+- reduce top-level exports to stable semantic APIs plus deliberate adapter/validator extension contracts
+- identify and deprecate redundant TTL index, cache/status, mirror-resolution, and provenance compatibility abstractions where repository-native equivalents exist
 
 Acceptance criteria:
 
 - one canonical ingestion path and one authoritative state model remain
-- no internal feature depends on legacy JSON state as a database
-- compatibility code is isolated/removable
-- module boundaries correspond to real responsibilities rather than migration
-  history
+- no internal feature depends on compatibility JSON as a database
+- compatibility code is isolated and removable
+- the documented top-level API contains semantic interfaces rather than migration-history implementation details
 
-## Phase 17: Safe Native Materialization And Optional Views
+## Phase 17: Repository Maintenance, Audit, Recovery, And Safe GC
 
 Objective:
 
-- restore filesystem convenience without weakening repository authority
+- make repository maintenance safe without yet deleting valid historical state
 
 Work:
 
-- add immutable dataset/source-snapshot materialization
-- support `auto`, `reflink`, `copy`, and explicit `symlink` strategies
-- make `auto` prefer reflink/CoW then fall back to copy
-- do not use hardlinks as the default user-visible strategy
-- validate all paths/collisions before writing
-- materialize through a temporary sibling tree and atomically publish where
-  possible
-- include small self-describing metadata for detached dataset materializations
-- optionally provide read-only virtual filesystem projections later
+- add repository-wide writer/maintenance coordination so destructive maintenance cannot race acquisition, validation staging, or metadata mutation
+- define recovery/reporting for abandoned `running` runs and operations after crashes
+- implement repository audit/fsck over metadata references, blob availability, digest verification, source snapshots, datasets, and provenance edges
+- compute and explain reachability across observations, trees, datasets, provenance, validations, and materializations
+- detect CAS blobs left by interrupted metadata commits and content rows with no semantic references
+- implement dry-run-first cleanup with explicit grace periods and reason codes for every proposed deletion
+- preserve validation-only content evidence and all content required by existing historical metadata
 
 Acceptance criteria:
 
-- deleting a view does not affect repository correctness
-- modifying a copied/reflinked checkout cannot mutate authoritative CAS content
-- materialization is deterministic and rejects path traversal/collisions
-- views remain optional conveniences rather than storage requirements
+- maintenance cannot run destructively while a writer holds the repository
+- audit reports missing/corrupt blobs and dangling metadata without mutating the repository
+- dry-run explains every proposed deletion
+- safe GC removes only true orphan/unreferenced storage objects and cannot invalidate any existing dataset, observation, snapshot, provenance edge, or validation record
 
-## Phase 18: Deferred Advanced Features (Only When Justified)
+## Phase 18: Historical Retention And Pruning (Contingent)
 
-These are design targets, not current implementation commitments.
+Objective:
+
+- reclaim valid historical state only if a concrete storage/retention requirement justifies doing so
+
+This is not an automatic continuation of safe GC.
+
+Work, if activated:
+
+- define explicit retention roots and policies for observations, source snapshots, runs, datasets, derivations, and validation evidence
+- define deletion semantics so metadata never remains while required content has been intentionally removed
+- preserve retained datasets and required transitive provenance
+- provide dry-run impact reports before destructive pruning
+- make policy decisions reversible where practical and protect recent state with grace periods
+
+Acceptance criteria:
+
+- pruning cannot invalidate retained datasets or retained provenance
+- every removed historical object is attributable to an explicit retention policy
+- no surviving metadata claims unavailable intentionally-pruned content
+
+## Phase 19: Additional Source Adapters (Use-Case Driven)
+
+Objective:
+
+- add protocols only when an actual upstream requirement cannot be represented by existing adapters
+
+Work, when required:
+
+- implement the concrete adapter against existing `SourceAdapter`, `SourceInventory`, validation, reconciliation, and repository contracts
+- add protocol-specific source evidence without adding protocol-specific repository semantics
+- add external entry-point discovery only when a real external-plugin requirement appears
+- treat Git as one candidate adapter, not a mandatory architectural milestone
+
+Acceptance criteria for any new adapter:
+
+- no repository-schema special case is required for the protocol
+- membership/absence semantics use the normalized coverage model
+- artifacts from the new source mix freely with existing dataset semantics
+
+## Phase 20: Deferred Advanced Features
+
+These remain design targets rather than current implementation commitments.
 
 ### Recursive Merkle Trees
 
-Consider replacing/augmenting flat tree snapshots with recursive versioned
-Merkle trees only if measurements show snapshot/storage/diff costs are material.
-Historical tree identities must remain readable.
+Consider recursive/versioned Merkle trees only if measurements show flat tree snapshot or diff costs are material. Historical tree identities must remain readable.
 
 ### Mutable References
 
-If human-friendly mutable names are required, add explicit refs from names to
-immutable target IDs with compare-and-swap/generation checks. Refs may become GC
-roots but never participate in immutable target identity.
+Add human-friendly mutable refs only if required. Refs point to immutable targets, use compare-and-swap/generation semantics, and may become GC roots without participating in immutable identity.
 
-### Replica/Availability Tracking
+### Replica And Availability Tracking
 
-If content must be offloaded or shared across stores, add replica records
-separating `ContentId` from physical availability. Mutable upstream locators do
-not count as verified replicas unless exact content identity is established.
+Add replica records only if content must be offloaded or shared across stores. Mutable upstream locators are not replicas unless exact content identity is established.
 
 ### Alternate Blob Backends
 
-Implement alternate blob stores only from concrete requirements. The semantic
-`BlobStore` contract must make this possible without adding a general storage
-framework dependency to the local core.
+Implement alternate stores only from concrete requirements. The semantic `BlobStore` contract must remain sufficient without turning the local core into a general storage framework.
 
-## Testing Strategy
+## Verification Strategy
 
-### Repository Model Tests
+Every active phase should be completed only when:
 
-Cover:
-
-- identity canonicalization
-- content deduplication
-- repeated unchanged observations
-- absence/coverage semantics
-- transaction failure/recovery
-- provenance edges and producer identity
-- operation lifecycle transitions
-- relational constraints
-- source inventory/reconciliation
-- source/tree snapshot identity
-- derivation-key reuse semantics
-- dataset identity and immutability
-- reachability/GC
-
-### Source/Reconciliation Integration Tests
-
-For each adapter/source pattern, verify:
-
-```text
-upstream fixture
-    -> SourceInventory
-    -> reconciliation decisions
-    -> acquisition where needed
-    -> repository records
-    -> expected content/provenance/snapshot
-```
-
-Include explicit tests for complete, partial, and failed inventories.
-
-### Compatibility Tests
-
-Until cleanup is complete, verify that repository state can reproduce supported:
-
-- canonical/timestamped manifests
-- source query results
-- status summaries
-- mirror-state information that remains public
-- derived fanout behavior
-
-Compatibility tests should become deletion targets rather than permanent reasons
-to preserve obsolete internals.
-
-### Property And Failure Tests
-
-Add focused property/fault tests for high-value invariants:
-
-- content identity depends only on bytes
-- integrity expectations cannot substitute for actual content hashing
-- dataset identity is independent of local repository path
-- a failed metadata transaction cannot expose unavailable content
-- partial source coverage cannot prove absence outside its scope
-- deterministic derivation reuse preserves current provenance
-- retained datasets protect all required content from GC
-
-### Scale Tests
-
-Use synthetic large-tree fixtures to characterize:
-
-- rsync/inventory reconciliation overhead
-- incremental snapshot construction
-- SQLite query/index behavior
-- directory/file cardinality scaling
-- repeated observation storage growth
-
-Only if these measurements show a real bottleneck should recursive Merkle trees,
-chunk-level deduplication, or more complex storage representations move out of
-Phase 18.
-
-## Migration Of Existing Data
-
-Existing efloud/BVP mirrors may be large and expensive to reacquire. The
-migration must therefore support conservative adoption.
-
-The adoption workflow should:
-
-1. inspect legacy manifests/state when available
-2. enumerate known materialized files
-3. hash/import or safely reuse their bytes in the blob store
-4. record only provenance that can actually be established
-5. mark source-snapshot completeness conservatively
-6. verify repository records against existing files
-7. leave legacy data untouched until the user explicitly chooses cleanup
-
-No migration step should require redownloading an unchanged corpus merely to
-enter the new repository model.
-
-## Documentation During Migration
-
-- update `STATUS.md` as the active phase changes
-- keep `TODO.md` limited to the immediate tranche within the current phase
-- update `README.md` when public setup or usage changes
-- update `DESIGN.md` only when intended architecture changes
-- keep compatibility/deprecation guidance explicit when old and new surfaces
-  temporarily coexist
-
-## Completion Criteria
-
-The repository-centered migration is complete when:
-
-- SQLite metadata plus immutable content-addressed blobs are authoritative
-- every acquisition protocol emits normalized inventory/acquisition evidence and
-  repository observations/provenance
-- absence is established only from explicit successful coverage
-- file-tree sources preserve reconstructable historical structure
-- query/status/sync decisions use repository state rather than merged manifests
-- derived artifacts and persistent semantic indexes use ordinary artifact
-  provenance and deterministic derivation semantics where applicable
-- immutable datasets provide the read-only reproducibility boundary
-- retention/GC respect dataset/provenance reachability
-- planning and protocol behavior are adapter-driven and deterministic
-- legacy manifests/mirrors are compatibility views rather than databases
-- existing repositories can be adopted without destructive reacquisition
-- downstream consumers such as BVP no longer need their own generic catalog,
-  provenance, integrity, or source-store infrastructure
-- optional filesystem projections remain convenience utilities over immutable
-  repository state
+- the non-mutating Python 3.14 quality gate passes in CI
+- the complete test suite passes across every Python minor version declared by `project.requires-python`
+- migration tests cover any metadata schema change
+- repository invariants receive focused regression tests
+- downstream acceptance fixtures exercise generic Efloud APIs rather than importing private repository implementation details

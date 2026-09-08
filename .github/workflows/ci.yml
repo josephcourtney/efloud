@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Full validation (Python 3.14)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MODE: ci
+      UV_LOCKED: "true"
+      UV_PYTHON: "3.14"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+
+      - name: Sync locked development environment
+        run: uv sync
+
+      - name: Run canonical validation gate
+        run: uv run just check
+
+  compatibility:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.12"
+          - "3.13"
+    env:
+      MODE: ci
+      UV_LOCKED: "true"
+      UV_PYTHON: ${{ matrix.python-version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+
+      - name: Sync locked development environment
+        run: uv sync
+
+      - name: Run complete test suite
+        run: uv run just test

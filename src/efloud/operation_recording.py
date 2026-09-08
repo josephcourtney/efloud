@@ -19,6 +19,7 @@ from efloud.rsync_reconciliation import reconcile_rsync_inventory
 
 if TYPE_CHECKING:
     from efloud.derived import DerivedTask
+    from efloud.inventory import IntegrityExpectation
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
@@ -53,6 +54,22 @@ def _http_modified_timestamp(value: str | None) -> float | None:
         return None
 
 
+def _http_integrity_expectations(
+    source: SourceDefinition,
+    acquisition: HttpAcquisition,
+) -> tuple[IntegrityExpectation, ...]:
+    """Merge configured and adapter assertions, with configured expectations authoritative."""
+    expectations = list(source.expected_integrity)
+    seen = {(item.algorithm.lower(), item.digest.lower()) for item in expectations}
+    for expectation in acquisition.expected_integrity:
+        key = (expectation.algorithm.lower(), expectation.digest.lower())
+        if key in seen:
+            continue
+        expectations.append(expectation)
+        seen.add(key)
+    return tuple(expectations)
+
+
 def _record_http(
     repository: Repository,
     validation: ValidationService,
@@ -71,7 +88,7 @@ def _record_http(
     validation_batch = validation.validate_content(
         content,
         name=acquisition.destination.name,
-        expectations=acquisition.expected_integrity,
+        expectations=_http_integrity_expectations(source, acquisition),
         checked_at=acquisition.observed_at,
     )
     validation_payload = validation_batch.to_dict()

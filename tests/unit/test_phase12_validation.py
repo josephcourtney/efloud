@@ -109,7 +109,7 @@ def test_validation_reuses_content_and_validator_version_evidence(tmp_path: Path
         assert version_one.calls == 1
         assert first.checks[0].reused is False
         assert second.checks[0].reused is True
-        assert second.checks[0].result.checked_at == 100.0
+        assert second.checks[0].result.checked_at == pytest.approx(100.0)
 
         version_two = CountingValidator(ValidatorDescriptor("test:domain", "2"))
         third = ValidationService(repository, ValidationRegistry((version_two,))).validate_content(

@@ -119,7 +119,10 @@ class DatasetRecord:
         merged = {str(item.specification_id): item for item in decoded}
         merged.update({str(item.specification_id): item for item in self.specifications})
         ordered = tuple(sorted(merged.values(), key=lambda item: str(item.specification_id)))
-        object.__setattr__(self, "definition", dict(ordered[0].definition))
+        canonical_definition = dict(ordered[0].definition)
+        canonical_metadata = json_mapping_or_none(canonical_definition.get("metadata"))
+        object.__setattr__(self, "definition", canonical_definition)
+        object.__setattr__(self, "metadata", dict(canonical_metadata) if canonical_metadata is not None else {})
         object.__setattr__(self, "specifications", ordered)
         object.__setattr__(self, "specification_id", ordered[0].specification_id)
 

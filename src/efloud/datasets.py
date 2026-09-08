@@ -18,11 +18,11 @@ from efloud.repository_models import (
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
-    from efloud.repository import Repository
+    from efloud.repository_view import RepositoryView
 
 
 class DatasetSelector(Protocol):
-    def resolve(self, repository: Repository) -> tuple[ArtifactObservation, ...]: ...
+    def resolve(self, repository: RepositoryView) -> tuple[ArtifactObservation, ...]: ...
 
     def to_dict(self) -> JsonObject: ...
 
@@ -31,7 +31,7 @@ class DatasetSelector(Protocol):
 class ExactObservation:
     observation_id: ObservationId | str
 
-    def resolve(self, repository: Repository) -> tuple[ArtifactObservation, ...]:
+    def resolve(self, repository: RepositoryView) -> tuple[ArtifactObservation, ...]:
         observation = repository.observation(self.observation_id)
         if observation is None:
             msg = f"Unknown observation: {self.observation_id}"
@@ -46,7 +46,7 @@ class ExactObservation:
 class Latest:
     artifact_key: ArtifactKey | str
 
-    def resolve(self, repository: Repository) -> tuple[ArtifactObservation, ...]:
+    def resolve(self, repository: RepositoryView) -> tuple[ArtifactObservation, ...]:
         state = repository.latest_state(self.artifact_key)
         if state is None or isinstance(state, ArtifactAbsence):
             msg = f"Artifact is absent: {self.artifact_key}"
@@ -62,7 +62,7 @@ class LatestBefore:
     artifact_key: ArtifactKey | str
     timestamp: float
 
-    def resolve(self, repository: Repository) -> tuple[ArtifactObservation, ...]:
+    def resolve(self, repository: RepositoryView) -> tuple[ArtifactObservation, ...]:
         state = repository.latest_state(self.artifact_key, before=self.timestamp)
         if state is None or isinstance(state, ArtifactAbsence):
             msg = f"Artifact is absent at or before {self.timestamp}: {self.artifact_key}"
@@ -81,7 +81,7 @@ class LatestBefore:
 class LatestAll:
     before: float | None = None
 
-    def resolve(self, repository: Repository) -> tuple[ArtifactObservation, ...]:
+    def resolve(self, repository: RepositoryView) -> tuple[ArtifactObservation, ...]:
         selected: list[ArtifactObservation] = []
         for artifact_key in repository.artifact_keys():
             state = repository.latest_state(artifact_key, before=self.before)
@@ -168,7 +168,7 @@ class DatasetManifest:
 
 @dataclass(frozen=True, slots=True)
 class ImmutableDataset:
-    repository: Repository
+    repository: RepositoryView
     manifest: DatasetManifest
 
     @property
@@ -203,7 +203,7 @@ class ImmutableDataset:
 
 
 def resolve_dataset(
-    repository: Repository,
+    repository: RepositoryView,
     definition: DatasetDefinition,
     *,
     created_at: float | None = None,

@@ -110,7 +110,7 @@ def _inventory(source_id: SourceId, payload: JsonMapping, observed_at: float) ->
     raw_items = serialized.get("items")
     if not isinstance(raw_items, list):
         msg = "Collection adapter result inventory has no item list."
-        raise ValueError(msg)
+        raise TypeError(msg)
     coverage = json_mapping_or_none(serialized.get("coverage")) or {}
     scope_value = coverage.get("scope")
     scope = (

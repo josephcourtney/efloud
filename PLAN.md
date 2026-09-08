@@ -6,7 +6,7 @@ Purpose:
 - sequence work so each milestone leaves Efloud runnable, testable, and easier for downstream consumers to use
 - record ordering constraints and transitional considerations without duplicating architectural rationale or project status
 
-This file intentionally omits the completed migration history. Detailed historical evolution belongs in git history; current completion state belongs in `STATUS.md`.
+This file intentionally omits completed migration history. Detailed historical evolution belongs in git history; current completion state belongs in `STATUS.md`.
 
 ## Execution Rules
 
@@ -14,7 +14,7 @@ This file intentionally omits the completed migration history. Detailed historic
 - Significant durable decisions that are costly to reverse should be captured in ADRs before implementation.
 - Prefer deleting or isolating obsolete migration mechanisms over extending dual implementations.
 - Do not introduce destructive maintenance until repository identity, migration, and coordination semantics are explicit.
-- Keep consumer-facing reads acquisition-free.
+- Keep consumer-facing reads acquisition-free and non-mutating.
 - Keep the default implementation local and service-free.
 - Add protocols, storage backends, plugin discovery, or distributed features only from concrete requirements.
 - CI must verify the committed checkout; it must not make a dirty checkout pass by formatting or autofixing it in-place.
@@ -23,14 +23,13 @@ This file intentionally omits the completed migration history. Detailed historic
 
 The remaining work is ordered around the consumer boundary first, then cleanup and maintenance:
 
-1. harden persistence, source-definition history, identity semantics, and CI verification
-2. complete immutable dataset selection and temporal/coherence policies
-3. export and materialize immutable datasets safely for consumers that should not need Efloud internals
-4. collapse the public/API compatibility perimeter to one canonical implementation path
-5. add repository audit, coordination, recovery, and safe non-historical garbage collection
-6. add historical retention/pruning only if a concrete storage requirement justifies it
-7. add new source adapters only from concrete source requirements
-8. keep advanced storage/distribution features deferred until measurements or workflows justify them
+1. complete immutable dataset selection and temporal/coherence policies
+2. export and materialize immutable datasets safely for consumers that should not need Efloud internals
+3. collapse the public/API compatibility perimeter to one canonical implementation path
+4. add repository audit, coordination, recovery, and safe non-historical garbage collection
+5. add historical retention/pruning only if a concrete storage requirement justifies it
+6. add new source adapters only from concrete source requirements
+7. keep advanced storage/distribution features deferred until measurements or workflows justify them
 
 ## Cross-Phase Invariants
 
@@ -44,36 +43,13 @@ Every phase must preserve these constraints:
 - absence requires successful complete coverage of the relevant scope
 - source-relative paths are provenance/structure, not content identity
 - source configuration changes must not retroactively change the meaning of historical observations
+- historical evidence must not be assigned source-definition provenance that the repository cannot establish
 - validation evidence is immutable content evidence and failed required validation does not advance source state
 - deterministic derived reuse still records current-run observations and provenance
+- dataset specification identity, exact membership identity, and content equivalence remain distinct as established by ADR-0008
 - frozen datasets remain immutable after later ingestion
+- read-only repository access must not initialize, migrate, acquire, validate, or otherwise mutate repository state
 - compatibility manifests, mirrors, caches, and materializations are projections or conveniences, never authoritative databases
-
-## Phase 13: Repository And Persistence Hardening
-
-Objective:
-
-- make persisted semantics durable enough to support richer temporal datasets and later destructive maintenance
-
-Ordering constraint:
-
-- complete this phase before expanding dataset selection semantics or implementing GC
-
-Work:
-
-- make the Python 3.14 CI quality job non-mutating and prove that the committed checkout is already formatted/lint-clean
-- introduce explicit ordered SQLite schema migrations with upgrade tests from every supported historical schema version
-- preserve source-definition history instead of overwriting the only definition for a source ID
-- associate historical repository evidence with the source-definition revision required to interpret it reproducibly
-- define the identity relationship among dataset resolution/specification, exact observation membership, and content equivalence
-- record ADRs for source-definition revision semantics and dataset identity semantics if those decisions are not already unambiguous in `DESIGN.md`
-
-Acceptance criteria:
-
-- CI fails rather than silently fixing an unformatted or autofixable checkout
-- repositories created under supported older schema versions upgrade deterministically without loss of semantic state
-- changing a source URL, role, tags, filters, or integrity expectations does not change the interpretation of historical observations/snapshots
-- two dataset specifications that resolve to identical membership have explicitly defined identity/equivalence behavior rather than accidentally sharing whichever definition was persisted first
 
 ## Phase 14: Complete Immutable Datasets And Temporal Policies
 
@@ -85,8 +61,9 @@ Existing foundation to preserve:
 
 - exact/latest/latest-before/latest-all selectors
 - frozen exact observation membership
-- observation-membership and content-equivalence identities
-- read-only artifact open/verify
+- source-definition revision semantics from ADR-0007
+- dataset specification/membership/content identities from ADR-0008
+- read-only artifact open/verify and `ReadOnlyRepository`
 
 Work:
 
@@ -94,10 +71,11 @@ Work:
 - add selection by source, role, and tag using authoritative source-definition revisions
 - treat namespace initially as an artifact-key prefix/filter convention unless a concrete requirement justifies first-class namespace metadata
 - define temporal resolution against an explicit time basis; use repository observation time as the initial universal basis
+- define conservative behavior for migrated evidence whose source-definition revision is unknown
 - enforce complete-snapshot requirements without inferring absence from partial or failed coverage
 - add optional same-run and maximum-observation-skew constraints
 - permit datasets to require already-recorded validation evidence without triggering validation during resolution
-- implement the dataset specification/membership/content identity model established in Phase 13
+- preserve the dataset specification/membership/content identity model established in Phase 13/ADR-0008
 - define a versioned deterministic detached dataset manifest/lockfile containing exact members, observation/content IDs, roles, relevant source/snapshot revisions, constraint results, content metadata, and safe logical export paths
 - keep BVP catalog/verification parity as an external acceptance fixture using generic Efloud dataset APIs and detached manifests; do not add BVP-specific repository semantics
 
@@ -106,7 +84,9 @@ Acceptance criteria:
 - a frozen dataset never changes after newer ingestion
 - local repository root or blob placement does not affect semantic dataset identity
 - temporal resolution never infers absence from incomplete coverage
+- historical source/role/tag resolution uses the associated source-definition revision rather than current configuration
 - snapshot completeness, same-run, skew, and validation requirements are explicit and testable
+- resolution through read-only access performs no migration or mutation
 - detached dataset metadata is deterministic and sufficient for a downstream consumer to understand exact membership without reading Efloud's SQLite schema
 - downstream BVP catalog behavior can be represented through generic Efloud dataset semantics
 
@@ -142,9 +122,9 @@ Objective:
 
 Work:
 
-- make `Engine` and `Repository` the canonical operational surfaces
+- make `Engine`, `Repository`, and deliberate read-only/dataset interfaces the canonical operational surfaces
 - make legacy `sync(cfg)` delegate to canonical orchestration and deprecate or remove it according to compatibility policy
-- remove `RepositorySyncRecorder`, transient manifest-import paths, and other migration-only infrastructure when no supported path requires them
+- remove `RepositorySyncRecorder`, transient manifest-import paths, schema-v2 migration substrate, and other migration-only infrastructure when no supported path requires them
 - isolate remaining manifest/mirror serializers and inspectors under explicit compatibility code
 - replace compatibility-manifest-based materialization helpers with repository/dataset-backed equivalents
 - reduce top-level exports to stable semantic APIs plus deliberate adapter/validator extension contracts
@@ -155,6 +135,7 @@ Acceptance criteria:
 - one canonical ingestion path and one authoritative state model remain
 - no internal feature depends on compatibility JSON as a database
 - compatibility code is isolated and removable
+- migration-only schema implementation layers are removed once supported upgrades no longer require them
 - the documented top-level API contains semantic interfaces rather than migration-history implementation details
 
 ## Phase 17: Repository Maintenance, Audit, Recovery, And Safe GC
@@ -165,9 +146,9 @@ Objective:
 
 Work:
 
-- add repository-wide writer/maintenance coordination so destructive maintenance cannot race acquisition, validation staging, or metadata mutation
+- add repository-wide writer/maintenance coordination so destructive maintenance cannot race acquisition, validation staging, schema migration, or metadata mutation
 - define recovery/reporting for abandoned `running` runs and operations after crashes
-- implement repository audit/fsck over metadata references, blob availability, digest verification, source snapshots, datasets, and provenance edges
+- implement repository audit/fsck over metadata references, blob availability, digest verification, source snapshots, datasets, source-definition revisions, and provenance edges
 - compute and explain reachability across observations, trees, datasets, provenance, validations, and materializations
 - detect CAS blobs left by interrupted metadata commits and content rows with no semantic references
 - implement dry-run-first cleanup with explicit grace periods and reason codes for every proposed deletion
@@ -178,7 +159,7 @@ Acceptance criteria:
 - maintenance cannot run destructively while a writer holds the repository
 - audit reports missing/corrupt blobs and dangling metadata without mutating the repository
 - dry-run explains every proposed deletion
-- safe GC removes only true orphan/unreferenced storage objects and cannot invalidate any existing dataset, observation, snapshot, provenance edge, or validation record
+- safe GC removes only true orphan/unreferenced storage objects and cannot invalidate any existing dataset, observation, snapshot, provenance edge, source-definition revision, or validation record
 
 ## Phase 18: Historical Retention And Pruning (Contingent)
 
@@ -190,7 +171,7 @@ This is not an automatic continuation of safe GC.
 
 Work, if activated:
 
-- define explicit retention roots and policies for observations, source snapshots, runs, datasets, derivations, and validation evidence
+- define explicit retention roots and policies for observations, source snapshots, source-definition revisions, runs, datasets, derivations, and validation evidence
 - define deletion semantics so metadata never remains while required content has been intentionally removed
 - preserve retained datasets and required transitive provenance
 - provide dry-run impact reports before destructive pruning
@@ -199,6 +180,7 @@ Work, if activated:
 Acceptance criteria:
 
 - pruning cannot invalidate retained datasets or retained provenance
+- historical evidence never survives while the source-definition revision required to interpret it has been pruned
 - every removed historical object is attributable to an explicit retention policy
 - no surviving metadata claims unavailable intentionally-pruned content
 
@@ -249,4 +231,5 @@ Every active phase should be completed only when:
 - the complete test suite passes across every Python minor version declared by `project.requires-python`
 - migration tests cover any metadata schema change
 - repository invariants receive focused regression tests
+- read-only paths are tested to prove that inspection does not initialize, migrate, or mutate state
 - downstream acceptance fixtures exercise generic Efloud APIs rather than importing private repository implementation details

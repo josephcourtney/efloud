@@ -79,6 +79,10 @@ def _source_operation_parameters(
         "url": source.url,
         "adapter_capabilities": capabilities,
     }
+    if source.expected_integrity:
+        expectations: JsonArray = []
+        expectations.extend(expectation.to_dict() for expectation in source.expected_integrity)
+        payload["expected_integrity"] = expectations
     if snapshot_id is not None:
         payload["current_snapshot_id"] = snapshot_id
     return payload

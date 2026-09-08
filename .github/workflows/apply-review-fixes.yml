@@ -103,6 +103,9 @@ jobs:
       - name: Format changed Python
         run: uv run ruff format src/ tests/
 
+      - name: Apply safe lint fixes
+        run: uv run ruff check --fix src/ tests/
+
       - name: Run canonical quality gate
         run: uv run just check
 

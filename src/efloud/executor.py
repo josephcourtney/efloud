@@ -16,8 +16,7 @@ from efloud.adapters import (
 )
 from efloud.collection_recording import record_collection_acquisition
 from efloud.derived import RepositoryDerivedTask
-from efloud.json_types import JsonObject, canonical_json_bytes if False else JsonObject
-from efloud.json_types import copy_json_mapping, json_mapping_or_none
+from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_none
 from efloud.planning import PlannedOperation, SyncPlan
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_compat import repository_manifest
@@ -25,6 +24,7 @@ from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
 from efloud.rsync_reconciliation import reconcile_rsync_inventory
 
 if TYPE_CHECKING:
+    from efloud.derived import DerivedTask
     from efloud.models import EngineConfig
     from efloud.repository import Repository
 
@@ -48,20 +48,24 @@ class SyncExecutionResult:
 
     @property
     def observations(self) -> tuple[ObservationId, ...]:
+        """Observation identifiers produced by all executed operations."""
         return tuple(observation for operation in self.operations for observation in operation.observation_ids)
 
     @property
-    def skipped_source_ids(self) -> tuple[str, ...]:
+    def blocked_source_ids(self) -> tuple[str, ...]:
+        """Source identifiers whose planned operations did not execute successfully."""
         return tuple(
             sorted(
                 operation.operation_key.removeprefix("source:")
                 for operation in self.operations
-                if operation.operation_key.startswith("source:") and operation.status in {"not-executed", "blocked"}
+                if operation.operation_key.startswith("source:")
+                and operation.status in {"not-executed", "blocked"}
             )
         )
 
     @property
     def ok(self) -> bool:
+        """Whether every operation either succeeded or was intentionally not executed."""
         return all(operation.status in {"succeeded", "not-executed"} for operation in self.operations)
 
 
@@ -197,7 +201,7 @@ def _record_http(
         observed_at=acquisition.observed_at,
         evidence=evidence,
     )
-    details = {"observation_id": str(observation.observation_id)}
+    details: JsonObject = {"observation_id": str(observation.observation_id)}
     context.repository.finish_operation(operation_id, status="succeeded", details=details)
     return OperationExecutionResult(
         operation.operation_key,
@@ -230,7 +234,9 @@ def _record_incomplete_rsync(
         if path is None or not path.exists():
             continue
         if path.is_symlink():
-            entries.append(TreeEntry(relative_path=relative_path, kind="symlink", target=path.readlink().as_posix()))
+            entries.append(
+                TreeEntry(relative_path=relative_path, kind="symlink", target=path.readlink().as_posix())
+            )
             continue
         if path.is_dir():
             entries.append(TreeEntry(relative_path=relative_path, kind="directory"))
@@ -328,7 +334,7 @@ def _record_rsync(
     }
     if result.error is not None:
         details["error"] = result.error
-    status = "succeeded" if result.complete else "failed"
+    status: ExecutionStatus = "succeeded" if result.complete else "failed"
     context.repository.finish_operation(operation_id, status=status, details=details)
     return OperationExecutionResult(
         operation.operation_key,
@@ -389,7 +395,7 @@ def _current_inputs(repository: Repository, source_ids: tuple[str, ...]) -> tupl
     return tuple(sorted(observations, key=str))
 
 
-def _derived_task(context: _ExecutionContext, name: str):
+def _derived_task(context: _ExecutionContext, name: str) -> DerivedTask | None:
     return next((task for task in context.config.derived_tasks if task.name == name), None)
 
 
@@ -412,13 +418,13 @@ async def _execute_derived(
             manifest=manifest,
             sources=tuple(context.config.sources),
         )
-    except Exception as exc:  # ruff: ignore[blind-except] - derived tasks are extension failure domains and must not abort independent operations.
-        details = {"error": f"{type(exc).__name__}: {exc}"}
+    except Exception as exc:  # ruff: ignore[blind-except] - extension tasks are isolated operation failure domains.
+        details: JsonObject = {"error": f"{type(exc).__name__}: {exc}"}
         context.repository.finish_operation(operation_id, status="failed", details=details)
         return OperationExecutionResult(operation.operation_key, "failed", details=details)
     mapping = json_mapping_or_none(raw_payload)
     if mapping is None:
-        details = {"error": "Derived task returned a non-JSON result."}
+        details: JsonObject = {"error": "Derived task returned a non-JSON result."}
         context.repository.finish_operation(operation_id, status="failed", details=details)
         return OperationExecutionResult(operation.operation_key, "failed", details=details)
     payload = copy_json_mapping(mapping)
@@ -469,7 +475,7 @@ async def _execute_source(
     source = _source_by_id(context.config, operation.source_id)
     adapter = context.adapters.adapter_for(source)
     if adapter is None:
-        details = {"error": f"No adapter registered for {source.kind.value}."}
+        details: JsonObject = {"error": f"No adapter registered for {source.kind.value}."}
         context.repository.finish_operation(operation_id, status="failed", details=details)
         return OperationExecutionResult(operation.operation_key, "failed", details=details)
     acquisition = await adapter.acquire(
@@ -503,7 +509,7 @@ async def _execute_operation(
             details={"error": "operation cancelled"},
         )
         raise
-    except Exception as exc:  # ruff: ignore[blind-except] - adapter/task extensions are isolated so sibling planned operations can continue.
+    except Exception as exc:  # ruff: ignore[blind-except] - adapter/task extensions are isolated sibling failure domains.
         details: JsonObject = {"error": f"{type(exc).__name__}: {exc}"}
         context.repository.finish_operation(operation_id, status="failed", details=details)
         return OperationExecutionResult(operation.operation_key, "failed", details=details)
@@ -562,9 +568,7 @@ async def _execute_operations(context: _ExecutionContext) -> tuple[OperationExec
         executable: list[PlannedOperation] = []
         for operation in ready:
             failed_dependencies = tuple(
-                dependency
-                for dependency in operation.dependencies
-                if results[dependency].status != "succeeded"
+                dependency for dependency in operation.dependencies if results[dependency].status != "succeeded"
             )
             if failed_dependencies:
                 results[operation.operation_key] = _blocked_operation(context, operation, failed_dependencies)
@@ -608,7 +612,8 @@ class SyncExecutor:
                 plan_id=plan.plan_id,
                 run_id=None,
                 operations=tuple(
-                    OperationExecutionResult(operation.operation_key, "not-executed") for operation in plan.operations
+                    OperationExecutionResult(operation.operation_key, "not-executed")
+                    for operation in plan.operations
                 ),
             )
 
@@ -635,7 +640,7 @@ class SyncExecutor:
                     )
             repository.finish_run(run_id, status="cancelled")
             raise
-        except Exception:
+        except Exception:  # ruff: ignore[blind-except] - executor closes lifecycle state before propagating failures.
             for operation in repository.metadata.operations_for_run(run_id):
                 if operation.status == "running":
                     repository.finish_operation(

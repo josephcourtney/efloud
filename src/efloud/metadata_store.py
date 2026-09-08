@@ -184,6 +184,8 @@ class MetadataStore(Protocol):  # ruff: ignore[too-many-public-methods] - semant
         parameters: JsonObject,
     ) -> None: ...
 
+    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...
+
     def finish_operation(
         self,
         operation_id: OperationId,

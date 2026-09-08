@@ -258,6 +258,22 @@ def _repository_local_path(entry: Mapping[str, object]) -> Path | None:
     return None
 
 
+def _source_locator_payload(locator: str, repository_locator: object) -> dict[str, Any]:
+    if not isinstance(repository_locator, dict):
+        return {
+            "path": locator,
+            "resolved_locator": None,
+            "value": None,
+            "error": "Repository locator evaluation returned no result.",
+        }
+    payload = dict(repository_locator)
+    requested = payload.get("requested")
+    resolved = payload.get("resolved")
+    payload["path"] = requested if isinstance(requested, str) else locator
+    payload["resolved_locator"] = resolved if isinstance(resolved, str) else None
+    return payload
+
+
 def _repository_source_payload(
     source: SourceDefinition,
     *,
@@ -291,12 +307,11 @@ def _repository_source_payload(
 
         if source.kind.value in {"HTTP", "REST"}:
             repository_payload = RepositoryQueryService(repository).query(f"artifact:source:{source.id}#{locator}")
-            locator_payload = repository_payload.get("locator")
+            locator_payload = _source_locator_payload(locator, repository_payload.get("locator"))
             payload["locator"] = locator_payload
-            if isinstance(locator_payload, dict):
-                error = locator_payload.get("error")
-                if isinstance(error, str):
-                    warnings.append(error)
+            error = locator_payload.get("error")
+            if isinstance(error, str):
+                warnings.append(error)
             return payload
 
         result: dict[str, Any] = {

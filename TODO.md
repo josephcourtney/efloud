@@ -8,34 +8,7 @@ Rules:
 - Remove completed items before committing.
 - Prefer concrete references and explicit acceptance criteria.
 
-## 1. Verify Phase 12 validation-as-evidence implementation
-
-Files: repository-wide as required
-
-- run `just syntax; just format; just lint; just typecheck; just test`
-- verify `tests/unit/test_phase12_validation.py` remains green
-- verify existing repository ingestion/orphan-failure tests still preserve atomic
-  content-metadata/observation behavior
-- verify existing Engine, query, collection/fanout, rsync reconciliation, Phase 10,
-  and Phase 11 regression coverage remains green
-- verify configured HTTP/REST `IntegrityExpectation` values are enforced even when a
-  custom adapter omits them from its acquisition result
-- verify required failed validation creates no successful source observation or
-  source snapshot while retaining immutable content and validation evidence
-- verify unchanged content plus an unchanged validator identity/version reuses prior
-  validation evidence
-- verify domain validators can be injected through `ValidationRegistry` without
-  efloud importing domain packages
-- verify `content:<content-id>` and observation queries expose repository-backed
-  validation evidence
-- verify no new unjustified lint/type suppressions were introduced
-
-Acceptance: syntax, formatting, lint, typecheck, and the full test suite pass from a
-clean checkout. Required integrity failures prevent source advancement, validation
-failures do not mutate stored bytes, validation evidence is reusable by content plus
-validator identity/version, and domain validators remain extension-provided.
-
-## 2. Begin Phase 13 immutable-dataset and temporal-policy completion
+## 1. Complete Phase 13 immutable-dataset and temporal-policy work
 
 Files: `src/efloud/datasets.py`, repository/query surfaces, focused dataset tests, and
 BVP parity fixtures where available
@@ -60,3 +33,18 @@ resolution never infers absence from incomplete coverage, local root/blob placem
 does not affect dataset identity, requested temporal/coherence constraints are
 explicit and testable, and downstream BVP catalog behavior can be represented through
 generic efloud APIs.
+
+## 2. Keep continuous integration authoritative
+
+Files: `.github/workflows/ci.yml`, `justfile`, project test configuration as required
+
+- keep the Python 3.14 CI job behaviorally aligned with the normal local
+  syntax/format/lint/typecheck/test sequence
+- keep the complete pytest suite running on Python 3.12 and 3.13 while those versions
+  remain in `project.requires-python`
+- preserve locked dependency resolution and read-only workflow permissions
+- treat new CI failures as repository regressions rather than bypassing checks in the
+  workflow
+
+Acceptance: every push to `main` and pull request receives green CI only after the
+full Python 3.14 development gate and complete tests across Python 3.12-3.14 succeed.

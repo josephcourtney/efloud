@@ -202,6 +202,7 @@ def root_payload(cfg: EngineConfig) -> dict[str, Any]:
         "usage": [
             "query root",
             "query source:<source-id>",
+            "query content:<content-id>",
             "query store:repository_metadata",
             "query store:repository_objects",
             "query store:sync_manifest",
@@ -237,6 +238,19 @@ def query_target(raw: str, *, cfg: EngineConfig, fetch_requested: bool = False) 
             msg = "Locators are not supported for index targets."
             raise ValueError(msg)
         return index_payload(target.identifier, cfg=cfg)
+
+    if target.kind == "content":
+        if target.identifier is None:
+            msg = "Content target missing identifier."
+            raise ValueError(msg)
+        if target.locator is not None:
+            msg = "Locators are not supported for content targets."
+            raise ValueError(msg)
+        if not repository_exists(cfg):
+            msg = "Repository metadata is not initialized; content validation evidence is unavailable."
+            raise ValueError(msg)
+        with Repository(Path(cfg.root)) as repository:
+            return RepositoryQueryService(repository).query(f"content:{target.identifier}")
 
     source = source_by_id_or_alias(target.identifier or "", cfg.sources, cfg.source_aliases)
     if source is None:

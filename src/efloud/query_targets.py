@@ -5,7 +5,7 @@ from typing import Literal
 
 from efloud.locator import split_locator
 
-TargetKind = Literal["root", "store", "source", "index"]
+TargetKind = Literal["root", "store", "source", "index", "content"]
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,7 @@ _PREFIXES: dict[str, TargetKind] = {
     "store:": "store",
     "source:": "source",
     "index:": "index",
+    "content:": "content",
 }
 
 
@@ -41,7 +42,10 @@ def parse_query_target(raw: str) -> QueryTarget:
                 raise ValueError(msg)
             return QueryTarget(kind=kind, identifier=identifier, locator=locator, raw=text)
 
-    msg = f"Unsupported query target: {raw!r}. Use one of: root, source:<id>, store:<id>, index:<id>."
+    msg = (
+        f"Unsupported query target: {raw!r}. "
+        "Use one of: root, source:<id>, store:<id>, index:<id>, content:<id>."
+    )
     raise ValueError(msg)
 
 

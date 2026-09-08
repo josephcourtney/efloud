@@ -31,7 +31,7 @@ from efloud.repository_models import (
     run_id_for,
     stable_id,
 )
-from efloud.sqlite_metadata import SQLiteMetadataStore
+from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

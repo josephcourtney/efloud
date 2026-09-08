@@ -103,10 +103,10 @@ def test_wheel_installs_and_public_api_runs(tmp_path: Path) -> None:
             "-c",
             (
                 "from pathlib import Path; "
-                "from efloud import EngineConfig, SourceDefinition, "
-                "SourceKind, parse_query_target; "
+                "from efloud import DatasetDefinition, EngineConfig, Latest, "
+                "SourceDefinition, SourceKind; "
                 "cfg = EngineConfig("
-                "root=Path('mirror'), "
+                "root=Path('repository'), "
                 "sources=[SourceDefinition("
                 "id='example', "
                 "description='Example', "
@@ -114,9 +114,9 @@ def test_wheel_installs_and_public_api_runs(tmp_path: Path) -> None:
                 "kind=SourceKind.HTTP"
                 ")]"
                 "); "
-                "target = parse_query_target('source:example'); "
+                "definition = DatasetDefinition.from_selectors(Latest('source:example')); "
                 "assert cfg.sources[0].id == 'example'; "
-                "assert target.identifier == 'example'; "
+                "assert definition.selections[0].selector.artifact_key == 'source:example'; "
                 "print('ok')"
             ),
         ],

@@ -1,115 +1,113 @@
 # import-linter.toml
 #
-# Run with:
-#   lint-imports --config import-linter.toml
+# These contracts describe the repository-centered architecture in DESIGN.md.
+# Keep them aligned with modules that actually exist; prospective package layouts
+# belong in design documentation, not in an active validation gate.
 #
 [tool.importlinter]
   root_package              = "efloud"
   include_external_packages = false
 
-# -----------------------------------------------------------------------------
-# 1) Global layered architecture (current packages only)
-# -----------------------------------------------------------------------------
-# "layers" is top -> bottom. A layer may import the same layer and lower layers only.
+# Domain identity and value objects are the lowest semantic layer. They may not
+# acquire orchestration, compatibility, or presentation dependencies.
 [[importlinter.contracts]]
-  name = "enforce package layering"
-  type = "layers"
-  layers = [
-    "efloud.cli",
-    "efloud.app",
-    "efloud.api",
-    "efloud.support",
-    "efloud.rules",
-    "efloud.domain | efloud.resources",
-  ]
-
-
-# -----------------------------------------------------------------------------
-# 2) Domain must be independent (most important stability boundary)
-# -----------------------------------------------------------------------------
-[[importlinter.contracts]]
-  name = "domain is independent"
-  type = "independence"
-  modules = [
-    "efloud.domain",
-  ]
-
-# -----------------------------------------------------------------------------
-# 3) CLI must not reach into implementation internals directly
-# -----------------------------------------------------------------------------
-[[importlinter.contracts]]
-  name              = "cli does not import api directly"
-  type              = "forbidden"
-  source_modules    = ["efloud.cli"]
-  forbidden_modules = ["efloud.api"]
-
-# -----------------------------------------------------------------------------
-# 4) Public API should not depend on CLI/App
-# -----------------------------------------------------------------------------
-[[importlinter.contracts]]
-  name = "api isolated from cli app"
+  name = "repository models stay below orchestration"
   type = "forbidden"
-  source_modules = ["efloud.api"]
+  source_modules = ["efloud.repository_models"]
   forbidden_modules = [
-    "efloud.cli",
-    "efloud.app",
+    "efloud.engine",
+    "efloud.executor",
+    "efloud.planner",
+    "efloud.query",
+    "efloud.repository_compat",
+    "efloud.repository_query",
+    "efloud.repository_status",
+    "efloud.sync",
   ]
 
-# -----------------------------------------------------------------------------
-# 5) Support helpers are low-level helpers, not feature orchestrators
-# -----------------------------------------------------------------------------
+# Storage implementations are infrastructure beneath repository semantics. They
+# must not reach upward into planning/execution or compatibility projections.
 [[importlinter.contracts]]
-  name = "support does not depend on cli app api"
-  type = "forbidden"
-  source_modules = ["efloud.support"]
-  forbidden_modules = [
-    "efloud.cli",
-    "efloud.app",
-    "efloud.api",
-  ]
-
-# -----------------------------------------------------------------------------
-# 6) CLI submodule cohesion (optional but useful)
-# -----------------------------------------------------------------------------
-# Keep CLI parser/resolve/context logic local; avoid accidental imports from commands into nvim.
-[[importlinter.contracts]]
-  name = "cli resolver stays out of app api"
+  name = "storage stays below orchestration"
   type = "forbidden"
   source_modules = [
-    "efloud.cli.resolve",
-    "efloud.cli.params",
-    "efloud.cli.context",
+    "efloud.blob_store",
+    "efloud.metadata_store",
+    "efloud.schema_migrations",
+    "efloud.sqlite_metadata",
+    "efloud.sqlite_metadata_v3",
   ]
   forbidden_modules = [
-    "efloud.app",
-    "efloud.api",
+    "efloud.engine",
+    "efloud.executor",
+    "efloud.planner",
+    "efloud.repository_compat",
+    "efloud.repository_query",
+    "efloud.repository_status",
+    "efloud.sync",
   ]
 
-# -----------------------------------------------------------------------------
-# 7) No cross-feature top-level shortcuts once refactor is complete
-# -----------------------------------------------------------------------------
-# Prevent reintroducing "grab bag" modules.
+# Read-only consumers must use RepositoryView rather than coupling themselves to
+# the mutable Repository implementation.
 [[importlinter.contracts]]
-  name = "legacy top-level internal modules are not imported"
+  name = "datasets do not depend on mutable repository"
+  type = "forbidden"
+  source_modules = ["efloud.datasets"]
+  forbidden_modules = ["efloud.repository"]
+
+[[importlinter.contracts]]
+  name = "repository view does not depend on mutable repository"
+  type = "forbidden"
+  source_modules = ["efloud.repository_view"]
+  forbidden_modules = ["efloud.repository"]
+
+# Planning is deterministic description of work and must remain independent of
+# execution side effects.
+[[importlinter.contracts]]
+  name = "planning does not depend on execution"
   type = "forbidden"
   source_modules = [
-    "efloud.cli",
-    "efloud.app",
-    "efloud.api",
-    "efloud.rules",
-    "efloud.support",
-    "efloud.domain",
-    "efloud.resources",
+    "efloud.planning",
+    "efloud.planner",
   ]
   forbidden_modules = [
-    "efloud.core",
-    "efloud.screen",
-    "efloud.types",
-    "efloud.utils",
+    "efloud.engine",
+    "efloud.executor",
+    "efloud.sync",
   ]
 
-# -----------------------------------------------------------------------------
-# Future packages (planned, not currently present)
-# -----------------------------------------------------------------------------
-# Keep prospective nvim/plugins contracts here as commented stubs until those
-# packages are introduced to avoid inflating the active architecture surface.
+# Protocol adapters implement acquisition details; they should not import the
+# engine/executor that coordinates them.
+[[importlinter.contracts]]
+  name = "adapters do not depend on orchestration"
+  type = "forbidden"
+  source_modules = [
+    "efloud.adapters",
+    "efloud.collection_adapter",
+    "efloud.http_adapter",
+    "efloud.rsync_adapter",
+  ]
+  forbidden_modules = [
+    "efloud.engine",
+    "efloud.executor",
+    "efloud.sync",
+  ]
+
+# Compatibility manifests and mirror projections are outward-facing adapters,
+# never dependencies of the authoritative repository/read model.
+[[importlinter.contracts]]
+  name = "repository core does not depend on compatibility projections"
+  type = "forbidden"
+  source_modules = [
+    "efloud.datasets",
+    "efloud.reconciliation",
+    "efloud.repository",
+    "efloud.repository_view",
+    "efloud.validation",
+  ]
+  forbidden_modules = [
+    "efloud.manifest",
+    "efloud.repository_compat",
+    "efloud.repository_state",
+    "efloud.status",
+  ]

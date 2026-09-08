@@ -87,8 +87,7 @@ class RepositoryStatusService:
             "source": _source_record_payload(source),
             "latest_snapshot": _snapshot_payload(latest_snapshot),
             "operations": [
-                _operation_record_payload(operation)
-                for operation in self.repository.operations_for_source(normalized)
+                _operation_record_payload(operation) for operation in self.repository.operations_for_source(normalized)
             ],
         }
 
@@ -102,8 +101,7 @@ class RepositoryStatusService:
             "target_kind": "run",
             "run": _run_record_payload(run),
             "operations": [
-                _operation_record_payload(operation)
-                for operation in self.repository.operations_for_run(normalized)
+                _operation_record_payload(operation) for operation in self.repository.operations_for_run(normalized)
             ],
         }
 

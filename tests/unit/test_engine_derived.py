@@ -5,11 +5,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import efloud.engine as engine_module
+from efloud.adapters import CollectionAcquisition, CollectionSourceAdapter
 from efloud.engine import Engine
 from efloud.fanout import RestBaseFanoutTask
-from efloud.models import EngineConfig, SyncResult
+from efloud.inventory import InventoryCoverage, InventoryItem, SourceInventory
+from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
+from efloud.repository_models import ArtifactKey, SourceId
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 if TYPE_CHECKING:
@@ -41,51 +43,55 @@ def test_engine_records_rest_base_fanout_result(tmp_path: Path, monkeypatch: pyt
         dest_subdir="fanout",
     )
     config = EngineConfig(root=tmp_path, sources=[source], derived_tasks=(task,))
+    inventory = SourceInventory(
+        source_id=SourceId(source.id),
+        observed_at=101.0,
+        coverage=InventoryCoverage(complete=True),
+        items=(
+            InventoryItem(
+                item_id="alpha",
+                artifact_key=ArtifactKey("source:collection:item:alpha"),
+                locator=f"{source.url}/alpha",
+                source_path="alpha.json",
+            ),
+        ),
+    )
 
-    async def fake_sync(_config: EngineConfig) -> SyncResult:
+    async def fake_acquire(self, context):
+        del self, context
         await asyncio.sleep(0)
-        return SyncResult(
-            ok=True,
-            root=tmp_path,
-            manifest_path=None,
-            manifest={
-                "version": 1,
-                "root": str(tmp_path),
-                "results": {
-                    "http": {},
-                    "rsync": {},
-                    "derived": {
-                        "fanout": {
-                            "source_id": "collection",
-                            "kind": "REST_BASE",
-                            "request": {
-                                "base_url": source.url,
-                                "fanout_root": str(item_path.parent),
-                                "response_mode": "json",
-                            },
-                            "enumeration": {"complete": True, "item_count": 1},
-                            "entries": {
-                                "alpha": {
-                                    "status": "ok",
-                                    "item_id": "alpha",
-                                    "dest": str(item_path),
-                                    "request": {
-                                        "url": f"{source.url}/alpha",
-                                        "fanout_path": "alpha.json",
-                                    },
-                                    "metadata": {},
-                                }
-                            },
-                            "ok": 1,
-                            "err": 0,
-                        }
-                    },
+        return CollectionAcquisition(
+            source_id=source.id,
+            status="succeeded",
+            task_name="fanout",
+            observed_at=101.0,
+            payload={
+                "source_id": source.id,
+                "kind": "REST_BASE",
+                "request": {
+                    "base_url": source.url,
+                    "fanout_root": str(item_path.parent),
+                    "response_mode": "json",
                 },
-                "errors": [],
+                "inventory": inventory.to_dict(),
+                "entries": {
+                    "alpha": {
+                        "status": "ok",
+                        "item_id": "alpha",
+                        "dest": str(item_path),
+                        "request": {
+                            "url": f"{source.url}/alpha",
+                            "fanout_path": "alpha.json",
+                        },
+                        "metadata": {},
+                    }
+                },
+                "ok": 1,
+                "err": 0,
             },
         )
 
-    monkeypatch.setattr(engine_module, "legacy_sync", fake_sync)
+    monkeypatch.setattr(CollectionSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync())
         assert result.skipped_source_ids == ()
@@ -96,3 +102,5 @@ def test_engine_records_rest_base_fanout_result(tmp_path: Path, monkeypatch: pyt
         snapshot = engine.repository.latest_source_snapshot("collection")
         assert snapshot is not None
         assert snapshot.complete
+        operation = engine.repository.metadata.operations_for_run(result.repository_run_id)[0]
+        assert operation.producer.producer_id == "efloud:collection"

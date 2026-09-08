@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     )
 
 
-class RepositoryView(Protocol):
+class RepositoryView(Protocol):  # ruff: ignore[too-many-public-methods] - semantic read capability intentionally spans repository vocabulary.
     """Read-only semantic repository capability used by queries and datasets.
 
     Implementations may be backed by a mutable :class:`Repository` or by a

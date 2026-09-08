@@ -146,6 +146,8 @@ class MetadataStore(Protocol):  # ruff: ignore[too-many-public-methods] - semant
         limit: int = 50,
     ) -> tuple[OperationRecord, ...]: ...
 
+    def record_content(self, content: ContentRef) -> None: ...
+
     def record_observation_bundle(
         self,
         *,
@@ -170,6 +172,15 @@ class MetadataStore(Protocol):  # ruff: ignore[too-many-public-methods] - semant
     def materializations_for(self, content_id: ContentId) -> tuple[MaterializationRecord, ...]: ...
 
     def record_validation(self, result: ValidationResult) -> None: ...
+
+    def validation(
+        self,
+        content_id: ContentId,
+        validator: str,
+        validator_version: str,
+    ) -> ValidationResult | None: ...
+
+    def validations_for(self, content_id: ContentId) -> tuple[ValidationResult, ...]: ...
 
     def observation(self, observation_id: ObservationId) -> ArtifactObservation | None: ...
 

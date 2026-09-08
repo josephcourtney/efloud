@@ -4,12 +4,14 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, BinaryIO, Protocol
 
+from efloud.metadata_envelopes import dataset_specification_id
 from efloud.metadata_store import DatasetMemberRecord, DatasetRecord
 from efloud.repository_models import (
     ArtifactAbsence,
     ArtifactKey,
     ArtifactObservation,
     DatasetId,
+    DatasetSpecificationId,
     ObservationId,
     stable_id,
 )
@@ -122,6 +124,11 @@ class DatasetDefinition:
             "metadata": dict(self.metadata),
         }
 
+    @property
+    def specification_id(self) -> DatasetSpecificationId:
+        """Stable identity of the intensional dataset definition."""
+        return dataset_specification_id(self.to_dict())
+
 
 @dataclass(frozen=True, slots=True)
 class DatasetManifest:
@@ -131,6 +138,11 @@ class DatasetManifest:
     definition: JsonObject
     members: tuple[DatasetMemberRecord, ...]
     metadata: JsonObject = field(default_factory=dict)
+
+    @property
+    def specification_id(self) -> DatasetSpecificationId:
+        """Stable identity of the definition that produced this manifest."""
+        return dataset_specification_id(self.definition)
 
     def to_record(self) -> DatasetRecord:
         return DatasetRecord(
@@ -162,6 +174,10 @@ class ImmutableDataset:
     @property
     def id(self) -> DatasetId:
         return self.manifest.dataset_id
+
+    @property
+    def specification_id(self) -> DatasetSpecificationId:
+        return self.manifest.specification_id
 
     @property
     def content_identity(self) -> str:

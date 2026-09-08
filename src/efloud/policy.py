@@ -78,17 +78,15 @@ class DefaultSyncPolicy:
         del cfg
         return tuple(source.mirror_paths or ()) if source.mirror_mode is not None else ()
 
-    @classmethod
+    @staticmethod
     def rsync_paths_for_source(
-        cls,
         *,
         source: SourceDefinition,
         cache_root: Path,
         manifest: NormalizedManifest | None,
     ) -> tuple[str, ...] | None:
         del cache_root, manifest
-        scope = cls.source_scope(source, _unused_engine_config(source))
-        return scope or None
+        return source.mirror_paths if source.mirror_mode is not None else None
 
 
 @dataclass(frozen=True)
@@ -150,17 +148,9 @@ class RoleDrivenSyncPolicy:
         manifest: NormalizedManifest | None,
     ) -> tuple[str, ...] | None:
         del cache_root, manifest
-        scope = self.source_scope(source, _unused_engine_config(source))
-        return scope or None
-
-
-def _unused_engine_config(source: SourceDefinition) -> EngineConfig:
-    """Minimal compatibility value for legacy policy methods whose cfg is unused."""
-    from pathlib import Path
-
-    from efloud.models import EngineConfig
-
-    return EngineConfig(root=Path("."), sources=[source])
+        if self.rsync_mode is None:
+            return source.mirror_paths if source.mirror_mode is not None else None
+        return source.mirror_paths if source.mirror_mode is self.rsync_mode else None
 
 
 __all__ = ["DefaultSyncPolicy", "RefreshDecision", "RoleDrivenSyncPolicy", "SyncPolicy"]

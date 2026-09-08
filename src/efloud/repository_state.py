@@ -14,7 +14,7 @@ from efloud.state import HASH_ALGORITHM, MirrorSourceState, MirrorState, MirrorS
 
 if TYPE_CHECKING:
     from efloud.models import EngineConfig
-    from efloud.repository import Repository
+    from efloud.repository_view import RepositoryView
 
 
 @dataclass(slots=True)
@@ -73,14 +73,14 @@ def _finalize(directory: _Directory) -> MirrorStateNode:
     )
 
 
-def _source_has_complete_baseline(repository: Repository, source_id: SourceId) -> bool:
-    for snapshot in repository.metadata.source_snapshots_for(source_id, limit=1000):
+def _source_has_complete_baseline(repository: RepositoryView, source_id: SourceId) -> bool:
+    for snapshot in repository.source_snapshots_for(source_id, limit=1000):
         if snapshot.complete and snapshot.evidence.get("reconciliation_complete") is True:
             return True
     return False
 
 
-def _current_source_files(repository: Repository, source_id: SourceId) -> tuple[ArtifactObservation, ...]:
+def _current_source_files(repository: RepositoryView, source_id: SourceId) -> tuple[ArtifactObservation, ...]:
     observations: list[ArtifactObservation] = []
     for artifact_key in repository.artifact_keys():
         state = repository.latest_state(artifact_key)
@@ -93,7 +93,7 @@ def _current_source_files(repository: Repository, source_id: SourceId) -> tuple[
     return tuple(observations)
 
 
-def _source_directory(repository: Repository, source_id: SourceId) -> _Directory:
+def _source_directory(repository: RepositoryView, source_id: SourceId) -> _Directory:
     directory = _Directory()
     for observation in _current_source_files(repository, source_id):
         if observation.source_path is None:
@@ -117,7 +117,7 @@ def _mount_directory(root: _Directory, prefix: str, source: _Directory) -> None:
 
 
 def repository_mirror_state(
-    repository: Repository,
+    repository: RepositoryView,
     *,
     cfg: EngineConfig,
     manifest_path: Path | None = None,
@@ -165,7 +165,7 @@ def repository_mirror_state(
 
 
 def write_repository_mirror_state(
-    repository: Repository,
+    repository: RepositoryView,
     *,
     cfg: EngineConfig,
     manifest_path: Path | None = None,

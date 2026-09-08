@@ -50,7 +50,7 @@ class EngineSyncResult:
 
     @property
     def legacy_manifest(self) -> NormalizedManifest:
-        """Return transient acquisition evidence retained for compatibility/debugging."""
+        """Transient acquisition evidence retained for compatibility/debugging."""
         return self.sync_result.manifest
 
 

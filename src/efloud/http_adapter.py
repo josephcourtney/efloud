@@ -101,6 +101,7 @@ class HttpSourceAdapter:
                 destination=destination,
                 observed_at=time.time(),
                 media_type="application/json" if source.kind is SourceKind.REST else None,
+                expected_integrity=source.expected_integrity,
                 error=f"{type(exc).__name__}: {exc}",
             )
         finally:
@@ -123,6 +124,7 @@ class HttpSourceAdapter:
             size_bytes=result.size_bytes,
             request_headers=request_headers,
             media_type=media_type,
+            expected_integrity=source.expected_integrity,
         )
 
 

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from efloud.derived import RepositoryDerivedTask
 from efloud.fanout import FanoutEnumeration, FanoutItem, fanout_source_inventory
 from efloud.inventory import (
+    AbsenceEvidence,
     ChangeToken,
     IntegrityExpectation,
     InventoryCoverage,
@@ -375,7 +376,7 @@ def _previous_collection_items(
     snapshot = next(
         (
             candidate
-            for candidate in repository.metadata.source_snapshots_for(source_id, limit=200)
+            for candidate in repository.source_snapshots_for(source_id, limit=200)
             if candidate.complete and candidate.tree_id is not None
         ),
         None,
@@ -469,12 +470,15 @@ def _record_collection_absence(
 ) -> None:
     absence = repository.record_absence(
         decision.artifact_key,
+        evidence=AbsenceEvidence.direct_negative(
+            source_id=source_id,
+            observed_at=observed_at,
+            source_path=relative_path,
+            locator=locator,
+            metadata={"http_status": 404},
+        ),
         run_id=run_id,
         operation_id=operation_id,
-        source_id=source_id,
-        observed_at=observed_at,
-        source_path=relative_path,
-        upstream_locator=locator,
         metadata={
             **item_metadata,
             "http_status": 404,
@@ -602,10 +606,9 @@ def _record_missing_collection_entry(
 def _record_collection_membership_absences(
     repository: Repository,
     *,
-    source_id: SourceId,
+    inventory: SourceInventory,
     run_id: RunId,
     operation_id: OperationId,
-    observed_at: float,
     task_name: str,
     decisions: tuple[ReconciliationDecision, ...],
 ) -> list[ObservationId]:
@@ -615,11 +618,13 @@ def _record_collection_membership_absences(
             continue
         absence = repository.record_absence(
             decision.artifact_key,
+            evidence=AbsenceEvidence.from_inventory(
+                inventory,
+                source_path=decision.previous.source_path,
+                metadata={"collection_task": task_name, "item_id": decision.item_id},
+            ),
             run_id=run_id,
             operation_id=operation_id,
-            source_id=source_id,
-            observed_at=observed_at,
-            source_path=decision.previous.source_path,
             metadata={
                 "collection_task": task_name,
                 "item_id": decision.item_id,
@@ -750,14 +755,13 @@ def _record_collection(
         task_name=task_name,
         run_id=run_id,
         operation_id=operation_id,
-        observed_at=observed_at,
+        observed_at=context.inventory.observed_at,
     )
     removed = _record_collection_membership_absences(
         repository,
-        source_id=source_id,
+        inventory=context.inventory,
         run_id=run_id,
         operation_id=operation_id,
-        observed_at=observed_at,
         task_name=task_name,
         decisions=context.reconciliation.decisions,
     )
@@ -766,7 +770,11 @@ def _record_collection(
         source_id=source_id,
         run_id=run_id,
         entries=context.state.tree_entries,
-        complete=context.inventory.coverage.complete,
+        complete=(
+            context.inventory.coverage.complete
+            and context.state.unresolved_count == 0
+            and context.state.unexpected_entry_count == 0
+        ),
         observed_at=context.inventory.observed_at,
         evidence=_collection_snapshot_evidence(
             context,

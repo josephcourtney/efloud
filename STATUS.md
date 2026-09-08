@@ -5,16 +5,12 @@ File Purpose: Current project state and continuity notes for the next developmen
 ## Current Focus
 
 Phases 6 through 12 of the repository-centered migration are implemented on `main`.
-Phase 11 is verified by a clean local syntax/format/lint/typecheck/test gate. Phase 12
-adds validation as immutable repository evidence and keeps validation failure separate
-from successful source advancement.
+Phase 11 was verified locally; Phase 12 is now verified by GitHub Actions continuous
+integration. The CI workflow runs the development gate on Python 3.14 and the complete
+test suite on every supported Python minor version (3.12, 3.13, and 3.14).
 
-The immediate task is to run the full normal quality gate against the Phase 12 changes.
-Do not advance implementation into Phase 13 until that gate is clean; repair any Phase
-12 lint, typing, or regression failures first.
-
-After a clean gate, the active implementation frontier is Phase 13: complete immutable
-datasets and temporal policies.
+The active implementation frontier is Phase 13: complete immutable datasets and
+temporal policies.
 
 ## Current State
 
@@ -60,7 +56,6 @@ Implemented on `main`:
 - canonical `Engine` flow of `plan -> execute -> repository-derived outputs`
 - compatibility manifest and mirror-state JSON retained only as projections/exports
   on the canonical path
-- Phase 11 verified locally with syntax, format, lint, typecheck, and full tests clean
 - immutable `ValidationResult` evidence keyed by content identity plus validator
   identity/version
 - repository lookup/reuse of prior validation evidence for unchanged content and
@@ -94,6 +89,15 @@ Implemented on `main`:
 - focused Phase 12 coverage for validator-version reuse, required source-integrity
   failure, invalid JSON/gzip preservation, query exposure, source-definition
   persistence, custom-adapter omission, and collection-item integrity gating
+- GitHub Actions CI in `.github/workflows/ci.yml` on pushes to `main`, pull requests,
+  and manual dispatch
+- read-only CI credentials, locked dependency resolution, pinned action revisions,
+  and cancellation of superseded runs
+- Python 3.14 CI parity with the previously local syntax/format/lint/typecheck/test
+  sequence
+- complete pytest coverage on Python 3.12 and 3.13 in addition to the Python 3.14
+  development gate
+- Phase 12 verified by a green three-job GitHub Actions run
 
 ## Still Transitional
 
@@ -111,18 +115,14 @@ Implemented on `main`:
 - rsync's existing reconciliation path computes/verifies actual content identity during
   ingestion; no upstream rsync checksum expectation source is currently configured, so
   Phase 12 adds no synthetic rsync expectation mechanism
-- Phase 12 has not yet been verified by a post-implementation full local quality gate
 
 ## Continuity
 
-Run:
+Begin Phase 13 from the existing immutable dataset foundation. Add source/tag/role/
+namespace selection only where authoritative metadata supports it, define explicit
+temporal time bases, enforce complete-snapshot requirements without inferring absence
+from incomplete coverage, add optional skew/same-run constraints, and keep dataset
+identity independent of repository root and blob placement.
 
-```text
-just syntax; just format; just lint; just typecheck; just test
-```
-
-If clean, mark Phase 12 verified and begin Phase 13. Phase 13 should build on the
-existing immutable dataset foundation rather than changing validation or acquisition
-semantics: add source/tag/role/namespace selection where justified, explicit temporal
-time basis, complete-snapshot requirements, optional skew/same-run constraints, and
-deterministic dataset export metadata.
+CI now supplies the normal verification loop automatically for every push to `main`
+and every pull request.

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from efloud.repository_models import ArtifactKey, ContentRef, SourceId
 
 ChangeTokenReliability = Literal["weak", "strong"]
+AbsenceEvidenceKind = Literal["complete-inventory", "direct-negative"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +174,92 @@ class SourceInventory:
 
 
 @dataclass(frozen=True, slots=True)
+class AbsenceEvidence:
+    """Evidence that establishes absence for one logical artifact.
+
+    ``complete-inventory`` evidence is derived from a successful inventory whose
+    coverage includes the absent item's source path. ``direct-negative`` evidence
+    represents an exact negative observation such as an HTTP 404 for the item's
+    upstream locator. Both forms make absence an explicit source observation
+    rather than an unchecked repository assertion.
+    """
+
+    kind: AbsenceEvidenceKind
+    source_id: SourceId
+    observed_at: float
+    source_path: str | None = None
+    locator: str | None = None
+    coverage: InventoryCoverage | None = None
+    metadata: JsonObject = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.kind == "complete-inventory":
+            if self.coverage is None or not self.coverage.complete:
+                msg = "Inventory-backed absence requires complete inventory coverage."
+                raise ValueError(msg)
+            if not self.coverage.contains(self.source_path):
+                msg = f"Inventory coverage does not establish absence for {self.source_path!r}."
+                raise ValueError(msg)
+            return
+        if self.locator is None and self.source_path is None:
+            msg = "Direct-negative absence requires an exact locator or source path."
+            raise ValueError(msg)
+
+    @classmethod
+    def from_inventory(
+        cls,
+        inventory: SourceInventory,
+        *,
+        source_path: str | None,
+        locator: str | None = None,
+        metadata: JsonObject | None = None,
+    ) -> AbsenceEvidence:
+        return cls(
+            kind="complete-inventory",
+            source_id=inventory.source_id,
+            observed_at=inventory.observed_at,
+            source_path=source_path,
+            locator=locator,
+            coverage=inventory.coverage,
+            metadata=metadata or {},
+        )
+
+    @classmethod
+    def direct_negative(
+        cls,
+        *,
+        source_id: SourceId,
+        observed_at: float,
+        source_path: str | None = None,
+        locator: str | None = None,
+        metadata: JsonObject | None = None,
+    ) -> AbsenceEvidence:
+        return cls(
+            kind="direct-negative",
+            source_id=source_id,
+            observed_at=observed_at,
+            source_path=source_path,
+            locator=locator,
+            metadata=metadata or {},
+        )
+
+    def to_dict(self) -> JsonObject:
+        payload: JsonObject = {
+            "kind": self.kind,
+            "source_id": str(self.source_id),
+            "observed_at": self.observed_at,
+            "metadata": dict(self.metadata),
+        }
+        if self.source_path is not None:
+            payload["source_path"] = self.source_path
+        if self.locator is not None:
+            payload["locator"] = self.locator
+        if self.coverage is not None:
+            payload["coverage"] = self.coverage.to_dict()
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
 class IntegrityCheck:
     expectation: IntegrityExpectation
     actual_content_id: ContentId
@@ -213,6 +300,8 @@ def require_integrity(
 
 
 __all__ = [
+    "AbsenceEvidence",
+    "AbsenceEvidenceKind",
     "ChangeToken",
     "ChangeTokenReliability",
     "IntegrityCheck",

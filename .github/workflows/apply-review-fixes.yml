@@ -36,22 +36,42 @@ jobs:
           from pathlib import Path
           path = Path('/tmp/apply_review_fixes.py')
           text = path.read_text()
-          text = text.replace(
-              '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n    def start_operation(\n',
-              '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n\n    def start_operation(\n',
+          replacements = (
+              (
+                  '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n    def start_operation(\n',
+                  '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n\n    def start_operation(\n',
+              ),
+              (
+                  '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...\n\n    def start_operation(\n',
+                  '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n\n    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...\n\n    def start_operation(\n',
+              ),
+              (
+                  '        return tuple(self._observation_from_row(row) for row in rows)\n    def _latest_absence(\n',
+                  '        return tuple(self._observation_from_row(row) for row in rows)\n\n    def _latest_absence(\n',
+              ),
+              (
+                  '    _set_version(connection, 3)\n\ndef initialize_or_migrate(connection: sqlite3.Connection) -> None:\n',
+                  '    _set_version(connection, 3)\n\n\ndef initialize_or_migrate(connection: sqlite3.Connection) -> None:\n',
+              ),
+              (
+                  '    async def acquire(self, context: AdapterExecutionContext) -> SourceAcquisition: ...\n\nclass AdapterRegistry:\n',
+                  '    async def acquire(self, context: AdapterExecutionContext) -> SourceAcquisition: ...\n\n\nclass AdapterRegistry:\n',
+              ),
+              (
+                  'class HttpSourceAdapter:\n    descriptor: AdapterDescriptor\n    async def acquire',
+                  'class HttpSourceAdapter:\n    descriptor: AdapterDescriptor\n\n    async def acquire',
+              ),
+              (
+                  'class RsyncSourceAdapter:\n    descriptor: AdapterDescriptor\n    async def acquire',
+                  'class RsyncSourceAdapter:\n    descriptor: AdapterDescriptor\n\n    async def acquire',
+              ),
+              (
+                  'class CollectionSourceAdapter:\n    descriptor: AdapterDescriptor\n    async def acquire',
+                  'class CollectionSourceAdapter:\n    descriptor: AdapterDescriptor\n\n    async def acquire',
+              ),
           )
-          text = text.replace(
-              '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...\n\n    def start_operation(\n',
-              '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n\n    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...\n\n    def start_operation(\n',
-          )
-          text = text.replace(
-              '        return tuple(self._observation_from_row(row) for row in rows)\n    def _latest_absence(\n',
-              '        return tuple(self._observation_from_row(row) for row in rows)\n\n    def _latest_absence(\n',
-          )
-          text = text.replace(
-              '    _set_version(connection, 3)\n\ndef initialize_or_migrate(connection: sqlite3.Connection) -> None:\n',
-              '    _set_version(connection, 3)\n\n\ndef initialize_or_migrate(connection: sqlite3.Connection) -> None:\n',
-          )
+          for old_text, new_text in replacements:
+              text = text.replace(old_text, new_text)
           old = """        '''            source_id=context.source_id,\n            observed_at=context.observed_at,\n            source_path=source_path,\n''',\n        '''            source_id=context.source_id,\n            inventory=inventory,\n            observed_at=context.observed_at,\n            source_path=source_path,\n''',"""
           new = """        '''        absence = context.repository.record_absence(\n            decision.artifact_key,\n            run_id=context.run_id,\n            operation_id=context.operation_id,\n            source_id=context.source_id,\n            observed_at=context.observed_at,\n            source_path=source_path,\n''',\n        '''        absence = context.repository.record_absence(\n            decision.artifact_key,\n            run_id=context.run_id,\n            operation_id=context.operation_id,\n            source_id=context.source_id,\n            inventory=inventory,\n            observed_at=context.observed_at,\n            source_path=source_path,\n''',"""
           if old not in text:

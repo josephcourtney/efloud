@@ -84,6 +84,7 @@ jobs:
           path.write_text(text)
           PY
           python /tmp/apply_review_fixes.py .
+          python tools/review_repair_postprocess.py
 
       - name: Install uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1

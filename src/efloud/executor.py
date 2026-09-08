@@ -12,6 +12,7 @@ from efloud.operation_recording import RecordedOperation, record_source_acquisit
 from efloud.planning import PlannedOperation, SyncPlan
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
+from efloud.validation import ValidationRegistry, ValidationService
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -65,6 +66,7 @@ class _ExecutionContext:
     config: EngineConfig
     repository: Repository
     adapters: AdapterRegistry
+    validation: ValidationService
     plan: SyncPlan
     run_id: RunId
 
@@ -98,6 +100,10 @@ def _source_definition_payload(source: SourceDefinition) -> JsonObject:
         payload["exclude"] = list(source.exclude)
     if source.role is not None:
         payload["role"] = source.role
+    if source.expected_integrity:
+        expectations: JsonArray = []
+        expectations.extend(item.to_dict() for item in source.expected_integrity)
+        payload["expected_integrity"] = expectations
     return payload
 
 
@@ -185,6 +191,7 @@ async def _source_result(
     )
     return record_source_acquisition(
         context.repository,
+        context.validation,
         config=context.config,
         operation=operation,
         run_id=context.run_id,
@@ -322,6 +329,7 @@ def _run_status(results: tuple[OperationExecutionResult, ...]) -> str:
 @dataclass(frozen=True, slots=True)
 class SyncExecutor:
     adapters: AdapterRegistry
+    validators: ValidationRegistry
 
     async def execute(
         self,
@@ -351,7 +359,14 @@ class SyncExecutor:
             source_ids=selected_source_ids,
             metadata={"plan_id": plan.plan_id, "request": plan.request.to_dict(), "planner": "phase11-v1"},
         )
-        context = _ExecutionContext(config, repository, self.adapters, plan, run_id)
+        context = _ExecutionContext(
+            config=config,
+            repository=repository,
+            adapters=self.adapters,
+            validation=ValidationService(repository, self.validators),
+            plan=plan,
+            run_id=run_id,
+        )
         try:
             results = await _execute_operations(context)
         except asyncio.CancelledError:

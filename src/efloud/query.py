@@ -212,57 +212,54 @@ def root_payload(cfg: EngineConfig) -> dict[str, Any]:
     }
 
 
+def _require_no_locator(locator: str | None, target_kind: str) -> None:
+    if locator is not None:
+        msg = f"Locators are not supported for {target_kind} targets."
+        raise ValueError(msg)
+
+
+def _require_identifier(identifier: str | None, target_kind: str) -> str:
+    if identifier is None:
+        msg = f"{target_kind.capitalize()} target missing identifier."
+        raise ValueError(msg)
+    return identifier
+
+
+def _content_payload(content_id: str, *, cfg: EngineConfig) -> dict[str, Any]:
+    if not repository_exists(cfg):
+        msg = "Repository metadata is not initialized; content validation evidence is unavailable."
+        raise ValueError(msg)
+    with Repository(Path(cfg.root)) as repository:
+        return RepositoryQueryService(repository).query(f"content:{content_id}")
+
+
 def query_target(raw: str, *, cfg: EngineConfig, fetch_requested: bool = False) -> dict[str, Any]:
     target = parse_query_target(raw)
 
     if target.kind == "root":
-        if target.locator is not None:
-            msg = "Locators are not supported for the root target."
-            raise ValueError(msg)
+        _require_no_locator(target.locator, "root")
         return root_payload(cfg)
 
+    if target.kind == "source":
+        source = source_by_id_or_alias(target.identifier or "", cfg.sources, cfg.source_aliases)
+        if source is None:
+            msg = f"Unknown source identifier: {target.identifier!r}"
+            raise ValueError(msg)
+        return source_payload(
+            source,
+            source_query=None,
+            locator=target.locator,
+            fetch_requested=fetch_requested,
+            cfg=cfg,
+        )
+
+    identifier = _require_identifier(target.identifier, target.kind)
+    _require_no_locator(target.locator, target.kind)
     if target.kind == "store":
-        if target.identifier is None:
-            msg = "Store target missing identifier."
-            raise ValueError(msg)
-        if target.locator is not None:
-            msg = "Locators are not supported for store targets."
-            raise ValueError(msg)
-        return store_payload(target.identifier, cfg=cfg)
-
+        return store_payload(identifier, cfg=cfg)
     if target.kind == "index":
-        if target.identifier is None:
-            msg = "Index target missing identifier."
-            raise ValueError(msg)
-        if target.locator is not None:
-            msg = "Locators are not supported for index targets."
-            raise ValueError(msg)
-        return index_payload(target.identifier, cfg=cfg)
-
-    if target.kind == "content":
-        if target.identifier is None:
-            msg = "Content target missing identifier."
-            raise ValueError(msg)
-        if target.locator is not None:
-            msg = "Locators are not supported for content targets."
-            raise ValueError(msg)
-        if not repository_exists(cfg):
-            msg = "Repository metadata is not initialized; content validation evidence is unavailable."
-            raise ValueError(msg)
-        with Repository(Path(cfg.root)) as repository:
-            return RepositoryQueryService(repository).query(f"content:{target.identifier}")
-
-    source = source_by_id_or_alias(target.identifier or "", cfg.sources, cfg.source_aliases)
-    if source is None:
-        msg = f"Unknown source identifier: {target.identifier!r}"
-        raise ValueError(msg)
-    return source_payload(
-        source,
-        source_query=None,
-        locator=target.locator,
-        fetch_requested=fetch_requested,
-        cfg=cfg,
-    )
+        return index_payload(identifier, cfg=cfg)
+    return _content_payload(identifier, cfg=cfg)
 
 
 def _repository_local_path(entry: Mapping[str, object]) -> Path | None:

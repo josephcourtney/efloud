@@ -193,6 +193,7 @@ class AbsenceEvidence:
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Reject evidence that cannot establish absence for the declared target."""
         if self.kind == "complete-inventory":
             if self.coverage is None or not self.coverage.complete:
                 msg = "Inventory-backed absence requires complete inventory coverage."

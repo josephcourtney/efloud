@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from efloud.json_types import JsonObject, JsonValue
 from efloud.locator import apply_structured_locator, locator_candidates, split_locator
-from efloud.repository_models import ArtifactAbsence, ArtifactObservation, ObservationId, SnapshotId
+from efloud.repository_models import ArtifactAbsence, ArtifactObservation, ContentId, ObservationId, SnapshotId
 from efloud.repository_status import RepositoryStatusService
 
 if TYPE_CHECKING:
@@ -37,6 +37,10 @@ def _snapshot_payload(repository: Repository, snapshot: SourceSnapshot) -> JsonO
     if snapshot.tree_id is not None:
         payload["entries"] = [entry.identity_payload() for entry in repository.tree_entries(snapshot.tree_id)]
     return payload
+
+
+def _validation_payload(repository: Repository, content_id: ContentId) -> list[JsonObject]:
+    return [result.to_dict() for result in repository.validations_for(content_id)]
 
 
 def _payload_bytes(repository: Repository, observation: ArtifactObservation) -> bytes:
@@ -192,8 +196,8 @@ class RepositoryQueryService:
         if not separator or not identifier:
             msg = (
                 "Repository query targets must use one of: root, source:<id>, run:<id>, "
-                "artifact:<key>, observation:<id>, snapshot:<id>, source-snapshot:<source-id>, "
-                "dataset:<id>."
+                "artifact:<key>, observation:<id>, content:<id>, snapshot:<id>, "
+                "source-snapshot:<source-id>, dataset:<id>."
             )
             raise ValueError(msg)
         handlers: dict[str, QueryHandler] = {
@@ -201,6 +205,7 @@ class RepositoryQueryService:
             "run": self._run,
             "artifact": self._artifact,
             "observation": self._observation,
+            "content": self._content,
             "snapshot": self._snapshot,
             "source-snapshot": self._source_snapshot,
             "dataset": self._dataset,
@@ -259,10 +264,25 @@ class RepositoryQueryService:
         payload: JsonObject = {
             "target_kind": "observation",
             "observation": observation.to_dict(),
+            "validations": _validation_payload(self.repository, observation.content_id),
         }
         if locator is not None:
             payload["locator"] = _resolve_locator(self.repository, observation, locator)
         return payload
+
+    def _content(self, content_id: str, locator: str | None) -> JsonObject:
+        _require_no_locator(locator, "content")
+        normalized = ContentId(content_id)
+        content = self.repository.content(normalized)
+        if content is None:
+            msg = f"Unknown repository content: {content_id}"
+            raise KeyError(msg)
+        return {
+            "target_kind": "content",
+            "content": content.to_dict(),
+            "available": self.repository.blobs.contains(normalized),
+            "validations": _validation_payload(self.repository, normalized),
+        }
 
     def _snapshot(self, snapshot_id: str, locator: str | None) -> JsonObject:
         _require_no_locator(locator, "source snapshot")

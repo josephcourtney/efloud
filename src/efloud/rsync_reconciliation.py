@@ -81,7 +81,7 @@ def _baseline_snapshot(
     source_id: SourceId,
     scope: tuple[str, ...],
 ) -> SourceSnapshot | None:
-    for snapshot in repository.metadata.source_snapshots_for(source_id, limit=200):
+    for snapshot in repository.source_snapshots_for(source_id, limit=200):
         if snapshot.tree_id is None:
             continue
         if snapshot.evidence.get("reconciliation_complete") is not True:

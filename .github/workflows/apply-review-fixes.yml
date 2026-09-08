@@ -44,6 +44,10 @@ jobs:
               '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...\n\n    def start_operation(\n',
               '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n\n    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...\n\n    def start_operation(\n',
           )
+          text = text.replace(
+              '        return tuple(self._observation_from_row(row) for row in rows)\n    def _latest_absence(\n',
+              '        return tuple(self._observation_from_row(row) for row in rows)\n\n    def _latest_absence(\n',
+          )
           old = """        '''            source_id=context.source_id,\n            observed_at=context.observed_at,\n            source_path=source_path,\n''',\n        '''            source_id=context.source_id,\n            inventory=inventory,\n            observed_at=context.observed_at,\n            source_path=source_path,\n''',"""
           new = """        '''        absence = context.repository.record_absence(\n            decision.artifact_key,\n            run_id=context.run_id,\n            operation_id=context.operation_id,\n            source_id=context.source_id,\n            observed_at=context.observed_at,\n            source_path=source_path,\n''',\n        '''        absence = context.repository.record_absence(\n            decision.artifact_key,\n            run_id=context.run_id,\n            operation_id=context.operation_id,\n            source_id=context.source_id,\n            inventory=inventory,\n            observed_at=context.observed_at,\n            source_path=source_path,\n''',"""
           if old not in text:

@@ -6,10 +6,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import efloud.engine as engine_module
+from efloud.adapters import HttpAcquisition, HttpSourceAdapter
 from efloud.adoption import adopt_existing_store
 from efloud.engine import Engine
-from efloud.models import EngineConfig, SyncResult
+from efloud.models import EngineConfig
+from efloud.planning import SyncRequest
 from efloud.query import query_target
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
@@ -96,36 +97,26 @@ def test_targeted_engine_sync_preserves_untouched_state_without_manifest_merge(
     a_path = tmp_path / "retained-a.json"
     a_path.write_text('{"value":"a"}', encoding="utf-8")
 
-    async def fake_acquire(_config: EngineConfig) -> SyncResult:
+    async def fake_acquire(self, context):
+        del self
         await asyncio.sleep(0)
-        return SyncResult(
-            ok=True,
-            root=tmp_path,
-            manifest_path=None,
-            manifest={
-                "version": 1,
-                "root": str(tmp_path),
-                "results": {
-                    "http": {
-                        "a": {
-                            "ok": True,
-                            "dest": str(a_path),
-                            "freshness": {"fetched_at_unix": 101.0, "status_code": 200},
-                        }
-                    },
-                    "rsync": {},
-                    "derived": {},
-                },
-                "errors": [],
-            },
+        assert context.source.id == "a"
+        return HttpAcquisition(
+            source_id="a",
+            status="succeeded",
+            destination=a_path,
+            observed_at=101.0,
+            status_code=200,
+            media_type="application/json",
         )
 
-    monkeypatch.setattr(engine_module, "legacy_sync", fake_acquire)
+    monkeypatch.setattr(HttpSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
-        result = asyncio.run(engine.sync())
+        result = asyncio.run(engine.sync(SyncRequest(source_ids=("a",))))
 
     assert set(result.manifest["results"]["http"]) == {"a", "b"}
     assert result.manifest["results"]["http"]["b"]["content_id"] == str(b_observation.content_id)
+    assert result.skipped_source_ids == ("b",)
     assert json.loads(canonical.read_text(encoding="utf-8")) == result.manifest
 
     timestamped = list((tmp_path / config.log_dir).glob("sync-manifest-*.json"))

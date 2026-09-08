@@ -15,18 +15,17 @@ from efloud.planning import PlannedOperation
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_compat import repository_manifest
 from efloud.repository_models import ProducerRef
-from efloud.sync import (
-    _prepare_rsync_paths_for_source,
-    _rsync_command_for_source,
-    _rsync_failure_detail,
-    _rsync_results_ok,
-    _run_rsync_source_operation,
-    _use_compact_mmcif_progress,
-)
 from efloud.transport.http import HttpCache, HttpCacheConfig
 from efloud.transport.http_utils import cache_group_name, dest_for_http_source, fetch_json_to_file, fetch_to_file
 from efloud.transport.rsync import RsyncMirror, RsyncMirrorConfig
 from efloud.transport.rsync_inventory import RsyncInventory, enumerate_rsync
+from efloud.transport.rsync_runtime import (
+    prepare_rsync_paths,
+    rsync_command_for_source,
+    rsync_failure_detail,
+    rsync_results_ok,
+    run_rsync_operation,
+)
 
 if TYPE_CHECKING:
     from efloud.models import EngineConfig
@@ -228,6 +227,9 @@ class HttpSourceAdapter:
             with contextlib.suppress(OSError, RuntimeError):
                 await cache.aclose()
 
+        request_headers: JsonObject = {}
+        for key, value in result.request_headers.items():
+            request_headers[str(key)] = str(value)
         headers = result.headers or {}
         return HttpAcquisition(
             source_id=source.id,
@@ -239,7 +241,7 @@ class HttpSourceAdapter:
             last_modified=headers.get("last-modified"),
             checksum=result.checksum,
             size_bytes=result.size_bytes,
-            request_headers={str(key): str(value) for key, value in result.request_headers.items()},
+            request_headers=request_headers,
             media_type=media_type,
         )
 
@@ -268,7 +270,6 @@ def _updated_paths(results: JsonObject) -> tuple[str, ...]:
 def _rsync_mirror(context: AdapterExecutionContext, local_root: Path) -> RsyncMirror:
     source = context.source
     cfg = context.config
-    compact = _use_compact_mmcif_progress(cfg, source, context.operation.scope)
     return RsyncMirror(
         RsyncMirrorConfig(
             name=source.description,
@@ -283,9 +284,9 @@ def _rsync_mirror(context: AdapterExecutionContext, local_root: Path) -> RsyncMi
             rate_limit_storage=_sqlite_url(Path(cfg.root) / cfg.rate_limits_dir / "mirror_rate_limits.sqlite"),
             rate_limit_scope=None,
             raise_on_rate_limit=False,
-            progress=cfg.runtime_progress and not compact,
+            progress=cfg.runtime_progress and source.id != "pdb_mmcif",
             dry_run=False,
-            cmd=_rsync_command_for_source(source),
+            cmd=rsync_command_for_source(source),
         )
     )
 
@@ -300,28 +301,23 @@ class RsyncSourceAdapter:
         local_root = Path(cfg.root) / cfg.mirrors_dir / (source.local_subpath or source.id)
         local_root.mkdir(parents=True, exist_ok=True)
         requested_scope = context.operation.scope
-        mirror_paths, synthetic = await _prepare_rsync_paths_for_source(
+        mirror_paths, synthetic = await prepare_rsync_paths(
             source=source,
             mirror_paths=requested_scope or None,
-            cfg=cfg,
+            runtime_progress=cfg.runtime_progress,
         )
-        compact = _use_compact_mmcif_progress(cfg, source, mirror_paths or ())
         mirror = _rsync_mirror(context, local_root)
         force = context.operation.refresh.refresh if context.operation.refresh is not None else False
-        mode = "update_paths" if mirror_paths else "update"
         observed_at = time.time()
         try:
-            raw_results = await _run_rsync_source_operation(
-                cfg=cfg,
+            results = await run_rsync_operation(
                 source=source,
                 mirror=mirror,
                 mirror_paths=mirror_paths,
                 force=force,
-                mode=mode,
                 synthetic_results=synthetic,
-                compact_mmcif_progress=compact,
+                runtime_progress=cfg.runtime_progress,
             )
-            results: JsonObject = {str(key): value for key, value in raw_results.items()}
             if cfg.remove_empty_dirs_after_rsync:
                 await mirror.prune_local_empty_dirs()
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -334,7 +330,7 @@ class RsyncSourceAdapter:
                 error=f"{type(exc).__name__}: {exc}",
             )
 
-        if not _rsync_results_ok(results):
+        if not rsync_results_ok(results):
             return RsyncAcquisition(
                 source_id=source.id,
                 status="failed",
@@ -343,7 +339,7 @@ class RsyncSourceAdapter:
                 observed_at=observed_at,
                 updated_paths=_updated_paths(results),
                 transport_results=results,
-                error=_rsync_failure_detail(results) or "rsync acquisition failed",
+                error=rsync_failure_detail(results) or "rsync acquisition failed",
             )
 
         inventory_cfg = RsyncMirrorConfig(

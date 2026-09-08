@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from efloud.inventory import IntegrityExpectation
+
 
 class SourceKind(StrEnum):
     HTTP = "HTTP"
@@ -38,6 +40,7 @@ class SourceDefinition:
 
     role: str | None = None
     tags: tuple[str, ...] = ()
+    expected_integrity: tuple[IntegrityExpectation, ...] = ()
 
 
 def source_ids(sources: Sequence[SourceDefinition]) -> tuple[str, ...]:

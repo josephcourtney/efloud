@@ -1,30 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass, field
-from email.utils import parsedate_to_datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from efloud.adapters import (
-    AdapterExecutionContext,
-    AdapterRegistry,
-    CollectionAcquisition,
-    HttpAcquisition,
-    RsyncAcquisition,
-)
-from efloud.collection_recording import record_collection_acquisition
-from efloud.derived import RepositoryDerivedTask
-from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_none
+from efloud.adapters import AdapterExecutionContext, AdapterRegistry
+from efloud.fs import delete_http_cache_files, prune_orphan_mirrors
+from efloud.json_types import JsonObject
+from efloud.operation_recording import RecordedOperation, record_source_acquisition, run_derived_operation
 from efloud.planning import PlannedOperation, SyncPlan
 from efloud.registry import SourceDefinition, SourceKind
-from efloud.repository_compat import repository_manifest
-from efloud.repository_models import ObservationId, OperationId, RunId, SourceId, TreeEntry, canonical_json_bytes
-from efloud.rsync_reconciliation import reconcile_rsync_inventory
+from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
 
 if TYPE_CHECKING:
-    from efloud.derived import DerivedTask
     from efloud.models import EngineConfig
     from efloud.repository import Repository
 
@@ -53,7 +42,7 @@ class SyncExecutionResult:
 
     @property
     def blocked_source_ids(self) -> tuple[str, ...]:
-        """Source identifiers whose planned operations did not execute successfully."""
+        """Source identifiers whose planned operations were blocked or not executed."""
         return tuple(
             sorted(
                 operation.operation_key.removeprefix("source:")
@@ -65,7 +54,7 @@ class SyncExecutionResult:
 
     @property
     def ok(self) -> bool:
-        """Whether every operation either succeeded or was intentionally not executed."""
+        """Whether every operation succeeded or was intentionally not executed."""
         return all(operation.status in {"succeeded", "not-executed"} for operation in self.operations)
 
 
@@ -113,6 +102,8 @@ def _source_by_id(config: EngineConfig, source_id: str) -> SourceDefinition:
 
 
 def _operation_kind(operation: PlannedOperation, source: SourceDefinition | None) -> str:
+    if operation.kind == "housekeeping":
+        return "housekeeping"
     if operation.kind == "derived":
         return "derived"
     if source is not None and source.kind is SourceKind.REST_BASE:
@@ -145,339 +136,35 @@ def _start_operation(context: _ExecutionContext, operation: PlannedOperation) ->
     )
 
 
-def _http_modified_timestamp(value: str | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        return parsedate_to_datetime(value).timestamp()
-    except (TypeError, ValueError, OverflowError):
-        return None
-
-
-def _record_http(
-    context: _ExecutionContext,
-    operation: PlannedOperation,
-    operation_id: OperationId,
-    acquisition: HttpAcquisition,
-) -> OperationExecutionResult:
-    if acquisition.status == "failed" or acquisition.destination is None:
-        details: JsonObject = {"error": acquisition.error or "HTTP acquisition failed"}
-        context.repository.finish_operation(operation_id, status="failed", details=details)
-        return OperationExecutionResult(operation.operation_key, "failed", details=details)
-
-    source = _source_by_id(context.config, acquisition.source_id)
-    metadata: JsonObject = {"transport": source.kind.value, "adapter_execution": True}
-    if acquisition.status_code is not None:
-        metadata["status_code"] = acquisition.status_code
-    if acquisition.checksum is not None:
-        metadata["transport_checksum"] = acquisition.checksum
-    observation = context.repository.ingest_path(
-        f"source:{source.id}",
-        acquisition.destination,
-        run_id=context.run_id,
-        operation_id=operation_id,
-        source_id=source.id,
-        observed_at=acquisition.observed_at,
-        upstream_locator=source.url,
-        upstream_modified_at=_http_modified_timestamp(acquisition.last_modified),
-        upstream_version=acquisition.etag,
-        media_type=acquisition.media_type,
-        metadata=metadata,
-        materialization_kind="http",
-    )
-    evidence: JsonObject = {"adapter": operation.producer.to_dict()}
-    if acquisition.status_code is not None:
-        evidence["status_code"] = acquisition.status_code
-    if acquisition.etag is not None:
-        evidence["etag"] = acquisition.etag
-    if acquisition.last_modified is not None:
-        evidence["last_modified"] = acquisition.last_modified
-    if acquisition.checksum is not None:
-        evidence["checksum"] = acquisition.checksum
-    context.repository.record_source_snapshot(
-        source_id=source.id,
-        run_id=context.run_id,
-        complete=True,
-        observed_at=acquisition.observed_at,
-        evidence=evidence,
-    )
-    details: JsonObject = {"observation_id": str(observation.observation_id)}
-    context.repository.finish_operation(operation_id, status="succeeded", details=details)
-    return OperationExecutionResult(
-        operation.operation_key,
-        "succeeded",
-        observation_ids=(observation.observation_id,),
-        details=details,
-    )
-
-
-def _safe_local_path(root: Path, relative_path: str) -> Path | None:
-    relative = PurePosixPath(relative_path)
-    if relative.is_absolute() or ".." in relative.parts:
-        return None
-    root_resolved = root.resolve()
-    candidate = root_resolved.joinpath(*relative.parts).resolve(strict=False)
-    return candidate if candidate.is_relative_to(root_resolved) else None
-
-
-def _record_incomplete_rsync(
-    context: _ExecutionContext,
-    operation: PlannedOperation,
-    operation_id: OperationId,
-    acquisition: RsyncAcquisition,
-) -> OperationExecutionResult:
-    source = _source_by_id(context.config, acquisition.source_id)
-    observations: list[ObservationId] = []
-    entries: list[TreeEntry] = []
-    for relative_path in acquisition.updated_paths:
-        path = _safe_local_path(acquisition.local_root, relative_path)
-        if path is None or not path.exists():
-            continue
-        if path.is_symlink():
-            entries.append(
-                TreeEntry(relative_path=relative_path, kind="symlink", target=path.readlink().as_posix())
-            )
-            continue
-        if path.is_dir():
-            entries.append(TreeEntry(relative_path=relative_path, kind="directory"))
-            continue
-        if not path.is_file():
-            continue
-        observation = context.repository.ingest_path(
-            f"source:{source.id}:path:{relative_path}",
-            path,
-            run_id=context.run_id,
-            operation_id=operation_id,
-            source_id=source.id,
-            observed_at=acquisition.observed_at,
-            source_path=relative_path,
-            upstream_locator=f"{source.url.rstrip('/')}/{relative_path}",
-            metadata={"transport": "RSYNC", "adapter_execution": True, "inventory_complete": False},
-            materialization_kind="rsync-mirror",
+def _housekeeping_result(context: _ExecutionContext, operation: PlannedOperation) -> RecordedOperation:
+    action = operation.parameters.get("action")
+    if action == "delete-http-caches":
+        cache_root = Path(context.config.root) / context.config.cache_dir / context.config.http_cache_dir
+        removed = delete_http_cache_files(cache_root)
+        return RecordedOperation("succeeded", details={"removed": removed})
+    if action == "prune-orphan-mirrors":
+        raw_expected = operation.parameters.get("expected_subpaths")
+        expected_subpaths = (
+            tuple(value for value in raw_expected if isinstance(value, str)) if isinstance(raw_expected, list) else ()
         )
-        observations.append(observation.observation_id)
-        entries.append(
-            TreeEntry(
-                relative_path=relative_path,
-                kind="file",
-                content_id=observation.content_id,
-                byte_size=path.stat().st_size,
-            )
-        )
-    inventory_error = (
-        acquisition.inventory.error
-        if acquisition.inventory is not None and acquisition.inventory.error is not None
-        else acquisition.error or "rsync inventory unavailable"
-    )
-    snapshot = context.repository.record_tree_snapshot(
-        source_id=source.id,
-        run_id=context.run_id,
-        entries=entries,
-        complete=False,
-        scope=acquisition.scope,
-        observed_at=acquisition.observed_at,
-        evidence={
-            "transport": "RSYNC",
-            "adapter_execution": True,
-            "reconciliation_complete": False,
-            "enumeration_complete": False,
-            "inventory_error": inventory_error,
-            "changed_entry_count": len(acquisition.updated_paths),
-            "ingested_file_count": len(observations),
-        },
-    )
-    details: JsonObject = {
-        "snapshot_id": str(snapshot.snapshot_id),
-        "reconciliation_complete": False,
-        "ingested_file_count": len(observations),
-        "inventory_error": inventory_error,
-    }
-    context.repository.finish_operation(operation_id, status="succeeded", details=details)
-    return OperationExecutionResult(
-        operation.operation_key,
-        "succeeded",
-        observation_ids=tuple(observations),
-        details=details,
-    )
+        mirrors_root = Path(context.config.root) / context.config.mirrors_dir
+        keep_dirs = tuple(mirrors_root / subpath for subpath in expected_subpaths)
+        removed = prune_orphan_mirrors(mirrors_root, keep_dirs)
+        return RecordedOperation("succeeded", details={"removed": removed})
+    return RecordedOperation("failed", details={"error": f"Unknown housekeeping action: {action!r}"})
 
 
-def _record_rsync(
+async def _source_result(
     context: _ExecutionContext,
     operation: PlannedOperation,
     operation_id: OperationId,
-    acquisition: RsyncAcquisition,
-) -> OperationExecutionResult:
-    if acquisition.status == "failed":
-        details: JsonObject = {"error": acquisition.error or "rsync acquisition failed"}
-        context.repository.finish_operation(operation_id, status="failed", details=details)
-        return OperationExecutionResult(operation.operation_key, "failed", details=details)
-    if acquisition.inventory is None or not acquisition.inventory.complete:
-        return _record_incomplete_rsync(context, operation, operation_id, acquisition)
-
-    source = _source_by_id(context.config, acquisition.source_id)
-    result = reconcile_rsync_inventory(
-        context.repository,
-        source_id=source.id,
-        run_id=context.run_id,
-        operation_id=operation_id,
-        local_root=acquisition.local_root,
-        inventory=acquisition.inventory,
-        observed_at=acquisition.observed_at,
-        upstream_root=source.url,
-    )
-    details: JsonObject = {
-        "snapshot_id": result.snapshot_id,
-        "reconciliation_complete": result.complete,
-        "ingested_file_count": result.ingested_file_count,
-        "reused_content_count": result.reused_content_count,
-        "absence_count": result.absence_count,
-    }
-    if result.error is not None:
-        details["error"] = result.error
-    status: ExecutionStatus = "succeeded" if result.complete else "failed"
-    context.repository.finish_operation(operation_id, status=status, details=details)
-    return OperationExecutionResult(
-        operation.operation_key,
-        status,
-        observation_ids=result.observations,
-        details=details,
-    )
-
-
-def _record_collection(
-    context: _ExecutionContext,
-    operation: PlannedOperation,
-    operation_id: OperationId,
-    acquisition: CollectionAcquisition,
-) -> OperationExecutionResult:
-    if acquisition.payload is None:
-        details: JsonObject = {"error": acquisition.error or "collection acquisition produced no result"}
-        context.repository.finish_operation(operation_id, status="failed", details=details)
-        return OperationExecutionResult(operation.operation_key, "failed", details=details)
-
-    recorded = record_collection_acquisition(
-        context.repository,
-        source_id=acquisition.source_id,
-        task_name=acquisition.task_name,
-        payload=acquisition.payload,
-        run_id=context.run_id,
-        operation_id=operation_id,
-        observed_at=acquisition.observed_at,
-    )
-    failed = acquisition.status == "failed" or recorded.unresolved_count > 0
-    details: JsonObject = {
-        "snapshot_id": recorded.snapshot_id,
-        "execution_observation_id": str(recorded.execution_observation_id),
-        "content_count": recorded.content_count,
-        "absence_count": recorded.absence_count,
-        "unresolved_count": recorded.unresolved_count,
-    }
-    if acquisition.error is not None:
-        details["error"] = acquisition.error
-    status: ExecutionStatus = "failed" if failed else "succeeded"
-    context.repository.finish_operation(operation_id, status=status, details=details)
-    return OperationExecutionResult(
-        operation.operation_key,
-        status,
-        observation_ids=recorded.observations,
-        details=details,
-    )
-
-
-def _current_inputs(repository: Repository, source_ids: tuple[str, ...]) -> tuple[ObservationId, ...]:
-    wanted = set(source_ids)
-    observations: list[ObservationId] = []
-    for artifact_key in repository.artifact_keys():
-        observation = repository.latest_observation(artifact_key)
-        if observation is None or observation.source_id is None or str(observation.source_id) not in wanted:
-            continue
-        observations.append(observation.observation_id)
-    return tuple(sorted(observations, key=str))
-
-
-def _derived_task(context: _ExecutionContext, name: str) -> DerivedTask | None:
-    return next((task for task in context.config.derived_tasks if task.name == name), None)
-
-
-async def _execute_derived(
-    context: _ExecutionContext,
-    operation: PlannedOperation,
-    operation_id: OperationId,
-) -> OperationExecutionResult:
-    task = _derived_task(context, operation.subject)
-    if task is None:
-        details: JsonObject = {"error": f"Unknown derived task: {operation.subject}"}
-        context.repository.finish_operation(operation_id, status="failed", details=details)
-        return OperationExecutionResult(operation.operation_key, "failed", details=details)
-    input_source_ids = task.repository_input_source_ids if isinstance(task, RepositoryDerivedTask) else ()
-    inputs = _current_inputs(context.repository, input_source_ids)
-    manifest = repository_manifest(context.repository, cfg=context.config)
-    try:
-        raw_payload = await task.run(
-            sync_root=Path(context.config.root),
-            manifest=manifest,
-            sources=tuple(context.config.sources),
-        )
-    except Exception as exc:  # ruff: ignore[blind-except] - extension tasks are isolated operation failure domains.
-        details: JsonObject = {"error": f"{type(exc).__name__}: {exc}"}
-        context.repository.finish_operation(operation_id, status="failed", details=details)
-        return OperationExecutionResult(operation.operation_key, "failed", details=details)
-    mapping = json_mapping_or_none(raw_payload)
-    if mapping is None:
-        details: JsonObject = {"error": "Derived task returned a non-JSON result."}
-        context.repository.finish_operation(operation_id, status="failed", details=details)
-        return OperationExecutionResult(operation.operation_key, "failed", details=details)
-    payload = copy_json_mapping(mapping)
-    observations: list[ObservationId] = []
-    output = payload.get("dest")
-    if isinstance(output, str) and Path(output).is_file():
-        output_observation = context.repository.ingest_path(
-            f"derived:{operation.subject}:output",
-            Path(output),
-            run_id=context.run_id,
-            operation_id=operation_id,
-            observed_at=time.time(),
-            metadata={"derived_task": operation.subject, "adapter_execution": True},
-            inputs=inputs,
-            materialization_kind="derived",
-        )
-        observations.append(output_observation.observation_id)
-    execution_inputs = (*inputs, *observations)
-    execution = context.repository.ingest_bytes(
-        f"derived:{operation.subject}:execution",
-        canonical_json_bytes(payload),
-        run_id=context.run_id,
-        operation_id=operation_id,
-        observed_at=time.time(),
-        media_type="application/json",
-        metadata={"derived_task": operation.subject, "adapter_execution": True},
-        inputs=execution_inputs,
-    )
-    observations.append(execution.observation_id)
-    err = payload.get("err")
-    ok = payload.get("ok")
-    failed = (isinstance(err, int) and not isinstance(err, bool) and err > 0) or ok is False
-    details: JsonObject = {"execution_observation_id": str(execution.observation_id)}
-    status: ExecutionStatus = "failed" if failed else "succeeded"
-    context.repository.finish_operation(operation_id, status=status, details=details)
-    return OperationExecutionResult(operation.operation_key, status, tuple(observations), details)
-
-
-async def _execute_source(
-    context: _ExecutionContext,
-    operation: PlannedOperation,
-    operation_id: OperationId,
-) -> OperationExecutionResult:
+) -> RecordedOperation:
     if operation.source_id is None:
-        details: JsonObject = {"error": "Source operation has no source_id."}
-        context.repository.finish_operation(operation_id, status="failed", details=details)
-        return OperationExecutionResult(operation.operation_key, "failed", details=details)
+        return RecordedOperation("failed", details={"error": "Source operation has no source_id."})
     source = _source_by_id(context.config, operation.source_id)
     adapter = context.adapters.adapter_for(source)
     if adapter is None:
-        details: JsonObject = {"error": f"No adapter registered for {source.kind.value}."}
-        context.repository.finish_operation(operation_id, status="failed", details=details)
-        return OperationExecutionResult(operation.operation_key, "failed", details=details)
+        return RecordedOperation("failed", details={"error": f"No adapter registered for {source.kind.value}."})
     acquisition = await adapter.acquire(
         AdapterExecutionContext(
             config=context.config,
@@ -486,11 +173,32 @@ async def _execute_source(
             operation=operation,
         )
     )
-    if isinstance(acquisition, HttpAcquisition):
-        return _record_http(context, operation, operation_id, acquisition)
-    if isinstance(acquisition, RsyncAcquisition):
-        return _record_rsync(context, operation, operation_id, acquisition)
-    return _record_collection(context, operation, operation_id, acquisition)
+    return record_source_acquisition(
+        context.repository,
+        config=context.config,
+        operation=operation,
+        run_id=context.run_id,
+        operation_id=operation_id,
+        acquisition=acquisition,
+    )
+
+
+async def _recorded_result(
+    context: _ExecutionContext,
+    operation: PlannedOperation,
+    operation_id: OperationId,
+) -> RecordedOperation:
+    if operation.kind == "housekeeping":
+        return _housekeeping_result(context, operation)
+    if operation.kind == "source":
+        return await _source_result(context, operation, operation_id)
+    return await run_derived_operation(
+        context.repository,
+        config=context.config,
+        operation=operation,
+        run_id=context.run_id,
+        operation_id=operation_id,
+    )
 
 
 async def _execute_operation(
@@ -499,9 +207,7 @@ async def _execute_operation(
 ) -> OperationExecutionResult:
     operation_id = _start_operation(context, operation)
     try:
-        if operation.kind == "source":
-            return await _execute_source(context, operation, operation_id)
-        return await _execute_derived(context, operation, operation_id)
+        recorded = await _recorded_result(context, operation, operation_id)
     except asyncio.CancelledError:
         context.repository.finish_operation(
             operation_id,
@@ -513,6 +219,14 @@ async def _execute_operation(
         details: JsonObject = {"error": f"{type(exc).__name__}: {exc}"}
         context.repository.finish_operation(operation_id, status="failed", details=details)
         return OperationExecutionResult(operation.operation_key, "failed", details=details)
+
+    context.repository.finish_operation(operation_id, status=recorded.status, details=recorded.details)
+    return OperationExecutionResult(
+        operation_key=operation.operation_key,
+        status=recorded.status,
+        observation_ids=recorded.observation_ids,
+        details=recorded.details,
+    )
 
 
 def _blocked_operation(
@@ -618,7 +332,7 @@ class SyncExecutor:
             )
 
         selected_source_ids = tuple(
-            sorted(operation.source_id for operation in plan.operations if operation.source_id is not None)
+            sorted({operation.source_id for operation in plan.operations if operation.source_id is not None})
         )
         for source_id in selected_source_ids:
             source = _source_by_id(config, source_id)

@@ -141,7 +141,7 @@ def _discover_mmcif_buckets(source: SourceDefinition) -> set[str] | None:
     }
 
 
-def _emit_progress(enabled: bool, text: str, *, inline: bool = False, final: bool = False) -> None:
+def _emit_progress(text: str, *, enabled: bool, inline: bool = False, final: bool = False) -> None:
     if not enabled:
         return
     with contextlib.suppress(OSError):
@@ -176,8 +176,8 @@ async def prepare_rsync_paths(
     skipped = tuple(path for path in mirror_paths if path not in existing)
     if skipped:
         _emit_progress(
-            runtime_progress,
             f"pdb_mmcif: skipping {len(skipped)} missing remote buckets discovered by rsync --list-only",
+            enabled=runtime_progress,
         )
     synthetic: JsonObject = {}
     for relative_path in skipped:
@@ -252,8 +252,8 @@ async def _run_compact_mmcif(
     current = "-"
     results: dict[str, OpResult] = {}
     _emit_progress(
-        runtime_progress,
         f"pdb_mmcif shards: {done}/{total} done; ok {ok}; failed {failed}; current {current}",
+        enabled=runtime_progress,
         inline=True,
     )
     for relative_path in mirror_paths:
@@ -268,13 +268,13 @@ async def _run_compact_mmcif(
         else:
             ok += 1
         _emit_progress(
-            runtime_progress,
             f"pdb_mmcif shards: {done}/{total} done; ok {ok}; failed {failed}; current {current}",
+            enabled=runtime_progress,
             inline=True,
         )
     _emit_progress(
-        runtime_progress,
         f"pdb_mmcif shards: {done}/{total} done; ok {ok}; failed {failed}; current {current}",
+        enabled=runtime_progress,
         inline=True,
         final=True,
     )

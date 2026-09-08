@@ -4,7 +4,8 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
-from efloud.adapters import AdapterRegistry, builtin_adapter_registry
+from efloud.adapters import AdapterRegistry
+from efloud.builtin_adapters import builtin_adapter_registry
 from efloud.executor import SyncExecutionResult, SyncExecutor
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
 from efloud.planner import SyncPlanner

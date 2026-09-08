@@ -115,6 +115,7 @@ from efloud.repository_models import (
     TreeEntry,
     TreeId,
     ValidationResult,
+    ValidationStatus,
 )
 from efloud.repository_query import RepositoryQueryService, repository_query
 from efloud.repository_state import repository_mirror_state, write_repository_mirror_state
@@ -157,6 +158,21 @@ from efloud.sync import SyncResult, sync
 from efloud.transport.http import HttpCache, HttpCacheConfig
 from efloud.transport.http_utils import HttpFetchResult, cache_group_name, dest_for_http_source
 from efloud.transport.rsync import OpResult, RsyncCommandConfig, RsyncMirror, RsyncMirrorConfig
+from efloud.validation import (
+    ContentValidator,
+    GzipValidator,
+    IntegrityExpectationValidator,
+    JsonValidator,
+    StorageIntegrityValidator,
+    ValidationBatch,
+    ValidationCheck,
+    ValidationOutcome,
+    ValidationRegistry,
+    ValidationService,
+    ValidationTarget,
+    ValidatorDescriptor,
+    builtin_validation_registry,
+)
 
 __version__ = version("efloud")
 
@@ -177,6 +193,7 @@ __all__ = [
     "CollectionAcquisition",
     "ContentId",
     "ContentRef",
+    "ContentValidator",
     "DatasetDefinition",
     "DatasetId",
     "DatasetManifest",
@@ -198,6 +215,7 @@ __all__ = [
     "FanoutEnumeration",
     "FanoutItem",
     "FilesystemBlobStore",
+    "GzipValidator",
     "HttpAcquisition",
     "HttpCache",
     "HttpCacheConfig",
@@ -209,9 +227,11 @@ __all__ = [
     "IntegrityCheck",
     "IntegrityExpectation",
     "IntegrityExpectationError",
+    "IntegrityExpectationValidator",
     "InventoryCoverage",
     "InventoryItem",
     "JsonTtlIndex",
+    "JsonValidator",
     "Latest",
     "LatestAll",
     "LatestBefore",
@@ -261,6 +281,7 @@ __all__ = [
     "SourceKind",
     "SourceRecord",
     "SourceSnapshot",
+    "StorageIntegrityValidator",
     "StoreMetadataProvider",
     "StorePathKind",
     "StoreSpec",
@@ -272,13 +293,22 @@ __all__ = [
     "SyncResult",
     "TreeEntry",
     "TreeId",
+    "ValidationBatch",
+    "ValidationCheck",
+    "ValidationOutcome",
+    "ValidationRegistry",
     "ValidationResult",
+    "ValidationService",
+    "ValidationStatus",
+    "ValidationTarget",
+    "ValidatorDescriptor",
     "__version__",
     "adopt_existing_store",
     "build_mirror_health_summary",
     "build_path_index",
     "build_summary",
     "builtin_adapter_registry",
+    "builtin_validation_registry",
     "cache_group_name",
     "canonical_path",
     "check_integrity",

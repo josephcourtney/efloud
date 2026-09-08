@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from efloud.derivation import DerivationKey
     from efloud.json_types import JsonObject
-    from efloud.metadata_store import MetadataStore, OperationRecord
+    from efloud.metadata_store import MaterializationRecord, MetadataStore, OperationRecord, RunRecord, SourceRecord
     from efloud.repository_models import DatasetSpecification
 
 _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
@@ -92,6 +92,35 @@ class Repository:
     def close(self) -> None:
         self.metadata.close()
 
+    def source(self, source_id: SourceId | str) -> SourceRecord | None:
+        return self.metadata.source(SourceId(str(source_id)))
+
+    def sources(self) -> tuple[SourceRecord, ...]:
+        return self.metadata.sources()
+
+    def run(self, run_id: RunId | str) -> RunRecord | None:
+        return self.metadata.run(RunId(str(run_id)))
+
+    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]:
+        return self.metadata.recent_runs(limit=limit)
+
+    def operation(self, operation_id: OperationId | str) -> OperationRecord | None:
+        return self.metadata.operation(OperationId(str(operation_id)))
+
+    def operations_for_run(self, run_id: RunId | str) -> tuple[OperationRecord, ...]:
+        return self.metadata.operations_for_run(RunId(str(run_id)))
+
+    def operations_for_source(
+        self,
+        source_id: SourceId | str,
+        *,
+        limit: int = 50,
+    ) -> tuple[OperationRecord, ...]:
+        return self.metadata.operations_for_source(SourceId(str(source_id)), limit=limit)
+
+    def materializations_for(self, content_id: ContentId | str) -> tuple[MaterializationRecord, ...]:
+        return self.metadata.materializations_for(ContentId(str(content_id)))
+
     def register_source(self, source_id: SourceId | str, definition: JsonObject) -> SourceId:
         normalized = SourceId(str(source_id))
         existing = self.metadata.source(normalized)
@@ -141,9 +170,7 @@ class Repository:
         if run.status != "running":
             msg = f"Run {run_id} cannot transition from {run.status!r}."
             raise ValueError(msg)
-        running_operations = [
-            operation for operation in self.metadata.operations_for_run(run_id) if operation.status == "running"
-        ]
+        running_operations = [operation for operation in self.operations_for_run(run_id) if operation.status == "running"]
         if running_operations:
             msg = f"Run {run_id} cannot finish while operations are still running."
             raise ValueError(msg)
@@ -152,13 +179,6 @@ class Repository:
             finished_at=time.time() if finished_at is None else finished_at,
             status=_canonical_terminal_status(status, operation=False),
         )
-
-    def _operation_record(self, operation_id: OperationId) -> OperationRecord | None:
-        for run in self.metadata.recent_runs(limit=100_000):
-            for operation in self.metadata.operations_for_run(run.run_id):
-                if operation.operation_id == operation_id:
-                    return operation
-        return None
 
     def start_operation(
         self,
@@ -203,7 +223,7 @@ class Repository:
         finished_at: float | None = None,
         details: JsonObject | None = None,
     ) -> None:
-        operation = self._operation_record(operation_id)
+        operation = self.operation(operation_id)
         if operation is None:
             msg = f"Unknown operation: {operation_id}"
             raise KeyError(msg)
@@ -581,6 +601,9 @@ class Repository:
     def open_content(self, content_id: ContentId | str) -> BinaryIO:
         return self.blobs.open(ContentId(str(content_id)))
 
+    def contains_content(self, content_id: ContentId | str) -> bool:
+        return self.blobs.contains(ContentId(str(content_id)))
+
     def verify_content(self, content_id: ContentId | str) -> bool:
         return self.blobs.verify(ContentId(str(content_id)))
 
@@ -685,8 +708,19 @@ class Repository:
     def tree_entries(self, tree_id: TreeId | str) -> tuple[TreeEntry, ...]:
         return self.metadata.tree_entries(TreeId(str(tree_id)))
 
+    def source_snapshot(self, snapshot_id: SnapshotId | str) -> SourceSnapshot | None:
+        return self.metadata.source_snapshot(SnapshotId(str(snapshot_id)))
+
     def latest_source_snapshot(self, source_id: SourceId | str) -> SourceSnapshot | None:
         return self.metadata.latest_source_snapshot(SourceId(str(source_id)))
+
+    def source_snapshots_for(
+        self,
+        source_id: SourceId | str,
+        *,
+        limit: int = 50,
+    ) -> tuple[SourceSnapshot, ...]:
+        return self.metadata.source_snapshots_for(SourceId(str(source_id)), limit=limit)
 
     def resolve_dataset(
         self,

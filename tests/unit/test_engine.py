@@ -3,10 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from efloud.adapters import AdapterRegistry, HttpAcquisition, HttpSourceAdapter, RsyncAcquisition, RsyncSourceAdapter
+from efloud.adapters import AdapterRegistry, HttpAcquisition, RsyncAcquisition
 from efloud.engine import Engine
+from efloud.http_adapter import HttpSourceAdapter
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
+from efloud.rsync_adapter import RsyncSourceAdapter
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]

@@ -23,6 +23,7 @@ from efloud.store_inspection import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from efloud.json_types import JsonObject
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
 
@@ -258,15 +259,16 @@ def _repository_local_path(entry: Mapping[str, object]) -> Path | None:
     return None
 
 
-def _source_locator_payload(locator: str, repository_locator: object) -> dict[str, Any]:
-    if not isinstance(repository_locator, dict):
+def _source_locator_payload(locator: str, repository_locator: object) -> JsonObject:
+    repository_mapping = json_mapping_or_none(repository_locator)
+    if repository_mapping is None:
         return {
             "path": locator,
             "resolved_locator": None,
             "value": None,
             "error": "Repository locator evaluation returned no result.",
         }
-    payload = dict(repository_locator)
+    payload = copy_json_mapping(repository_mapping)
     requested = payload.get("requested")
     resolved = payload.get("resolved")
     payload["path"] = requested if isinstance(requested, str) else locator

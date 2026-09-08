@@ -115,13 +115,27 @@ class DatasetRecord:
     specification_id: DatasetSpecificationId = field(init=False)
 
     def __post_init__(self) -> None:
-        definition, decoded = decode_dataset_specifications(self.definition)
+        _definition, decoded = decode_dataset_specifications(self.definition)
         merged = {str(item.specification_id): item for item in decoded}
         merged.update({str(item.specification_id): item for item in self.specifications})
         ordered = tuple(sorted(merged.values(), key=lambda item: str(item.specification_id)))
-        object.__setattr__(self, "definition", definition)
+        object.__setattr__(self, "definition", dict(ordered[0].definition))
         object.__setattr__(self, "specifications", ordered)
         object.__setattr__(self, "specification_id", ordered[0].specification_id)
+
+    def with_specifications(
+        self,
+        specifications: Iterable[DatasetSpecification],
+    ) -> DatasetRecord:
+        return type(self)(
+            dataset_id=self.dataset_id,
+            content_identity=self.content_identity,
+            created_at=self.created_at,
+            definition=self.definition,
+            metadata=self.metadata,
+            members=self.members,
+            specifications=(*self.specifications, *tuple(specifications)),
+        )
 
     def storage_definition(self) -> JsonObject:
         return dataset_specifications_payload(

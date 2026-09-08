@@ -12,11 +12,11 @@ from efloud.adapters import (
     RsyncAcquisition,
     SourceAcquisition,
     SourceAdapter,
-    builtin_adapter_registry,
 )
 from efloud.adoption import AdoptionResult, adopt_existing_store
 from efloud.artifacts import build_path_index, canonical_path, sha256_hex, verify_gzip
 from efloud.blob_store import BlobStore, FilesystemBlobStore
+from efloud.builtin_adapters import builtin_adapter_registry
 from efloud.datasets import (
     DatasetDefinition,
     DatasetManifest,

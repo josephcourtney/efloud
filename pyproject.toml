@@ -2,7 +2,7 @@
 [project]
   name = "efloud"
   version = "0.0.10"
-  description = "Local mirroring and materialization of HTTP, REST, and rsync data sources"
+  description = "Local versioned data ingestion and immutable artifact repositories"
   readme = "README.md"
   authors = [
     { name = "Joseph M Courtney", email = "5942706+josephcourtney@users.noreply.github.com" },
@@ -157,7 +157,7 @@
     "usability: Automated usability tests (accessibility, i18n).",
     "synthetic_monitoring: Synthetic production probes.",
 
-    # Technique / infra markers
+    # Technique / infra
     "snapshot: Snapshot-based tests.",
     "property_based: Property-based tests (Hypothesis).",
     "mutation: Mutation-testing related.",

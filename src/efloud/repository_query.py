@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from efloud.json_types import JsonObject, JsonValue
+from efloud.json_types import JsonArray, JsonObject, JsonValue
 from efloud.locator import apply_structured_locator, locator_candidates, split_locator
 from efloud.repository_models import ArtifactAbsence, ArtifactObservation, ContentId, ObservationId, SnapshotId
 from efloud.repository_status import RepositoryStatusService
@@ -39,8 +39,10 @@ def _snapshot_payload(repository: Repository, snapshot: SourceSnapshot) -> JsonO
     return payload
 
 
-def _validation_payload(repository: Repository, content_id: ContentId) -> list[JsonObject]:
-    return [result.to_dict() for result in repository.validations_for(content_id)]
+def _validation_payload(repository: Repository, content_id: ContentId) -> JsonArray:
+    payload: JsonArray = []
+    payload.extend(result.to_dict() for result in repository.validations_for(content_id))
+    return payload
 
 
 def _payload_bytes(repository: Repository, observation: ArtifactObservation) -> bytes:
@@ -89,7 +91,7 @@ def _resolve_regex(
     value: str,
     locator: str,
 ) -> tuple[JsonValue | None, str | None]:
-    del locator  # needed to silence "unused argument". function must adhere to TextLocatorHandler signature
+    del locator
     try:
         match = re.search(value, text, re.MULTILINE)
     except re.error as exc:

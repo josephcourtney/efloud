@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from efloud.repository_models import RunId, SourceId
 
 if TYPE_CHECKING:
-    from efloud.json_types import JsonObject
+    from efloud.json_types import JsonArray, JsonObject
     from efloud.metadata_store import OperationRecord, RunRecord, SourceRecord
     from efloud.repository import Repository
     from efloud.repository_models import SourceSnapshot
@@ -17,9 +17,13 @@ def _compatibility_status(status: str) -> str:
 
 
 def _source_record_payload(record: SourceRecord) -> JsonObject:
+    revisions: JsonArray = []
+    revisions.extend(revision.to_dict() for revision in record.revisions)
     return {
         "source_id": str(record.source_id),
         "definition": dict(record.definition),
+        "definition_revision_id": str(record.revision_id),
+        "definition_revisions": revisions,
     }
 
 

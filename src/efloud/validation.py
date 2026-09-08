@@ -5,14 +5,17 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, BinaryIO, Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from efloud.inventory import IntegrityExpectation
-from efloud.repository_models import ContentRef, ValidationResult, ValidationStatus
+from efloud.repository_models import ValidationResult, ValidationStatus
 
 if TYPE_CHECKING:
+    from typing import BinaryIO
+
+    from efloud.inventory import IntegrityExpectation
     from efloud.json_types import JsonArray, JsonObject
     from efloud.repository import Repository
+    from efloud.repository_models import ContentRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +124,7 @@ class StorageIntegrityValidator:
 
     def applies_to(self, target: ValidationTarget) -> bool:
         del target
-        return True
+        return bool(self.descriptor.validator_id)
 
     def validate(self, target: ValidationTarget, stream: BinaryIO) -> ValidationOutcome:
         digest = hashlib.sha256()
@@ -131,7 +134,11 @@ class StorageIntegrityValidator:
         expected = str(target.content.content_id)
         return ValidationOutcome(
             status="passed" if actual == expected else "failed",
-            details={"expected_content_id": expected, "actual_content_id": actual},
+            details={
+                "validator_id": self.descriptor.validator_id,
+                "expected_content_id": expected,
+                "actual_content_id": actual,
+            },
         )
 
 
@@ -146,7 +153,8 @@ class GzipValidator:
     def applies_to(self, target: ValidationTarget) -> bool:
         media_type = (target.content.media_type or "").lower()
         name = (target.name or "").lower()
-        return media_type in {"application/gzip", "application/x-gzip"} or name.endswith(".gz")
+        relevant = media_type in {"application/gzip", "application/x-gzip"} or name.endswith(".gz")
+        return bool(self.descriptor.validator_id) and relevant
 
     def validate(self, target: ValidationTarget, stream: BinaryIO) -> ValidationOutcome:
         del target
@@ -155,8 +163,14 @@ class GzipValidator:
                 for _chunk in iter(lambda: archive.read(1024 * 1024), b""):
                     pass
         except (EOFError, OSError) as exc:
-            return ValidationOutcome(status="failed", details={"error": f"{type(exc).__name__}: {exc}"})
-        return ValidationOutcome(status="passed")
+            return ValidationOutcome(
+                status="failed",
+                details={
+                    "validator_id": self.descriptor.validator_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+        return ValidationOutcome(status="passed", details={"validator_id": self.descriptor.validator_id})
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +184,8 @@ class JsonValidator:
     def applies_to(self, target: ValidationTarget) -> bool:
         media_type = (target.content.media_type or "").lower()
         name = (target.name or "").lower()
-        return "json" in media_type or name.endswith((".json", ".json.gz"))
+        relevant = "json" in media_type or name.endswith((".json", ".json.gz"))
+        return bool(self.descriptor.validator_id) and relevant
 
     def validate(self, target: ValidationTarget, stream: BinaryIO) -> ValidationOutcome:
         try:
@@ -179,8 +194,20 @@ class JsonValidator:
                 data = gzip.decompress(data)
             decoded = json.loads(data)
         except (EOFError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            return ValidationOutcome(status="failed", details={"error": f"{type(exc).__name__}: {exc}"})
-        return ValidationOutcome(status="passed", details={"json_type": type(decoded).__name__})
+            return ValidationOutcome(
+                status="failed",
+                details={
+                    "validator_id": self.descriptor.validator_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+        return ValidationOutcome(
+            status="passed",
+            details={
+                "validator_id": self.descriptor.validator_id,
+                "json_type": type(decoded).__name__,
+            },
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +226,7 @@ class IntegrityExpectationValidator:
 
     def applies_to(self, target: ValidationTarget) -> bool:
         del target
-        return True
+        return bool(self.descriptor.validator_id)
 
     def validate(self, target: ValidationTarget, stream: BinaryIO) -> ValidationOutcome:
         del stream

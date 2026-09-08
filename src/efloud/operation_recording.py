@@ -6,10 +6,12 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
+import anyio
+
 from efloud.adapters import CollectionAcquisition, HttpAcquisition, RsyncAcquisition, SourceAcquisition
 from efloud.collection_recording import record_collection_acquisition
 from efloud.derived import RepositoryDerivedTask
-from efloud.json_types import JsonObject, copy_json_mapping, json_mapping_or_none
+from efloud.json_types import JsonObject, JsonValue, copy_json_mapping, json_mapping_or_none
 from efloud.planning import PlannedOperation
 from efloud.repository_compat import repository_manifest
 from efloud.repository_models import ObservationId, TreeEntry, canonical_json_bytes
@@ -331,6 +333,13 @@ def _derived_task(config: EngineConfig, name: str) -> DerivedTask | None:
     return next((task for task in config.derived_tasks if task.name == name), None)
 
 
+async def _materialized_output(value: JsonValue | None) -> Path | None:
+    if not isinstance(value, str):
+        return None
+    path = Path(value)
+    return path if await anyio.to_thread.run_sync(path.is_file) else None
+
+
 async def run_derived_operation(
     repository: Repository,
     *,
@@ -359,11 +368,11 @@ async def run_derived_operation(
         return RecordedOperation("failed", details={"error": "Derived task returned a non-JSON result."})
     payload = copy_json_mapping(mapping)
     observations: list[ObservationId] = []
-    output = payload.get("dest")
-    if isinstance(output, str) and Path(output).is_file():
+    output_path = await _materialized_output(payload.get("dest"))
+    if output_path is not None:
         output_observation = repository.ingest_path(
             f"derived:{operation.subject}:output",
-            Path(output),
+            output_path,
             run_id=run_id,
             operation_id=operation_id,
             observed_at=time.time(),

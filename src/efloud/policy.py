@@ -51,6 +51,18 @@ class SyncPolicy(Protocol):
     ) -> tuple[str, ...] | None: ...
 
 
+def _ordinary_refresh_decision(snapshot: SourceSnapshot | None) -> RefreshDecision:
+    if snapshot is None:
+        return RefreshDecision(
+            refresh=False,
+            reason="no repository snapshot; normal acquisition/cache semantics apply",
+        )
+    return RefreshDecision(
+        refresh=False,
+        reason="repository snapshot exists and no forced refresh was requested",
+    )
+
+
 class DefaultSyncPolicy:
     @staticmethod
     def refresh_decision(
@@ -60,14 +72,12 @@ class DefaultSyncPolicy:
         snapshot: SourceSnapshot | None,
     ) -> RefreshDecision:
         if cfg.refresh_all:
-            return RefreshDecision(True, "refresh_all requested", forced=True)
+            return RefreshDecision(refresh=True, reason="refresh_all requested", forced=True)
         if source.kind.value in {"HTTP", "REST", "REST_BASE"} and cfg.refresh_http:
-            return RefreshDecision(True, "HTTP-family refresh requested", forced=True)
+            return RefreshDecision(refresh=True, reason="HTTP-family refresh requested", forced=True)
         if source.kind.value == "RSYNC" and cfg.refresh_rsync:
-            return RefreshDecision(True, "rsync refresh requested", forced=True)
-        if snapshot is None:
-            return RefreshDecision(False, "no repository snapshot; normal acquisition/cache semantics apply")
-        return RefreshDecision(False, "repository snapshot exists and no forced refresh was requested")
+            return RefreshDecision(refresh=True, reason="rsync refresh requested", forced=True)
+        return _ordinary_refresh_decision(snapshot)
 
     @classmethod
     def should_refresh(cls, source: SourceDefinition, cfg: EngineConfig) -> bool:
@@ -97,15 +107,13 @@ class RoleDrivenSyncPolicy:
     rest_base_refresh: bool | None = None
     rsync_mode: MirrorMode | None = None
 
-    def refresh_decision(
+    def _configured_refresh_decision(
         self,
         source: SourceDefinition,
         cfg: EngineConfig,
-        *,
-        snapshot: SourceSnapshot | None,
-    ) -> RefreshDecision:
+    ) -> RefreshDecision | None:
         if cfg.refresh_all:
-            return RefreshDecision(True, "refresh_all requested", forced=True)
+            return RefreshDecision(refresh=True, reason="refresh_all requested", forced=True)
 
         kind_name = source.kind.value
         role_override = (
@@ -114,22 +122,34 @@ class RoleDrivenSyncPolicy:
             else None
         )
         if kind_name in {"HTTP", "REST"} and role_override is not None:
-            return RefreshDecision(role_override, f"role override for {source.role!r}", forced=role_override)
+            return RefreshDecision(
+                refresh=role_override,
+                reason=f"role override for {source.role!r}",
+                forced=role_override,
+            )
         if kind_name in {"HTTP", "REST"} and cfg.refresh_http:
-            return RefreshDecision(True, "HTTP-family refresh requested", forced=True)
+            return RefreshDecision(refresh=True, reason="HTTP-family refresh requested", forced=True)
         if kind_name == "REST_BASE" and self.rest_base_refresh is not None:
             return RefreshDecision(
-                bool(self.rest_base_refresh),
-                "REST collection policy override",
+                refresh=bool(self.rest_base_refresh),
+                reason="REST collection policy override",
                 forced=bool(self.rest_base_refresh),
             )
         if kind_name == "REST_BASE" and cfg.refresh_http:
-            return RefreshDecision(True, "HTTP-family refresh requested", forced=True)
+            return RefreshDecision(refresh=True, reason="HTTP-family refresh requested", forced=True)
         if kind_name == "RSYNC" and cfg.refresh_rsync:
-            return RefreshDecision(True, "rsync refresh requested", forced=True)
-        if snapshot is None:
-            return RefreshDecision(False, "no repository snapshot; normal acquisition/cache semantics apply")
-        return RefreshDecision(False, "repository snapshot exists and no forced refresh was requested")
+            return RefreshDecision(refresh=True, reason="rsync refresh requested", forced=True)
+        return None
+
+    def refresh_decision(
+        self,
+        source: SourceDefinition,
+        cfg: EngineConfig,
+        *,
+        snapshot: SourceSnapshot | None,
+    ) -> RefreshDecision:
+        configured = self._configured_refresh_decision(source, cfg)
+        return configured if configured is not None else _ordinary_refresh_decision(snapshot)
 
     def should_refresh(self, source: SourceDefinition, cfg: EngineConfig) -> bool:
         return self.refresh_decision(source, cfg, snapshot=None).refresh

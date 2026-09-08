@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from efloud.inventory import (
     ChangeToken,
+    ChangeTokenReliability,
     IntegrityExpectation,
     InventoryCoverage,
     InventoryItem,
@@ -33,6 +34,7 @@ class CollectionRecordingResult:
 @dataclass(slots=True)
 class _RecordingState:
     observations: list[ObservationId] = field(default_factory=list)
+    content_observations: list[ObservationId] = field(default_factory=list)
     tree_entries: list[TreeEntry] = field(default_factory=list)
     content_count: int = 0
     absence_count: int = 0
@@ -48,11 +50,8 @@ def _change_token(value: JsonValue | None) -> ChangeToken | None:
     reliability = mapping.get("reliability")
     if not isinstance(kind, str) or not isinstance(token_value, str):
         return None
-    return ChangeToken(
-        kind=kind,
-        value=token_value,
-        reliability=reliability if reliability in {"weak", "strong"} else "strong",
-    )
+    reliability_value: ChangeTokenReliability = "weak" if reliability == "weak" else "strong"
+    return ChangeToken(kind=kind, value=token_value, reliability=reliability_value)
 
 
 def _integrity_expectations(value: JsonValue | None) -> tuple[IntegrityExpectation, ...]:
@@ -114,7 +113,11 @@ def _inventory(source_id: SourceId, payload: JsonMapping, observed_at: float) ->
         raise ValueError(msg)
     coverage = json_mapping_or_none(serialized.get("coverage")) or {}
     scope_value = coverage.get("scope")
-    scope = tuple(sorted(value for value in scope_value if isinstance(value, str))) if isinstance(scope_value, list) else ()
+    scope = (
+        tuple(sorted(value for value in scope_value if isinstance(value, str)))
+        if isinstance(scope_value, list)
+        else ()
+    )
     inventory_observed_at = serialized.get("observed_at")
     upstream_identity = serialized.get("upstream_identity")
     metadata = json_mapping_or_none(serialized.get("metadata"))
@@ -208,8 +211,8 @@ def _record_item(
     decision: ReconciliationDecision,
     media_type: str | None,
 ) -> None:
-    relative_path = item.source_path or item.item_id if entry is None else _relative_path(item, entry)
     if entry is None:
+        relative_path = item.source_path or item.item_id
         state.tree_entries.append(
             TreeEntry(
                 relative_path=relative_path,
@@ -220,6 +223,7 @@ def _record_item(
         state.unresolved_count += 1
         return
 
+    relative_path = _relative_path(item, entry)
     metadata = _entry_metadata(item, entry, decision)
     status = entry.get("status")
     destination = entry.get("dest")
@@ -239,6 +243,7 @@ def _record_item(
             materialization_kind="fanout",
         )
         state.observations.append(observation.observation_id)
+        state.content_observations.append(observation.observation_id)
         state.tree_entries.append(
             TreeEntry(
                 relative_path=relative_path,
@@ -310,6 +315,29 @@ def _record_membership_absences(
         state.absence_count += 1
 
 
+def _snapshot_evidence(
+    *,
+    task_name: str,
+    inventory: SourceInventory,
+    state: _RecordingState,
+    counts: JsonObject,
+) -> JsonObject:
+    evidence: JsonObject = {
+        "collection": True,
+        "task": task_name,
+        "inventory_model": "source-inventory-v1",
+        "enumeration_complete": inventory.coverage.complete,
+        "enumerated_item_count": len(inventory.items),
+        "content_item_count": state.content_count,
+        "absence_count": state.absence_count,
+        "unresolved_item_count": state.unresolved_count,
+        "classification_counts": counts,
+    }
+    if inventory.upstream_identity is not None:
+        evidence["upstream_identity"] = inventory.upstream_identity
+    return evidence
+
+
 def record_collection_acquisition(
     repository: Repository,
     *,
@@ -363,18 +391,12 @@ def record_collection_acquisition(
         complete=inventory.coverage.complete,
         scope=inventory.coverage.scope,
         observed_at=inventory.observed_at,
-        evidence={
-            "collection": True,
-            "task": task_name,
-            "inventory_model": "source-inventory-v1",
-            "enumeration_complete": inventory.coverage.complete,
-            "enumerated_item_count": len(inventory.items),
-            "content_item_count": state.content_count,
-            "absence_count": state.absence_count,
-            "unresolved_item_count": state.unresolved_count,
-            "classification_counts": counts,
-            **({"upstream_identity": inventory.upstream_identity} if inventory.upstream_identity is not None else {}),
-        },
+        evidence=_snapshot_evidence(
+            task_name=task_name,
+            inventory=inventory,
+            state=state,
+            counts=counts,
+        ),
     )
     execution = repository.ingest_bytes(
         f"derived:{task_name}:execution",
@@ -385,7 +407,7 @@ def record_collection_acquisition(
         observed_at=inventory.observed_at,
         media_type="application/json",
         metadata={"collection": True, "adapter_execution": True, "snapshot_id": str(snapshot.snapshot_id)},
-        inputs=tuple(state.observations),
+        inputs=tuple(state.content_observations),
     )
     observations = (*state.observations, execution.observation_id)
     return CollectionRecordingResult(

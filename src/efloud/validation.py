@@ -5,17 +5,14 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, BinaryIO, Literal, Protocol
+from typing import TYPE_CHECKING, BinaryIO, Protocol
 
 from efloud.inventory import IntegrityExpectation
-from efloud.repository_models import ContentId, ContentRef, ValidationResult
+from efloud.repository_models import ContentRef, ValidationResult, ValidationStatus
 
 if TYPE_CHECKING:
-    from efloud.json_types import JsonObject
+    from efloud.json_types import JsonArray, JsonObject
     from efloud.repository import Repository
-
-
-type ValidationStatus = Literal["passed", "failed", "error"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,10 +78,9 @@ class ValidationBatch:
         return all(not check.required or check.result.status == "passed" for check in self.checks)
 
     def to_dict(self) -> JsonObject:
-        return {
-            "ok": self.ok,
-            "checks": [check.to_dict() for check in self.checks],
-        }
+        serialized: JsonArray = []
+        serialized.extend(check.to_dict() for check in self.checks)
+        return {"ok": self.ok, "checks": serialized}
 
 
 class ValidationRegistry:
@@ -103,11 +99,7 @@ class ValidationRegistry:
         self._validators[validator_id] = validator
 
     def applicable(self, target: ValidationTarget) -> tuple[ContentValidator, ...]:
-        return tuple(
-            validator
-            for validator in self._validators.values()
-            if validator.applies_to(target)
-        )
+        return tuple(validator for validator in self._validators.values() if validator.applies_to(target))
 
     def descriptors(self) -> tuple[ValidatorDescriptor, ...]:
         return tuple(

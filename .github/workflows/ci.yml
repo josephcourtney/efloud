@@ -8,71 +8,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  apply-review-repairs:
-    name: Apply validated review repairs
-    if: github.head_ref == 'repair/review-correctness-and-persistence' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      UV_PYTHON: "3.14"
-
-    steps:
-      - name: Check out repair branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: repair/review-correctness-and-persistence
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Reconstruct and apply repairs
-        shell: bash
-        run: |
-          cat tools/.review-fix-gz/part-* | base64 --decode | gzip --decompress > /tmp/apply_review_fixes.py
-          python /tmp/apply_review_fixes.py .
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: true
-
-      - name: Install Python
-        run: uv python install "$UV_PYTHON"
-
-      - name: Refresh lockfile
-        run: uv lock
-
-      - name: Sync development environment
-        run: uv sync
-
-      - name: Format changed Python
-        run: uv run ruff format src/ tests/
-
-      - name: Run canonical quality gate
-        run: uv run just check
-
-      - name: Check patch whitespace
-        run: git diff --check
-
-      - name: Commit validated repairs
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          git commit -m "fix: harden repository correctness and persistence"
-          git push origin HEAD:repair/review-correctness-and-persistence
-
   quality:
     name: Canonical gate (Python 3.14)
     runs-on: ubuntu-24.04

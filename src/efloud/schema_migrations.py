@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from efloud.json_types import json_object_or_none
+from efloud.json_types import JsonObject, json_object_or_none
 from efloud.metadata_envelopes import (
     dataset_specifications_payload,
     source_definition_history_payload,
@@ -13,7 +13,7 @@ CURRENT_SCHEMA_VERSION = 3
 _SUPPORTED_HISTORICAL_VERSIONS = frozenset({1, 2})
 
 
-def _load_object(raw: str) -> dict[str, object]:
+def _load_object(raw: str) -> JsonObject:
     decoded = json.loads(raw)
     value = json_object_or_none(decoded)
     if value is None:
@@ -47,12 +47,11 @@ def _migrate_2_to_3(connection: sqlite3.Connection) -> None:
 
     dataset_rows = connection.execute("SELECT dataset_id, definition_json FROM datasets").fetchall()
     for dataset_id, raw_definition in dataset_rows:
-        del dataset_id
         definition = _load_object(raw_definition)
         envelope = dataset_specifications_payload(definition)
         connection.execute(
-            "UPDATE datasets SET definition_json = ? WHERE rowid = ?",
-            (_dump(envelope), connection.execute("SELECT last_insert_rowid()").fetchone()[0]),
+            "UPDATE datasets SET definition_json = ? WHERE dataset_id = ?",
+            (_dump(envelope), dataset_id),
         )
 
     _set_version(connection, 3)
@@ -64,7 +63,8 @@ def initialize_or_migrate(
     baseline_schema: str,
 ) -> None:
     current = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    if current > CURRENT_SCHEMA_VERSION or current not in {0, *_SUPPORTED_HISTORICAL_VERSIONS, CURRENT_SCHEMA_VERSION}:
+    supported = {0, *_SUPPORTED_HISTORICAL_VERSIONS, CURRENT_SCHEMA_VERSION}
+    if current not in supported:
         msg = f"Unsupported efloud metadata schema version: {current}"
         raise RuntimeError(msg)
 

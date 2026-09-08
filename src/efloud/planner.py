@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
 
+_HOUSEKEEPING_PRODUCER = ProducerRef("efloud:housekeeping", "1")
+_DELETE_HTTP_CACHES_KEY = "housekeeping:delete-http-caches"
+_PRUNE_ORPHAN_MIRRORS_KEY = "housekeeping:prune-orphan-mirrors"
+
 
 def _task_version(task: object) -> str:
     if isinstance(task, RepositoryDerivedTask):
@@ -72,6 +76,61 @@ def _source_operation_parameters(
     return payload
 
 
+def _cache_dependency(config: EngineConfig, source: SourceDefinition) -> tuple[str, ...]:
+    if config.delete_http_caches and source.kind in {SourceKind.HTTP, SourceKind.REST, SourceKind.REST_BASE}:
+        return (_DELETE_HTTP_CACHES_KEY,)
+    return ()
+
+
+def _housekeeping_before_sources(config: EngineConfig) -> tuple[PlannedOperation, ...]:
+    if not config.delete_http_caches:
+        return ()
+    return (
+        PlannedOperation(
+            operation_key=_DELETE_HTTP_CACHES_KEY,
+            kind="housekeeping",
+            subject="delete-http-caches",
+            producer=_HOUSEKEEPING_PRODUCER,
+            parameters={"action": "delete-http-caches"},
+        ),
+    )
+
+
+def _housekeeping_after_sources(
+    config: EngineConfig,
+    source_operations: tuple[PlannedOperation, ...],
+) -> tuple[PlannedOperation, ...]:
+    if not config.prune_orphan_mirrors:
+        return ()
+    rsync_dependencies = tuple(
+        sorted(
+            operation.operation_key
+            for operation in source_operations
+            if operation.source_id is not None
+            and next(
+                (source.kind is SourceKind.RSYNC for source in config.sources if source.id == operation.source_id),
+                False,
+            )
+        )
+    )
+    expected_subpaths = sorted(
+        source.local_subpath or source.id for source in config.sources if source.kind is SourceKind.RSYNC
+    )
+    return (
+        PlannedOperation(
+            operation_key=_PRUNE_ORPHAN_MIRRORS_KEY,
+            kind="housekeeping",
+            subject="prune-orphan-mirrors",
+            producer=_HOUSEKEEPING_PRODUCER,
+            dependencies=rsync_dependencies,
+            parameters={
+                "action": "prune-orphan-mirrors",
+                "expected_subpaths": expected_subpaths,
+            },
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SyncPlanner:
     adapters: AdapterRegistry
@@ -107,7 +166,7 @@ class SyncPlanner:
         refresh = policy.refresh_decision(source, config, snapshot=snapshot)
         scope = policy.source_scope(source, config)
         input_source_ids = _task_input_source_ids(collection_task) if collection_task is not None else ()
-        dependencies = _planned_dependency_keys(input_source_ids, selected_source_ids)
+        dependencies = (*_cache_dependency(config, source), *_planned_dependency_keys(input_source_ids, selected_source_ids))
         snapshot_id = str(snapshot.snapshot_id) if snapshot is not None else None
         operation = PlannedOperation(
             operation_key=f"source:{source.id}",
@@ -187,7 +246,7 @@ class SyncPlanner:
         resolved_request = request or SyncRequest.from_config(config)
         selected_source_ids = _selected_source_ids(config, resolved_request)
         decisions: list[PlanningDecision] = []
-        operations: list[PlannedOperation] = []
+        source_operations: list[PlannedOperation] = []
         for source in sorted(config.sources, key=lambda item: item.id):
             decision, operation = self._source_plan(
                 source=source,
@@ -197,7 +256,9 @@ class SyncPlanner:
             )
             decisions.append(decision)
             if operation is not None:
-                operations.append(operation)
+                source_operations.append(operation)
+        operations = [*_housekeeping_before_sources(config), *source_operations]
+        operations.extend(_housekeeping_after_sources(config, tuple(source_operations)))
         operations.extend(
             self._derived_operations(
                 config=config,

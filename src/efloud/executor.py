@@ -7,13 +7,15 @@ from typing import TYPE_CHECKING, Literal
 
 from efloud.adapters import AdapterExecutionContext, AdapterRegistry
 from efloud.fs import delete_http_cache_files, prune_orphan_mirrors
-from efloud.json_types import JsonObject
+from efloud.json_types import JsonArray, JsonObject
 from efloud.operation_recording import RecordedOperation, record_source_acquisition, run_derived_operation
 from efloud.planning import PlannedOperation, SyncPlan
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from efloud.models import EngineConfig
     from efloud.repository import Repository
 
@@ -65,6 +67,12 @@ class _ExecutionContext:
     adapters: AdapterRegistry
     plan: SyncPlan
     run_id: RunId
+
+
+def _json_strings(values: Iterable[str]) -> JsonArray:
+    items: JsonArray = []
+    items.extend(values)
+    return items
 
 
 def _source_definition_payload(source: SourceDefinition) -> JsonObject:
@@ -141,7 +149,8 @@ def _housekeeping_result(context: _ExecutionContext, operation: PlannedOperation
     if action == "delete-http-caches":
         cache_root = Path(context.config.root) / context.config.cache_dir / context.config.http_cache_dir
         removed = delete_http_cache_files(cache_root)
-        return RecordedOperation("succeeded", details={"removed": removed})
+        details: JsonObject = {"removed": _json_strings(removed)}
+        return RecordedOperation("succeeded", details=details)
     if action == "prune-orphan-mirrors":
         raw_expected = operation.parameters.get("expected_subpaths")
         expected_subpaths = (
@@ -150,7 +159,8 @@ def _housekeeping_result(context: _ExecutionContext, operation: PlannedOperation
         mirrors_root = Path(context.config.root) / context.config.mirrors_dir
         keep_dirs = tuple(mirrors_root / subpath for subpath in expected_subpaths)
         removed = prune_orphan_mirrors(mirrors_root, keep_dirs)
-        return RecordedOperation("succeeded", details={"removed": removed})
+        details = {"removed": _json_strings(removed)}
+        return RecordedOperation("succeeded", details=details)
     return RecordedOperation("failed", details={"error": f"Unknown housekeeping action: {action!r}"})
 
 
@@ -237,7 +247,7 @@ def _blocked_operation(
     operation_id = _start_operation(context, operation)
     details: JsonObject = {
         "error": "operation blocked by unsuccessful dependencies",
-        "failed_dependencies": list(failed_dependencies),
+        "failed_dependencies": _json_strings(failed_dependencies),
     }
     context.repository.finish_operation(operation_id, status="cancelled", details=details)
     return OperationExecutionResult(operation.operation_key, "blocked", details=details)

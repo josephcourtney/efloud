@@ -4,8 +4,7 @@ import asyncio
 import gzip
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
-from typing import BinaryIO
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -32,6 +31,10 @@ from efloud.validation import (
     ValidatorDescriptor,
     builtin_validation_registry,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from typing import BinaryIO
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 

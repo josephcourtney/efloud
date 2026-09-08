@@ -20,6 +20,7 @@ DatasetId = NewType("DatasetId", str)
 
 type RunStatus = Literal["running", "succeeded", "partial", "failed", "cancelled"]
 type OperationStatus = Literal["running", "succeeded", "failed", "cancelled"]
+type ValidationStatus = Literal["passed", "failed", "error"]
 
 _SHA256_HEX_LENGTH = 64
 
@@ -199,8 +200,18 @@ class ValidationResult:
     validator: str
     validator_version: str
     checked_at: float
-    status: str
+    status: ValidationStatus
     details: JsonObject = field(default_factory=dict)
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "content_id": str(self.content_id),
+            "validator": self.validator,
+            "validator_version": self.validator_version,
+            "checked_at": self.checked_at,
+            "status": self.status,
+            "details": dict(self.details),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +351,7 @@ __all__ = [
     "TreeEntry",
     "TreeId",
     "ValidationResult",
+    "ValidationStatus",
     "absence_id_for",
     "canonical_json_bytes",
     "observation_id_for",

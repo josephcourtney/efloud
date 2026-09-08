@@ -3,14 +3,16 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from efloud.json_types import JsonArray, JsonMapping, JsonObject, JsonValue, json_mapping_or_none
-from efloud.models import EngineConfig, NormalizedManifest
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_compat import repository_exists, repository_source_entry
 from efloud.source_results import manifest_entry_for_source, source_status_hint
+
+if TYPE_CHECKING:
+    from efloud.models import EngineConfig, NormalizedManifest
 
 
 def _repository_health(repository: Repository, cfg: EngineConfig) -> dict[str, Any]:
@@ -85,8 +87,8 @@ def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]
             "health": _uninitialized_health(cfg),
         },
         [
-            "Repository metadata is not initialized; compatibility manifests and mirror-state exports "
-            "are not used as authoritative status. Run a repository sync or adopt retained local data."
+            ("Repository metadata is not initialized; compatibility manifests and mirror-state exports "
+            "are not used as authoritative status. Run a repository sync or adopt retained local data.")
         ],
     )
 

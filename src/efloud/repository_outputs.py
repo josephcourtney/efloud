@@ -51,7 +51,9 @@ def publish_repository_outputs(
     output_time = (
         run.finished_at
         if run is not None and run.finished_at is not None
-        else run.started_at if run is not None else time.time()
+        else run.started_at
+        if run is not None
+        else time.time()
     )
 
     canonical_path = _write_manifest(

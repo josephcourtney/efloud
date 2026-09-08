@@ -30,9 +30,7 @@ def is_json_mapping(value: object) -> TypeGuard[JsonMapping]:
 
 def is_json_object(value: object) -> TypeGuard[JsonObject]:
     """Narrow an arbitrary runtime value to a mutable JSON object."""
-    return isinstance(value, dict) and all(
-        isinstance(key, str) and is_json_value(item) for key, item in value.items()
-    )
+    return isinstance(value, dict) and all(isinstance(key, str) and is_json_value(item) for key, item in value.items())
 
 
 def json_mapping_or_none(value: object) -> JsonMapping | None:

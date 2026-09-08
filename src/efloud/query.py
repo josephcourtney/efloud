@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +21,8 @@ from efloud.store_inspection import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
 

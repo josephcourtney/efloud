@@ -72,11 +72,15 @@ def test_content_ref_storage_location_is_not_semantic() -> None:
     second = ContentRef(content_id, 7, storage_key="backend-two/object", media_type="application/test")
 
     assert first == second
-    assert first.to_dict() == second.to_dict() == {
-        "content_id": str(content_id),
-        "byte_size": 7,
-        "media_type": "application/test",
-    }
+    assert (
+        first.to_dict()
+        == second.to_dict()
+        == {
+            "content_id": str(content_id),
+            "byte_size": 7,
+            "media_type": "application/test",
+        }
+    )
     assert "storage_key" not in first.to_dict()
 
 

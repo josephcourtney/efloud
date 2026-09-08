@@ -311,9 +311,7 @@ def _serialized_collection_inventory(
     return SourceInventory(
         source_id=source_id,
         observed_at=_serialized_inventory_observed_at(serialized, observed_at),
-        coverage=InventoryCoverage(
-            complete=_serialized_inventory_complete(payload, serialized, item_count=len(items))
-        ),
+        coverage=InventoryCoverage(complete=_serialized_inventory_complete(payload, serialized, item_count=len(items))),
         items=items,
         upstream_identity=identity_value if isinstance(identity_value, str) else None,
         metadata=copy_json_mapping(metadata) if metadata is not None else {},
@@ -709,9 +707,7 @@ def _collection_snapshot_evidence(
     task_name: str,
     removed_count: int,
 ) -> JsonObject:
-    classification_counts: JsonObject = {
-        state: count for state, count in context.reconciliation.counts().items()
-    }
+    classification_counts: JsonObject = dict(context.reconciliation.counts().items())
     evidence: JsonObject = {
         "collection": True,
         "task": task_name,
@@ -723,9 +719,7 @@ def _collection_snapshot_evidence(
         "unresolved_item_count": context.state.unresolved_count,
         "unexpected_entry_count": context.state.unexpected_entry_count,
         "removed_item_count": removed_count,
-        "acquisition_complete": (
-            context.state.unresolved_count == 0 and context.state.unexpected_entry_count == 0
-        ),
+        "acquisition_complete": (context.state.unresolved_count == 0 and context.state.unexpected_entry_count == 0),
         "classification_counts": classification_counts,
     }
     if context.inventory.upstream_identity is not None:

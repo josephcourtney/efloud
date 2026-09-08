@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from efloud.models import EngineConfig
 
 
-type PlannedOperationKind = Literal["source", "derived"]
+type PlannedOperationKind = Literal["source", "derived", "housekeeping"]
 
 
 @dataclass(frozen=True, slots=True)

@@ -163,7 +163,7 @@ def test_validation_requires_known_content(tmp_path: Path) -> None:
                 validator="test",
                 validator_version="1",
                 checked_at=1.0,
-                status="pass",
+                status="passed",
             )
         )
 

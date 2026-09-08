@@ -135,7 +135,7 @@ class ArtifactObservation:
             "run_id": str(self.run_id),
             "operation_id": str(self.operation_id),
             "observed_at": self.observed_at,
-            "metadata": self.metadata,
+            "metadata": dict(self.metadata),
         }
         if self.source_id is not None:
             payload["source_id"] = str(self.source_id)
@@ -172,7 +172,7 @@ class ArtifactAbsence:
             "operation_id": str(self.operation_id),
             "observed_at": self.observed_at,
             "absent": True,
-            "metadata": self.metadata,
+            "metadata": dict(self.metadata),
         }
         if self.source_id is not None:
             payload["source_id"] = str(self.source_id)
@@ -190,14 +190,7 @@ type ArtifactState = ArtifactObservation | ArtifactAbsence
 class ProvenanceEdge:
     output_observation_id: ObservationId
     input_observation_id: ObservationId
-    relationship: str = "derived_from"
-
-    def to_dict(self) -> JsonObject:
-        return {
-            "output_observation_id": str(self.output_observation_id),
-            "input_observation_id": str(self.input_observation_id),
-            "relationship": self.relationship,
-        }
+    relationship: str = "derived-from"
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,16 +201,6 @@ class ValidationResult:
     checked_at: float
     status: str
     details: JsonObject = field(default_factory=dict)
-
-    def to_dict(self) -> JsonObject:
-        return {
-            "content_id": str(self.content_id),
-            "validator": self.validator,
-            "validator_version": self.validator_version,
-            "checked_at": self.checked_at,
-            "status": self.status,
-            "details": self.details,
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,11 +213,7 @@ class TreeEntry:
     metadata: JsonObject = field(default_factory=dict)
 
     def identity_payload(self) -> JsonObject:
-        payload: JsonObject = {
-            "relative_path": self.relative_path,
-            "kind": self.kind,
-            "metadata": self.metadata,
-        }
+        payload: JsonObject = {"path": self.relative_path, "kind": self.kind}
         if self.content_id is not None:
             payload["content_id"] = str(self.content_id)
         if self.byte_size is not None:
@@ -251,8 +230,8 @@ class SourceSnapshot:
     run_id: RunId
     observed_at: float
     complete: bool
-    scope: tuple[str, ...] = ()
     tree_id: TreeId | None = None
+    scope: tuple[str, ...] = ()
     evidence: JsonObject = field(default_factory=dict)
 
     def to_dict(self) -> JsonObject:
@@ -263,7 +242,7 @@ class SourceSnapshot:
             "observed_at": self.observed_at,
             "complete": self.complete,
             "scope": list(self.scope),
-            "evidence": self.evidence,
+            "evidence": dict(self.evidence),
         }
         if self.tree_id is not None:
             payload["tree_id"] = str(self.tree_id)
@@ -284,6 +263,7 @@ def observation_id_for(
         stable_id(
             "obs",
             {
+                "kind": "content",
                 "artifact_key": str(artifact_key),
                 "content_id": str(content_id),
                 "run_id": str(run_id),
@@ -307,8 +287,9 @@ def absence_id_for(
 ) -> ObservationId:
     return ObservationId(
         stable_id(
-            "absence",
+            "obs",
             {
+                "kind": "absence",
                 "artifact_key": str(artifact_key),
                 "run_id": str(run_id),
                 "operation_id": str(operation_id),
@@ -316,6 +297,24 @@ def absence_id_for(
                 "source_path": source_path,
                 "upstream_locator": upstream_locator,
             },
+        )
+    )
+
+
+def run_id_for(*, root: str, started_at: float, source_ids: tuple[str, ...]) -> RunId:
+    return RunId(
+        stable_id(
+            "run",
+            {"root": root, "started_at": started_at, "source_ids": list(source_ids)},
+        )
+    )
+
+
+def operation_id_for(*, run_id: RunId, kind: str, subject: str) -> OperationId:
+    return OperationId(
+        stable_id(
+            "op",
+            {"run_id": str(run_id), "kind": kind, "subject": subject},
         )
     )
 
@@ -344,5 +343,7 @@ __all__ = [
     "absence_id_for",
     "canonical_json_bytes",
     "observation_id_for",
+    "operation_id_for",
+    "run_id_for",
     "stable_id",
 ]

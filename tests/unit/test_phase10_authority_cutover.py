@@ -6,9 +6,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.adapters import HttpAcquisition, HttpSourceAdapter
+from efloud.adapters import HttpAcquisition
 from efloud.adoption import adopt_existing_store
 from efloud.engine import Engine
+from efloud.http_adapter import HttpSourceAdapter
 from efloud.models import EngineConfig
 from efloud.planning import SyncRequest
 from efloud.query import query_target

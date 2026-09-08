@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from efloud.repository_models import OperationId
 from efloud.schema_migrations import initialize_or_migrate
 from efloud.sqlite_metadata import SQLiteMetadataStore as _SQLiteMetadataStoreV2
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
     from efloud.metadata_store import DatasetRecord, OperationRecord
+    from efloud.repository_models import OperationId
 
 
 def _dump(value: JsonObject) -> str:

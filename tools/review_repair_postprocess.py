@@ -160,11 +160,7 @@ def clean_blob_store() -> None:
 
 
 def clean_executor() -> None:
-    replace_once(
-        "src/efloud/executor.py",
-        "from efloud.registry import SourceDefinition\n",
-        "",
-    )
+    replace_once("src/efloud/executor.py", "from efloud.registry import SourceDefinition\n", "")
     replace_once(
         "src/efloud/executor.py",
         "    from efloud.models import EngineConfig\n",
@@ -178,11 +174,7 @@ def clean_executor() -> None:
 
 
 def clean_repository() -> None:
-    replace_once(
-        "src/efloud/repository.py",
-        "from efloud.inventory import SourceInventory\n",
-        "",
-    )
+    replace_once("src/efloud/repository.py", "from efloud.inventory import SourceInventory\n", "")
     replace_once(
         "src/efloud/repository.py",
         "    from efloud.json_types import JsonObject\n",
@@ -277,49 +269,153 @@ def clean_sqlite_metadata() -> None:
 
 
 def clean_regression_tests() -> None:
-    replace_once(
+    write(
         "tests/test_review_regressions.py",
-        "from pathlib import Path\n",
-        "from typing import TYPE_CHECKING\n",
-    )
-    replace_once(
-        "tests/test_review_regressions.py",
-        "from efloud.sqlite_metadata_v3 import SQLiteMetadataStore\n\n\n",
-        "from efloud.sqlite_metadata_v3 import SQLiteMetadataStore\n\nif TYPE_CHECKING:\n    from pathlib import Path\n\n\n",
-    )
-    replace_once(
-        "tests/test_review_regressions.py",
-        '''    def fail_history_scan(*args: object, **kwargs: object) -> tuple[()]:
-        del args, kwargs
-        raise AssertionError("history scan must not be used")
-''',
-        '''    def fail_history_scan(*args: object, **kwargs: object) -> tuple[()]:
-        del args, kwargs
-        msg = "history scan must not be used"
-        raise AssertionError(msg)
-''',
-    )
-    text = read("tests/test_review_regressions.py")
-    old = '''    original_stage = store._stage_path
+        '''from __future__ import annotations
 
-    def stage_then_mutate(path: Path) -> tuple[Path, str, int]:
-        staged = original_stage(path)
-        source.write_bytes(b"changed-after-stage")
-        return staged
+import hashlib
+import sqlite3
+from typing import TYPE_CHECKING
 
-    monkeypatch.setattr(store, "_stage_path", stage_then_mutate)
-'''
-    if old in text:
-        new = '''    original_stage = FilesystemBlobStore._stage_path
+import pytest
+
+from efloud.blob_store import FilesystemBlobStore
+from efloud.inventory import InventoryCoverage, InventoryItem, SourceInventory
+from efloud.repository import Repository
+from efloud.repository_models import ArtifactKey, SourceId
+from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+pytestmark = [pytest.mark.unit, pytest.mark.regression]
+
+
+def test_put_path_hashes_the_exact_staged_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FilesystemBlobStore(tmp_path / "objects")
+    source = tmp_path / "source.bin"
+    original = b"original bytes"
+    source.write_bytes(original)
+    original_stage = FilesystemBlobStore._stage_path
 
     def stage_then_mutate(self: FilesystemBlobStore, path: Path) -> tuple[Path, str, int]:
         staged = original_stage(self, path)
-        source.write_bytes(b"changed-after-stage")
+        path.write_bytes(b"changed after staging")
         return staged
 
     monkeypatch.setattr(FilesystemBlobStore, "_stage_path", stage_then_mutate)
-'''
-        write("tests/test_review_regressions.py", text.replace(old, new, 1))
+    content = store.put_path(source)
+
+    expected = hashlib.sha256(original).hexdigest()
+    assert str(content.content_id) == f"sha256:{expected}"
+    assert store.path_for(content.content_id).read_bytes() == original
+    assert store.verify(content.content_id)
+
+
+def test_record_absence_requires_complete_inventory(tmp_path: Path) -> None:
+    with Repository(tmp_path / "repository") as repository:
+        source_id = repository.register_source("source-a", {"url": "https://example.test/a"})
+        run_id = repository.start_run(source_ids=[source_id], started_at=1.0)
+        operation_id = repository.start_operation(
+            run_id=run_id,
+            kind="test",
+            subject="source-a",
+            source_id=source_id,
+            started_at=1.0,
+        )
+        incomplete = SourceInventory(
+            source_id=SourceId("source-a"),
+            observed_at=2.0,
+            coverage=InventoryCoverage(complete=False),
+            items=(),
+        )
+        with pytest.raises(ValueError, match="complete source inventory"):
+            repository.record_absence(
+                "source:source-a:item:missing",
+                run_id=run_id,
+                operation_id=operation_id,
+                source_id=source_id,
+                inventory=incomplete,
+            )
+
+        present_key = ArtifactKey("source:source-a:item:present")
+        complete = SourceInventory(
+            source_id=SourceId("source-a"),
+            observed_at=2.0,
+            coverage=InventoryCoverage(complete=True),
+            items=(InventoryItem(item_id="present", artifact_key=present_key),),
+        )
+        with pytest.raises(ValueError, match="still enumerates artifact"):
+            repository.record_absence(
+                present_key,
+                run_id=run_id,
+                operation_id=operation_id,
+                source_id=source_id,
+                inventory=complete,
+            )
+
+        absence = repository.record_absence(
+            "source:source-a:item:missing",
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=source_id,
+            inventory=complete,
+        )
+        assert absence.observed_at == complete.observed_at
+        assert absence.metadata["absence_proof"]["coverage"] == {"scope": [], "complete": True}
+
+
+def test_finish_operation_uses_direct_primary_key_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with Repository(tmp_path / "repository") as repository:
+        source_id = repository.register_source("source-a", {"url": "https://example.test/a"})
+        run_id = repository.start_run(source_ids=[source_id], started_at=1.0)
+        operation_id = repository.start_operation(
+            run_id=run_id,
+            kind="test",
+            subject="source-a",
+            source_id=source_id,
+            started_at=1.0,
+        )
+
+        def fail_history_scan(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            msg = "history scan must not be used"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(SQLiteMetadataStore, "recent_runs", fail_history_scan)
+        repository.finish_operation(operation_id, status="succeeded", finished_at=2.0)
+        operation = repository.metadata.operation(operation_id)
+        assert operation is not None
+        assert operation.status == "succeeded"
+
+
+def test_schema_v4_normalizes_source_revisions(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    with Repository(root) as repository:
+        repository.register_source("source-a", {"url": "https://example.test/v1"})
+        repository.register_source("source-a", {"url": "https://example.test/v2"})
+        source = repository.metadata.source(SourceId("source-a"))
+        assert source is not None
+        assert len(source.revisions) == 2
+        assert isinstance(repository.metadata, SQLiteMetadataStore)
+        assert repository.metadata.schema_version == 4
+
+    connection = sqlite3.connect(root / "metadata.sqlite")
+    try:
+        definition, revision_id = connection.execute(
+            "SELECT definition_json, current_revision_id FROM sources WHERE source_id = 'source-a'"
+        ).fetchone()
+        revision_count = connection.execute(
+            "SELECT COUNT(*) FROM source_definition_revisions WHERE source_id = 'source-a'"
+        ).fetchone()[0]
+        assert "_efloud_source_definition_history" not in definition
+        assert revision_id is not None
+        assert revision_count == 2
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        connection.close()
+''',
+    )
 
 
 def main() -> None:

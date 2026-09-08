@@ -193,6 +193,21 @@ class Repository:
             details=details or {},
         )
 
+    def store_bytes_content(self, data: bytes, *, media_type: str | None = None) -> ContentRef:
+        """Store immutable bytes and register content identity without creating an observation."""
+        content = self.blobs.put_bytes(data, media_type=media_type)
+        self.metadata.record_content(content)
+        return content
+
+    def store_path_content(self, path: Path, *, media_type: str | None = None) -> ContentRef:
+        """Store immutable file bytes without advancing any logical artifact or source."""
+        content = self.blobs.put_path(path, media_type=media_type)
+        self.metadata.record_content(content)
+        return content
+
+    def content(self, content_id: ContentId | str) -> ContentRef | None:
+        return self.metadata.content(ContentId(str(content_id)))
+
     def ingest_bytes(
         self,
         artifact_key: ArtifactKey | str,
@@ -210,7 +225,7 @@ class Repository:
         metadata: JsonObject | None = None,
         inputs: Iterable[ObservationId] = (),
     ) -> ArtifactObservation:
-        content = self.blobs.put_bytes(data, media_type=media_type)
+        content = self.store_bytes_content(data, media_type=media_type)
         return self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
             content=content,
@@ -245,7 +260,7 @@ class Repository:
         inputs: Iterable[ObservationId] = (),
         materialization_kind: str | None = None,
     ) -> ArtifactObservation:
-        content = self.blobs.put_path(path, media_type=media_type)
+        content = self.store_path_content(path, media_type=media_type)
         observation = self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
             content=content,
@@ -293,6 +308,9 @@ class Repository:
         if content is None:
             msg = f"Unknown repository content: {content_id}"
             raise KeyError(msg)
+        if not self.blobs.contains(normalized_content_id):
+            msg = f"Repository blob is unavailable: {content_id}"
+            raise FileNotFoundError(msg)
         observation = self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
             content=content,
@@ -544,6 +562,17 @@ class Repository:
 
     def record_validation(self, result: ValidationResult) -> None:
         self.metadata.record_validation(result)
+
+    def validation(
+        self,
+        content_id: ContentId | str,
+        validator: str,
+        validator_version: str,
+    ) -> ValidationResult | None:
+        return self.metadata.validation(ContentId(str(content_id)), validator, validator_version)
+
+    def validations_for(self, content_id: ContentId | str) -> tuple[ValidationResult, ...]:
+        return self.metadata.validations_for(ContentId(str(content_id)))
 
     def record_tree_snapshot(
         self,

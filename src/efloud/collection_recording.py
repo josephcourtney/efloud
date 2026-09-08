@@ -19,6 +19,7 @@ from efloud.repository_models import ArtifactKey, ObservationId, SourceId, TreeE
 if TYPE_CHECKING:
     from efloud.repository import Repository
     from efloud.repository_models import OperationId, RunId
+    from efloud.validation import ValidationService
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,8 +198,74 @@ def _entry_metadata(item: InventoryItem, entry: JsonMapping, decision: Reconcili
     return metadata
 
 
+def _record_validated_item(
+    repository: Repository,
+    validation: ValidationService,
+    *,
+    state: _RecordingState,
+    source_id: SourceId,
+    run_id: RunId,
+    operation_id: OperationId,
+    observed_at: float,
+    task_name: str,
+    item: InventoryItem,
+    decision: ReconciliationDecision,
+    path: Path,
+    relative_path: str,
+    media_type: str | None,
+    metadata: JsonObject,
+) -> None:
+    content = repository.store_path_content(path, media_type=media_type)
+    batch = validation.validate_content(
+        content,
+        name=relative_path,
+        expectations=item.expected_integrity,
+        checked_at=observed_at,
+    )
+    metadata["validation"] = batch.to_dict()
+    if not batch.ok:
+        state.tree_entries.append(
+            TreeEntry(
+                relative_path=relative_path,
+                kind="unresolved",
+                content_id=content.content_id,
+                byte_size=path.stat().st_size,
+                metadata={**metadata, "error": "required validation failed"},
+            )
+        )
+        state.unresolved_count += 1
+        return
+
+    observation = repository.observe_content(
+        decision.artifact_key,
+        content.content_id,
+        run_id=run_id,
+        operation_id=operation_id,
+        source_id=source_id,
+        observed_at=observed_at,
+        source_path=relative_path,
+        upstream_locator=item.locator,
+        metadata={**metadata, "collection_task": task_name},
+        materialization_kind="fanout",
+        materialization_path=path,
+    )
+    state.observations.append(observation.observation_id)
+    state.content_observations.append(observation.observation_id)
+    state.tree_entries.append(
+        TreeEntry(
+            relative_path=relative_path,
+            kind="file",
+            content_id=observation.content_id,
+            byte_size=path.stat().st_size,
+            metadata=metadata,
+        )
+    )
+    state.content_count += 1
+
+
 def _record_item(
     repository: Repository,
+    validation: ValidationService,
     *,
     state: _RecordingState,
     source_id: SourceId,
@@ -228,32 +295,22 @@ def _record_item(
     status = entry.get("status")
     destination = entry.get("dest")
     if status == "ok" and isinstance(destination, str) and Path(destination).is_file():
-        path = Path(destination)
-        observation = repository.ingest_path(
-            decision.artifact_key,
-            path,
+        _record_validated_item(
+            repository,
+            validation,
+            state=state,
+            source_id=source_id,
             run_id=run_id,
             operation_id=operation_id,
-            source_id=source_id,
             observed_at=observed_at,
-            source_path=relative_path,
-            upstream_locator=item.locator,
+            task_name=task_name,
+            item=item,
+            decision=decision,
+            path=Path(destination),
+            relative_path=relative_path,
             media_type=media_type,
-            metadata={**metadata, "collection_task": task_name},
-            materialization_kind="fanout",
+            metadata=metadata,
         )
-        state.observations.append(observation.observation_id)
-        state.content_observations.append(observation.observation_id)
-        state.tree_entries.append(
-            TreeEntry(
-                relative_path=relative_path,
-                kind="file",
-                content_id=observation.content_id,
-                byte_size=path.stat().st_size,
-                metadata=metadata,
-            )
-        )
-        state.content_count += 1
         return
 
     error = entry.get("error")
@@ -340,6 +397,7 @@ def _snapshot_evidence(
 
 def record_collection_acquisition(
     repository: Repository,
+    validation: ValidationService,
     *,
     source_id: SourceId | str,
     task_name: str,
@@ -348,7 +406,7 @@ def record_collection_acquisition(
     operation_id: OperationId,
     observed_at: float,
 ) -> CollectionRecordingResult:
-    """Record typed collection adapter evidence without invoking the legacy importer."""
+    """Record collection evidence after validating staged item content."""
     normalized_source = SourceId(str(source_id))
     inventory = _inventory(normalized_source, payload, observed_at)
     reconciliation = reconcile_inventory(inventory, _previous_items(repository, normalized_source))
@@ -361,6 +419,7 @@ def record_collection_acquisition(
     for item in inventory.items:
         _record_item(
             repository,
+            validation,
             state=state,
             source_id=normalized_source,
             run_id=run_id,
@@ -388,7 +447,7 @@ def record_collection_acquisition(
         source_id=normalized_source,
         run_id=run_id,
         entries=state.tree_entries,
-        complete=inventory.coverage.complete,
+        complete=inventory.coverage.complete and state.unresolved_count == 0,
         scope=inventory.coverage.scope,
         observed_at=inventory.observed_at,
         evidence=_snapshot_evidence(

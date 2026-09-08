@@ -13,6 +13,7 @@ from efloud.planning import SyncPlan, SyncRequest
 from efloud.repository import Repository
 from efloud.repository_compat import repository_manifest
 from efloud.repository_outputs import publish_repository_outputs
+from efloud.validation import ValidationRegistry, builtin_validation_registry
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -67,12 +68,14 @@ class Engine:
         *,
         repository: Repository | None = None,
         adapters: AdapterRegistry | None = None,
+        validators: ValidationRegistry | None = None,
     ) -> None:
         self.config = EngineConfig(root=root, sources=list(sources))
         self.repository = repository or Repository(root)
         self.adapters = adapters or builtin_adapter_registry()
+        self.validators = validators or builtin_validation_registry()
         self.planner = SyncPlanner(self.adapters)
-        self.executor = SyncExecutor(self.adapters)
+        self.executor = SyncExecutor(self.adapters, self.validators)
         self._owns_repository = repository is None
 
     @classmethod
@@ -82,8 +85,15 @@ class Engine:
         *,
         repository: Repository | None = None,
         adapters: AdapterRegistry | None = None,
+        validators: ValidationRegistry | None = None,
     ) -> Engine:
-        engine = cls(config.root, config.sources, repository=repository, adapters=adapters)
+        engine = cls(
+            config.root,
+            config.sources,
+            repository=repository,
+            adapters=adapters,
+            validators=validators,
+        )
         engine.config = config
         return engine
 

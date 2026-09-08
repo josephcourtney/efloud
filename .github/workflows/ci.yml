@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Local gate parity (Python 3.14)
+    name: Canonical gate (Python 3.14)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -41,20 +41,11 @@ jobs:
       - name: Sync locked development environment
         run: uv sync
 
-      - name: Syntax check
-        run: uv run just syntax
+      - name: Run canonical non-mutating quality gate
+        run: uv run just check
 
-      - name: Format
-        run: uv run just format
-
-      - name: Lint
-        run: uv run just lint
-
-      - name: Typecheck
-        run: uv run just typecheck
-
-      - name: Run complete test suite
-        run: uv run just test
+      - name: Verify tracked checkout was not modified
+        run: git diff --exit-code -- .
 
   compatibility:
     name: Tests (Python ${{ matrix.python-version }})

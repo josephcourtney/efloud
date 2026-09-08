@@ -13,8 +13,8 @@ if TYPE_CHECKING:
     from efloud.metadata_store import RunRecord
     from efloud.models import EngineConfig, ManifestError, NormalizedManifest
     from efloud.registry import SourceDefinition
-    from efloud.repository import Repository
     from efloud.repository_models import ArtifactObservation
+    from efloud.repository_view import RepositoryView
 
 
 def repository_exists(cfg: EngineConfig) -> bool:
@@ -25,8 +25,8 @@ def _compatibility_status(status: str) -> str:
     return "success" if status == "succeeded" else status
 
 
-def _latest_operation_payload(repository: Repository, source_id: SourceId) -> JsonObject | None:
-    operations = repository.metadata.operations_for_source(source_id, limit=1)
+def _latest_operation_payload(repository: RepositoryView, source_id: SourceId) -> JsonObject | None:
+    operations = repository.operations_for_source(source_id, limit=1)
     if not operations:
         return None
     operation = operations[0]
@@ -46,8 +46,8 @@ def _latest_operation_payload(repository: Repository, source_id: SourceId) -> Js
     return payload
 
 
-def _materialized_path(repository: Repository, content_id: ContentId) -> str | None:
-    materializations = repository.metadata.materializations_for(content_id)
+def _materialized_path(repository: RepositoryView, content_id: ContentId) -> str | None:
+    materializations = repository.materializations_for(content_id)
     if not materializations:
         return None
     preferred = sorted(
@@ -105,7 +105,7 @@ def _http_freshness(
 
 
 def _add_http_state(
-    repository: Repository,
+    repository: RepositoryView,
     entry: JsonObject,
     state: ArtifactObservation | ArtifactAbsence | None,
     snapshot_payload: JsonObject | None,
@@ -124,7 +124,7 @@ def _add_http_state(
 
 
 def _http_entry(
-    repository: Repository,
+    repository: RepositoryView,
     source: SourceDefinition,
     snapshot_payload: JsonObject | None,
     operation_payload: JsonObject | None,
@@ -178,7 +178,7 @@ def _rsync_entry(
 
 
 def repository_source_entry(
-    repository: Repository,
+    repository: RepositoryView,
     source: SourceDefinition,
     *,
     cfg: EngineConfig,
@@ -206,7 +206,7 @@ def repository_source_entry(
     return entry
 
 
-def _derived_execution_payload(repository: Repository, task_name: str) -> JsonObject | None:
+def _derived_execution_payload(repository: RepositoryView, task_name: str) -> JsonObject | None:
     observation = repository.latest_observation(f"derived:{task_name}:execution")
     if observation is None:
         return None
@@ -219,10 +219,10 @@ def _derived_execution_payload(repository: Repository, task_name: str) -> JsonOb
     return copy_json_mapping(mapping) if mapping is not None else None
 
 
-def _run_for_manifest(repository: Repository, run_id: RunId | str | None) -> RunRecord | None:
+def _run_for_manifest(repository: RepositoryView, run_id: RunId | str | None) -> RunRecord | None:
     if run_id is not None:
-        return repository.metadata.run(RunId(str(run_id)))
-    runs = repository.metadata.recent_runs(limit=1)
+        return repository.run(RunId(str(run_id)))
+    runs = repository.recent_runs(limit=1)
     return runs[0] if runs else None
 
 
@@ -230,9 +230,9 @@ def _iso_timestamp(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=UTC).isoformat().replace("+00:00", "Z")
 
 
-def _manifest_errors(repository: Repository, run_id: RunId) -> list[ManifestError]:
+def _manifest_errors(repository: RepositoryView, run_id: RunId) -> list[ManifestError]:
     errors: list[ManifestError] = []
-    for operation in repository.metadata.operations_for_run(run_id):
+    for operation in repository.operations_for_run(run_id):
         if operation.status != "failed":
             continue
         detail = operation.details.get("error")
@@ -249,7 +249,7 @@ def _manifest_errors(repository: Repository, run_id: RunId) -> list[ManifestErro
 
 
 def repository_manifest(
-    repository: Repository,
+    repository: RepositoryView,
     *,
     cfg: EngineConfig,
     run_id: RunId | str | None = None,
@@ -293,7 +293,7 @@ def repository_manifest(
 
 
 def write_repository_manifest(
-    repository: Repository,
+    repository: RepositoryView,
     *,
     cfg: EngineConfig,
     run_id: RunId | str | None = None,

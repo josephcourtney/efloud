@@ -265,13 +265,13 @@ def clean_schema_migration() -> None:
 def clean_sqlite_metadata() -> None:
     replace_once(
         "src/efloud/sqlite_metadata_v3.py",
-        '''        if not isinstance(value, dict):
-            msg = "Expected a JSON object in metadata storage."
-            raise ValueError(msg)
+        '''    if not isinstance(value, dict):
+        msg = "Expected a JSON object in repository metadata."
+        raise ValueError(msg)
 ''',
-        '''        if not isinstance(value, dict):
-            msg = "Expected a JSON object in metadata storage."
-            raise TypeError(msg)
+        '''    if not isinstance(value, dict):
+        msg = "Expected a JSON object in repository metadata."
+        raise TypeError(msg)
 ''',
     )
 

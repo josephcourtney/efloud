@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Full validation (Python 3.14)
+    name: Local gate parity (Python 3.14)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -41,8 +41,20 @@ jobs:
       - name: Sync locked development environment
         run: uv sync
 
-      - name: Run canonical validation gate
-        run: uv run just check
+      - name: Syntax check
+        run: uv run just syntax
+
+      - name: Format
+        run: uv run just format
+
+      - name: Lint
+        run: uv run just lint
+
+      - name: Typecheck
+        run: uv run just typecheck
+
+      - name: Run complete test suite
+        run: uv run just test
 
   compatibility:
     name: Tests (Python ${{ matrix.python-version }})

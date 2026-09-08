@@ -3,17 +3,16 @@ from pathlib import Path
 
 import pytest
 
-import efloud.engine as engine_module
-import efloud.repository_recording as recording_module
+from efloud.adapters import AdapterRegistry, HttpAcquisition, HttpSourceAdapter, RsyncAcquisition, RsyncSourceAdapter
 from efloud.engine import Engine
-from efloud.models import EngineConfig, SyncResult
+from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
-def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_engine_records_http_adapter_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     materialized = tmp_path / "http" / "data.txt"
     materialized.parent.mkdir(parents=True)
     materialized.write_bytes(b"payload")
@@ -25,35 +24,19 @@ def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.Mon
     )
     config = EngineConfig(root=tmp_path, sources=[source])
 
-    async def fake_sync(_config: EngineConfig) -> SyncResult:
+    async def fake_acquire(self, context):
+        del self, context
         await asyncio.sleep(0)
-        return SyncResult(
-            ok=True,
-            root=tmp_path,
-            manifest_path=None,
-            manifest={
-                "version": 1,
-                "root": str(tmp_path),
-                "results": {
-                    "http": {
-                        "example": {
-                            "ok": True,
-                            "dest": str(materialized),
-                            "freshness": {
-                                "fetched_at_unix": 123.0,
-                                "status_code": 200,
-                                "etag": '"v1"',
-                            },
-                        }
-                    },
-                    "rsync": {},
-                    "derived": {},
-                },
-                "errors": [],
-            },
+        return HttpAcquisition(
+            source_id="example",
+            status="succeeded",
+            destination=materialized,
+            observed_at=123.0,
+            status_code=200,
+            etag='"v1"',
         )
 
-    monkeypatch.setattr(engine_module, "legacy_sync", fake_sync)
+    monkeypatch.setattr(HttpSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync())
         assert result.ok
@@ -68,12 +51,12 @@ def test_engine_dual_records_http_result(tmp_path: Path, monkeypatch: pytest.Mon
         assert snapshot is not None
         assert snapshot.complete
         assert snapshot.evidence["status_code"] == 200
+        operation = engine.repository.metadata.operations_for_run(result.repository_run_id)[0]
+        assert operation.producer.producer_id == "efloud:http"
+        assert operation.producer.version == "1"
 
 
-def test_engine_leaves_missing_rsync_result_unrecorded(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_engine_leaves_source_without_adapter_unrecorded(tmp_path: Path) -> None:
     source = SourceDefinition(
         id="mirror",
         description="Mirror",
@@ -83,25 +66,11 @@ def test_engine_leaves_missing_rsync_result_unrecorded(
     )
     config = EngineConfig(root=tmp_path, sources=[source])
 
-    async def fake_sync(_config: EngineConfig) -> SyncResult:
-        await asyncio.sleep(0)
-        return SyncResult(
-            ok=True,
-            root=tmp_path,
-            manifest_path=None,
-            manifest={
-                "version": 1,
-                "root": str(tmp_path),
-                "results": {"http": {}, "rsync": {}, "derived": {}},
-                "errors": [],
-            },
-        )
-
-    monkeypatch.setattr(engine_module, "legacy_sync", fake_sync)
-    with Engine.from_config(config) as engine:
+    with Engine.from_config(config, adapters=AdapterRegistry()) as engine:
         result = asyncio.run(engine.sync())
         assert result.skipped_source_ids == ("mirror",)
         assert engine.repository.artifact_keys() == ()
+        assert result.plan.decisions[0].reason == "no adapter registered for RSYNC"
 
 
 def test_engine_falls_back_to_rsync_delta_when_inventory_fails(
@@ -121,47 +90,20 @@ def test_engine_falls_back_to_rsync_delta_when_inventory_fails(
     )
     config = EngineConfig(root=tmp_path, sources=[source])
 
-    async def fake_sync(_config: EngineConfig) -> SyncResult:
+    async def fake_acquire(self, context):
+        del self, context
         await asyncio.sleep(0)
-        return SyncResult(
-            ok=True,
-            root=tmp_path,
-            manifest_path=None,
-            manifest={
-                "version": 1,
-                "root": str(tmp_path),
-                "results": {
-                    "http": {},
-                    "rsync": {
-                        "mirror": {
-                            "ok": True,
-                            "local": str(mirror_root),
-                            "request": {"paths": ["aa/"]},
-                            "results": {
-                                "aa/": {
-                                    "status": "success",
-                                    "updated": ["aa/entry.txt"],
-                                }
-                            },
-                        }
-                    },
-                    "derived": {},
-                },
-                "errors": [],
-            },
+        return RsyncAcquisition(
+            source_id="mirror",
+            status="succeeded",
+            local_root=mirror_root,
+            scope=("aa/",),
+            observed_at=123.0,
+            inventory=RsyncInventory(entries=(), scope=("aa/",), complete=False, error="offline"),
+            updated_paths=("aa/entry.txt",),
         )
 
-    monkeypatch.setattr(engine_module, "legacy_sync", fake_sync)
-    monkeypatch.setattr(
-        recording_module,
-        "enumerate_rsync",
-        lambda _cfg, *, scope=(): RsyncInventory(
-            entries=(),
-            scope=scope,
-            complete=False,
-            error="offline",
-        ),
-    )
+    monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync())
         assert result.skipped_source_ids == ()
@@ -197,49 +139,31 @@ def test_engine_authoritatively_records_rsync_inventory(
     )
     config = EngineConfig(root=tmp_path, sources=[source])
 
-    async def fake_sync(_config: EngineConfig) -> SyncResult:
+    async def fake_acquire(self, context):
+        del self, context
         await asyncio.sleep(0)
-        return SyncResult(
-            ok=True,
-            root=tmp_path,
-            manifest_path=None,
-            manifest={
-                "version": 1,
-                "root": str(tmp_path),
-                "results": {
-                    "http": {},
-                    "rsync": {
-                        "mirror": {
-                            "ok": True,
-                            "local": str(mirror_root),
-                            "request": {"paths": None},
-                            "results": {"update": {"status": "success", "updated": ["aa/entry.txt"]}},
-                        }
-                    },
-                    "derived": {},
-                },
-                "errors": [],
-            },
+        return RsyncAcquisition(
+            source_id="mirror",
+            status="succeeded",
+            local_root=mirror_root,
+            scope=(),
+            observed_at=123.0,
+            inventory=RsyncInventory(
+                entries=(
+                    RsyncInventoryEntry(
+                        "aa/entry.txt",
+                        "file",
+                        len(b"version one"),
+                        "2026/09/04 10:00:00",
+                    ),
+                ),
+                scope=(),
+                complete=True,
+            ),
+            updated_paths=("aa/entry.txt",),
         )
 
-    monkeypatch.setattr(engine_module, "legacy_sync", fake_sync)
-    monkeypatch.setattr(
-        recording_module,
-        "enumerate_rsync",
-        lambda _cfg, *, scope=(): RsyncInventory(
-            entries=(
-                RsyncInventoryEntry(
-                    "aa/entry.txt",
-                    "file",
-                    len(b"version one"),
-                    "2026/09/04 10:00:00",
-                ),
-            ),
-            scope=scope,
-            complete=True,
-        ),
-    )
-
+    monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync())
         assert len(result.observations) == 1
@@ -267,47 +191,20 @@ def test_engine_does_not_infer_rsync_deletion_when_inventory_fails(
     )
     config = EngineConfig(root=tmp_path, sources=[source])
 
-    async def fake_sync(_config: EngineConfig) -> SyncResult:
+    async def fake_acquire(self, context):
+        del self, context
         await asyncio.sleep(0)
-        return SyncResult(
-            ok=True,
-            root=tmp_path,
-            manifest_path=None,
-            manifest={
-                "version": 1,
-                "root": str(tmp_path),
-                "results": {
-                    "http": {},
-                    "rsync": {
-                        "mirror": {
-                            "ok": True,
-                            "local": str(mirror_root),
-                            "request": {"paths": None},
-                            "results": {
-                                "update": {
-                                    "status": "success",
-                                    "updated": ["deleting stale.txt"],
-                                }
-                            },
-                        }
-                    },
-                    "derived": {},
-                },
-                "errors": [],
-            },
+        return RsyncAcquisition(
+            source_id="mirror",
+            status="succeeded",
+            local_root=mirror_root,
+            scope=(),
+            observed_at=123.0,
+            inventory=RsyncInventory(entries=(), scope=(), complete=False, error="offline"),
+            updated_paths=(),
         )
 
-    monkeypatch.setattr(engine_module, "legacy_sync", fake_sync)
-    monkeypatch.setattr(
-        recording_module,
-        "enumerate_rsync",
-        lambda _cfg, *, scope=(): RsyncInventory(
-            entries=(),
-            scope=scope,
-            complete=False,
-            error="offline",
-        ),
-    )
+    monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         asyncio.run(engine.sync())
         assert engine.repository.latest_state("source:mirror:path:stale.txt") is None

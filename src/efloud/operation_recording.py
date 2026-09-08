@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
     from efloud.repository_models import OperationId, RunId
+    from efloud.validation import ValidationService
 
 
 type RecordedStatus = Literal["succeeded", "failed"]
@@ -54,6 +55,7 @@ def _http_modified_timestamp(value: str | None) -> float | None:
 
 def _record_http(
     repository: Repository,
+    validation: ValidationService,
     *,
     config: EngineConfig,
     operation: PlannedOperation,
@@ -65,14 +67,36 @@ def _record_http(
         return RecordedOperation("failed", details={"error": acquisition.error or "HTTP acquisition failed"})
 
     source = _source_by_id(config, acquisition.source_id)
-    metadata: JsonObject = {"transport": source.kind.value, "adapter_execution": True}
+    content = repository.store_path_content(acquisition.destination, media_type=acquisition.media_type)
+    validation_batch = validation.validate_content(
+        content,
+        name=acquisition.destination.name,
+        expectations=acquisition.expected_integrity,
+        checked_at=acquisition.observed_at,
+    )
+    validation_payload = validation_batch.to_dict()
+    if not validation_batch.ok:
+        return RecordedOperation(
+            "failed",
+            details={
+                "error": "required validation failed",
+                "content_id": str(content.content_id),
+                "validation": validation_payload,
+            },
+        )
+
+    metadata: JsonObject = {
+        "transport": source.kind.value,
+        "adapter_execution": True,
+        "validation": validation_payload,
+    }
     if acquisition.status_code is not None:
         metadata["status_code"] = acquisition.status_code
     if acquisition.checksum is not None:
         metadata["transport_checksum"] = acquisition.checksum
-    observation = repository.ingest_path(
+    observation = repository.observe_content(
         f"source:{source.id}",
-        acquisition.destination,
+        content.content_id,
         run_id=run_id,
         operation_id=operation_id,
         source_id=source.id,
@@ -80,11 +104,14 @@ def _record_http(
         upstream_locator=source.url,
         upstream_modified_at=_http_modified_timestamp(acquisition.last_modified),
         upstream_version=acquisition.etag,
-        media_type=acquisition.media_type,
         metadata=metadata,
         materialization_kind="http",
+        materialization_path=acquisition.destination,
     )
-    evidence: JsonObject = {"adapter": operation.producer.to_dict()}
+    evidence: JsonObject = {
+        "adapter": operation.producer.to_dict(),
+        "validation": validation_payload,
+    }
     if acquisition.status_code is not None:
         evidence["status_code"] = acquisition.status_code
     if acquisition.etag is not None:
@@ -106,6 +133,7 @@ def _record_http(
         details={
             "observation_id": str(observation.observation_id),
             "snapshot_id": str(snapshot.snapshot_id),
+            "validation": validation_payload,
         },
     )
 
@@ -247,6 +275,7 @@ def _record_rsync(
 
 def _record_collection(
     repository: Repository,
+    validation: ValidationService,
     *,
     run_id: RunId,
     operation_id: OperationId,
@@ -259,6 +288,7 @@ def _record_collection(
         )
     recorded = record_collection_acquisition(
         repository,
+        validation,
         source_id=acquisition.source_id,
         task_name=acquisition.task_name,
         payload=acquisition.payload,
@@ -285,6 +315,7 @@ def _record_collection(
 
 def record_source_acquisition(
     repository: Repository,
+    validation: ValidationService,
     *,
     config: EngineConfig,
     operation: PlannedOperation,
@@ -292,10 +323,11 @@ def record_source_acquisition(
     operation_id: OperationId,
     acquisition: SourceAcquisition,
 ) -> RecordedOperation:
-    """Translate one typed adapter result into repository state."""
+    """Translate one typed adapter result into validated repository state."""
     if isinstance(acquisition, HttpAcquisition):
         return _record_http(
             repository,
+            validation,
             config=config,
             operation=operation,
             run_id=run_id,
@@ -312,6 +344,7 @@ def record_source_acquisition(
         )
     return _record_collection(
         repository,
+        validation,
         run_id=run_id,
         operation_id=operation_id,
         acquisition=acquisition,

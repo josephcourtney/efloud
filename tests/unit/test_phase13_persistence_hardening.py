@@ -14,7 +14,14 @@ from efloud.repository_query import RepositoryQueryService
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from efloud.datasets import ImmutableDataset
     from efloud.json_types import JsonObject
+    from efloud.repository_models import (
+        ArtifactObservation,
+        RunId,
+        SourceDefinitionRevisionId,
+        SourceSnapshot,
+    )
     from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
@@ -67,6 +74,27 @@ def _record_source_observation(
     return run_id, operation_id, observation, snapshot
 
 
+def _record_and_assert_revision_evidence(
+    repository: Repository,
+    *,
+    source_id: SourceId,
+    payload: bytes,
+    observed_at: float,
+    revision_id: SourceDefinitionRevisionId,
+) -> None:
+    run_id, _operation_id, observation, snapshot = _record_source_observation(
+        repository,
+        source_id=source_id,
+        payload=payload,
+        observed_at=observed_at,
+    )
+    operation = repository.metadata.operations_for_run(run_id)[0]
+
+    assert observation.metadata[_SOURCE_REVISION_KEY] == str(revision_id)
+    assert snapshot.evidence[_SOURCE_REVISION_KEY] == str(revision_id)
+    assert operation.parameters[_SOURCE_REVISION_KEY] == str(revision_id)
+
+
 def test_source_definition_revisions_pin_new_repository_evidence(tmp_path: Path) -> None:
     first_definition = _source_definition("https://example.test/one", role="raw")
     second_definition = _source_definition("https://example.test/two", role="reference")
@@ -77,13 +105,13 @@ def test_source_definition_revisions_pin_new_repository_evidence(tmp_path: Path)
         assert first_source is not None
         first_revision_id = first_source.revision_id
 
-        first_run, _first_operation, first_observation, first_snapshot = _record_source_observation(
+        _record_and_assert_revision_evidence(
             repository,
             source_id=source_id,
             payload=b"one",
             observed_at=100.0,
+            revision_id=first_revision_id,
         )
-        first_operation = repository.metadata.operations_for_run(first_run)[0]
 
         repository.register_source(source_id, first_definition)
         unchanged_source = repository.metadata.source(source_id)
@@ -98,20 +126,13 @@ def test_source_definition_revisions_pin_new_repository_evidence(tmp_path: Path)
         assert second_revision_id != first_revision_id
         assert len(second_source.revisions) == 2
 
-        second_run, _second_operation, second_observation, second_snapshot = _record_source_observation(
+        _record_and_assert_revision_evidence(
             repository,
             source_id=source_id,
             payload=b"two",
             observed_at=200.0,
+            revision_id=second_revision_id,
         )
-        second_operation = repository.metadata.operations_for_run(second_run)[0]
-
-        assert first_observation.metadata[_SOURCE_REVISION_KEY] == str(first_revision_id)
-        assert first_snapshot.evidence[_SOURCE_REVISION_KEY] == str(first_revision_id)
-        assert first_operation.parameters[_SOURCE_REVISION_KEY] == str(first_revision_id)
-        assert second_observation.metadata[_SOURCE_REVISION_KEY] == str(second_revision_id)
-        assert second_snapshot.evidence[_SOURCE_REVISION_KEY] == str(second_revision_id)
-        assert second_operation.parameters[_SOURCE_REVISION_KEY] == str(second_revision_id)
 
         source_payload = RepositoryQueryService(repository).query("source:source-a")
         source = source_payload["source"]
@@ -125,7 +146,10 @@ def test_source_definition_revisions_pin_new_repository_evidence(tmp_path: Path)
 
 def test_dataset_specification_identity_is_distinct_from_membership(tmp_path: Path) -> None:
     with Repository(tmp_path) as repository:
-        source_id = repository.register_source("source-a", _source_definition("https://example.test/a", role="raw"))
+        source_id = repository.register_source(
+            "source-a",
+            _source_definition("https://example.test/a", role="raw"),
+        )
         run_id = repository.start_run(source_ids=(source_id,), started_at=99.0)
         operation_id = repository.start_operation(
             run_id=run_id,
@@ -198,23 +222,80 @@ def _downgrade_fixture_to_v2(
         "UPDATE datasets SET definition_json = ?",
         (json.dumps(dataset_definition, sort_keys=True, separators=(",", ":")),),
     )
-    for table, column in (
-        ("operations", "parameters_json"),
-        ("observations", "metadata_json"),
-        ("source_snapshots", "evidence_json"),
-    ):
-        rows = connection.execute(f"SELECT rowid, {column} FROM {table}").fetchall()
-        for rowid, raw in rows:
-            connection.execute(
-                f"UPDATE {table} SET {column} = ? WHERE rowid = ?",
-                (_remove_revision_key(raw), rowid),
-            )
+
+    rows = connection.execute("SELECT rowid, parameters_json FROM operations").fetchall()
+    for rowid, raw in rows:
+        connection.execute(
+            "UPDATE operations SET parameters_json = ? WHERE rowid = ?",
+            (_remove_revision_key(raw), rowid),
+        )
+
+    rows = connection.execute("SELECT rowid, metadata_json FROM observations").fetchall()
+    for rowid, raw in rows:
+        connection.execute(
+            "UPDATE observations SET metadata_json = ? WHERE rowid = ?",
+            (_remove_revision_key(raw), rowid),
+        )
+
+    rows = connection.execute("SELECT rowid, evidence_json FROM source_snapshots").fetchall()
+    for rowid, raw in rows:
+        connection.execute(
+            "UPDATE source_snapshots SET evidence_json = ? WHERE rowid = ?",
+            (_remove_revision_key(raw), rowid),
+        )
+
     connection.execute("PRAGMA user_version = 2")
     connection.commit()
     connection.close()
 
 
-def test_v2_upgrade_preserves_repository_state_without_inventing_revision_provenance(tmp_path: Path) -> None:
+def _assert_v2_upgrade_state(
+    root: Path,
+    *,
+    source_definition: JsonObject,
+    run_id: RunId,
+    first: ArtifactObservation,
+    derived: ArtifactObservation,
+    snapshot: SourceSnapshot,
+    dataset: ImmutableDataset,
+) -> None:
+    with Repository(root) as upgraded:
+        metadata = cast("SQLiteMetadataStore", upgraded.metadata)
+        assert metadata.schema_version == 3
+
+        source = upgraded.metadata.source(SourceId("source-a"))
+        assert source is not None
+        assert source.definition == source_definition
+        assert len(source.revisions) == 1
+
+        migrated_first = upgraded.observation(first.observation_id)
+        assert migrated_first is not None
+        assert _SOURCE_REVISION_KEY not in migrated_first.metadata
+
+        migrated_snapshot = upgraded.metadata.source_snapshot(snapshot.snapshot_id)
+        assert migrated_snapshot is not None
+        assert _SOURCE_REVISION_KEY not in migrated_snapshot.evidence
+
+        migrated_operation = upgraded.metadata.operations_for_run(run_id)[0]
+        assert _SOURCE_REVISION_KEY not in migrated_operation.parameters
+
+        assert upgraded.observation(derived.observation_id) is not None
+        provenance = upgraded.provenance_inputs(derived.observation_id)
+        assert [edge.input_observation_id for edge in provenance] == [first.observation_id]
+
+        validation = upgraded.validation(first.content_id, "test:fixture", "1")
+        assert validation is not None
+        assert validation.status == "passed"
+
+        migrated_dataset = upgraded.dataset(dataset.id)
+        assert migrated_dataset.id == dataset.id
+        assert migrated_dataset.artifact("artifact:a").observation_id == first.observation_id
+        assert len(upgraded.dataset_specifications(dataset.id)) == 1
+
+
+def test_v2_upgrade_preserves_repository_state_without_inventing_revision_provenance(
+    tmp_path: Path,
+) -> None:
     source_definition = _source_definition("https://example.test/a", role="raw")
     with Repository(tmp_path) as repository:
         source_id = repository.register_source("source-a", source_definition)
@@ -264,8 +345,16 @@ def test_v2_upgrade_preserves_repository_state_without_inventing_revision_proven
             created_at=104.0,
         )
         dataset_definition = dict(dataset.manifest.definition)
-        repository.finish_operation(operation_id, status="succeeded", finished_at=105.0)
-        repository.finish_run(run_id, status="succeeded", finished_at=106.0)
+        repository.finish_operation(
+            operation_id,
+            status="succeeded",
+            finished_at=105.0,
+        )
+        repository.finish_run(
+            run_id,
+            status="succeeded",
+            finished_at=106.0,
+        )
 
     _downgrade_fixture_to_v2(
         tmp_path / "metadata.sqlite",
@@ -273,35 +362,15 @@ def test_v2_upgrade_preserves_repository_state_without_inventing_revision_proven
         dataset_definition=dataset_definition,
     )
 
-    with Repository(tmp_path) as upgraded:
-        metadata = cast("SQLiteMetadataStore", upgraded.metadata)
-        assert metadata.schema_version == 3
-
-        source = upgraded.metadata.source(SourceId("source-a"))
-        assert source is not None
-        assert source.definition == source_definition
-        assert len(source.revisions) == 1
-
-        migrated_first = upgraded.observation(first.observation_id)
-        assert migrated_first is not None
-        assert _SOURCE_REVISION_KEY not in migrated_first.metadata
-        migrated_snapshot = upgraded.metadata.source_snapshot(snapshot.snapshot_id)
-        assert migrated_snapshot is not None
-        assert _SOURCE_REVISION_KEY not in migrated_snapshot.evidence
-        migrated_operation = upgraded.metadata.operations_for_run(run_id)[0]
-        assert _SOURCE_REVISION_KEY not in migrated_operation.parameters
-
-        assert upgraded.observation(derived.observation_id) is not None
-        provenance = upgraded.provenance_inputs(derived.observation_id)
-        assert [edge.input_observation_id for edge in provenance] == [first.observation_id]
-        validation = upgraded.validation(first.content_id, "test:fixture", "1")
-        assert validation is not None
-        assert validation.status == "passed"
-
-        migrated_dataset = upgraded.dataset(dataset.id)
-        assert migrated_dataset.id == dataset.id
-        assert migrated_dataset.artifact("artifact:a").observation_id == first.observation_id
-        assert len(upgraded.dataset_specifications(dataset.id)) == 1
+    _assert_v2_upgrade_state(
+        tmp_path,
+        source_definition=source_definition,
+        run_id=run_id,
+        first=first,
+        derived=derived,
+        snapshot=snapshot,
+        dataset=dataset,
+    )
 
     with Repository(tmp_path) as reopened:
         metadata = cast("SQLiteMetadataStore", reopened.metadata)
@@ -318,5 +387,8 @@ def test_future_schema_version_is_rejected(tmp_path: Path) -> None:
     connection.commit()
     connection.close()
 
-    with pytest.raises(RuntimeError, match="Unsupported efloud metadata schema version: 99"):
+    with pytest.raises(
+        RuntimeError,
+        match="Unsupported efloud metadata schema version: 99",
+    ):
         Repository(tmp_path)

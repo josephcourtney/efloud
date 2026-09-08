@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
+from contextlib import closing
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -9,6 +10,9 @@ from efloud.datasets import DatasetDefinition, DatasetSelection, ExactObservatio
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository import Repository
 from efloud.repository_models import SourceId
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -35,9 +39,7 @@ def _create_dataset(root: Path) -> tuple[str, str]:
         )
         dataset = repository.resolve_dataset(
             DatasetDefinition(
-                selections=(
-                    DatasetSelection(ExactObservation(observation.observation_id), role="input"),
-                )
+                selections=(DatasetSelection(ExactObservation(observation.observation_id), role="input"),)
             )
         )
         repository.finish_operation(operation, status="succeeded", finished_at=102.0)
@@ -87,13 +89,14 @@ def test_read_only_repository_does_not_initialize_missing_store(tmp_path: Path) 
 def test_read_only_repository_refuses_schema_migration(tmp_path: Path) -> None:
     _create_dataset(tmp_path)
     metadata = tmp_path / "metadata.sqlite"
-    with sqlite3.connect(metadata) as connection:
+    with closing(sqlite3.connect(metadata)) as connection:
         connection.execute("PRAGMA user_version = 2")
+        connection.commit()
     before = _tree_state(tmp_path)
 
     with pytest.raises(RuntimeError, match="requires the current metadata schema"):
         ReadOnlyRepository(tmp_path)
 
-    with sqlite3.connect(metadata) as connection:
+    with closing(sqlite3.connect(metadata)) as connection:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 2
     assert _tree_state(tmp_path) == before

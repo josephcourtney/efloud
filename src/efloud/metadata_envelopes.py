@@ -55,7 +55,7 @@ def decode_source_definition_history(
     current_raw = payload.get("current_revision_id")
     if not isinstance(raw_revisions, list) or not isinstance(current_raw, str):
         msg = "Malformed source-definition history envelope."
-        raise ValueError(msg)
+        raise TypeError(msg)
 
     revisions: list[SourceDefinitionRevision] = []
     for raw_revision in raw_revisions:

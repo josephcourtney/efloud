@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from typing import TYPE_CHECKING
 
 from efloud.json_types import JsonObject, json_object_or_none
 from efloud.metadata_envelopes import (
@@ -9,8 +9,12 @@ from efloud.metadata_envelopes import (
     source_definition_history_payload,
 )
 
+if TYPE_CHECKING:
+    import sqlite3
+
 CURRENT_SCHEMA_VERSION = 3
-_SUPPORTED_HISTORICAL_VERSIONS = frozenset({1, 2})
+_V2_SCHEMA_VERSION = 2
+_SUPPORTED_HISTORICAL_VERSIONS = frozenset({1, _V2_SCHEMA_VERSION})
 
 V2_BASELINE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -172,7 +176,7 @@ def _set_version(connection: sqlite3.Connection, version: int) -> None:
 
 def _install_v2_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(V2_BASELINE_SCHEMA)
-    _set_version(connection, 2)
+    _set_version(connection, _V2_SCHEMA_VERSION)
 
 
 def _migrate_1_to_2(connection: sqlite3.Connection) -> None:
@@ -212,11 +216,11 @@ def initialize_or_migrate(connection: sqlite3.Connection) -> None:
     with connection:
         if current == 0:
             _install_v2_schema(connection)
-            current = 2
+            current = _V2_SCHEMA_VERSION
         if current == 1:
             _migrate_1_to_2(connection)
-            current = 2
-        if current == 2:
+            current = _V2_SCHEMA_VERSION
+        if current == _V2_SCHEMA_VERSION:
             _migrate_2_to_3(connection)
 
 

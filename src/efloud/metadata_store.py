@@ -48,6 +48,7 @@ class SourceRecord:
     revisions: tuple[SourceDefinitionRevision, ...] = field(init=False)
 
     def __post_init__(self) -> None:
+        """Decode and canonicalize source-definition revision history."""
         definition, revision_id, revisions = decode_source_definition_history(
             self.source_id,
             self.definition,
@@ -115,6 +116,7 @@ class DatasetRecord:
     specification_id: DatasetSpecificationId = field(init=False)
 
     def __post_init__(self) -> None:
+        """Canonicalize dataset specifications and their derived metadata."""
         _definition, decoded = decode_dataset_specifications(self.definition)
         merged = {str(item.specification_id): item for item in decoded}
         merged.update({str(item.specification_id): item for item in self.specifications})

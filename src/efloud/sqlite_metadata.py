@@ -236,10 +236,17 @@ class SQLiteMetadataStore:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(path)
-        self._connection.row_factory = sqlite3.Row
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        self._initialize_schema()
+        connection = sqlite3.connect(path)
+        self._connection = connection
+        initialized = False
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            self._initialize_schema()
+            initialized = True
+        finally:
+            if not initialized:
+                connection.close()
 
     def _initialize_schema(self) -> None:
         current = int(self._connection.execute("PRAGMA user_version").fetchone()[0])

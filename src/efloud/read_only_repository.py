@@ -21,6 +21,7 @@ from efloud.repository_models import (
     TreeId,
     ValidationResult,
 )
+from efloud.repository_models import RunId as RepositoryRunId
 from efloud.schema_migrations import CURRENT_SCHEMA_VERSION
 from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
 
@@ -70,6 +71,7 @@ class ReadOnlyFilesystemBlobStore(FilesystemBlobStore):
     """Filesystem CAS reader that cannot create, replace, or delete content."""
 
     def __post_init__(self) -> None:
+        """Resolve and validate the existing object-store root."""
         root = self.root.resolve(strict=True)
         if not root.is_dir():
             msg = f"Repository object store is not a directory: {root}"
@@ -110,6 +112,7 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         self.blobs = ReadOnlyFilesystemBlobStore(self.root / "objects")
 
     def __enter__(self) -> Self:
+        """Return this repository for context-manager use."""
         return self
 
     def __exit__(
@@ -118,6 +121,7 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        """Close repository resources when leaving a context manager."""
         self.close()
 
     def close(self) -> None:
@@ -130,7 +134,6 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         return self.metadata.sources()
 
     def run(self, run_id: RunId | str) -> RunRecord | None:
-        from efloud.repository_models import RunId as RepositoryRunId
 
         return self.metadata.run(RepositoryRunId(str(run_id)))
 

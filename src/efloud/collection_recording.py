@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from efloud.inventory import (
+    AbsenceEvidence,
     ChangeToken,
     ChangeTokenReliability,
     IntegrityExpectation,
@@ -138,7 +139,7 @@ def _previous_items(repository: Repository, source_id: SourceId) -> tuple[Previo
     snapshot = next(
         (
             candidate
-            for candidate in repository.metadata.source_snapshots_for(source_id, limit=200)
+            for candidate in repository.source_snapshots_for(source_id, limit=200)
             if candidate.complete and candidate.tree_id is not None
         ),
         None,
@@ -315,12 +316,15 @@ def _record_item(
     if status == "error" and error == "404":
         absence = repository.record_absence(
             decision.artifact_key,
+            evidence=AbsenceEvidence.direct_negative(
+                source_id=source_id,
+                observed_at=observed_at,
+                source_path=relative_path,
+                locator=item.locator,
+                metadata={"http_status": 404, "collection_task": task_name},
+            ),
             run_id=run_id,
             operation_id=operation_id,
-            source_id=source_id,
-            observed_at=observed_at,
-            source_path=relative_path,
-            upstream_locator=item.locator,
             metadata={**metadata, "collection_task": task_name, "http_status": 404},
         )
         state.observations.append(absence.observation_id)
@@ -342,10 +346,9 @@ def _record_membership_absences(
     repository: Repository,
     *,
     state: _RecordingState,
-    source_id: SourceId,
+    inventory: SourceInventory,
     run_id: RunId,
     operation_id: OperationId,
-    observed_at: float,
     task_name: str,
     decisions: tuple[ReconciliationDecision, ...],
 ) -> None:
@@ -354,11 +357,13 @@ def _record_membership_absences(
             continue
         absence = repository.record_absence(
             decision.artifact_key,
+            evidence=AbsenceEvidence.from_inventory(
+                inventory,
+                source_path=decision.previous.source_path,
+                metadata={"collection_task": task_name, "item_id": decision.item_id},
+            ),
             run_id=run_id,
             operation_id=operation_id,
-            source_id=source_id,
-            observed_at=observed_at,
-            source_path=decision.previous.source_path,
             metadata={
                 "collection_task": task_name,
                 "item_id": decision.item_id,
@@ -432,10 +437,9 @@ def record_collection_acquisition(
     _record_membership_absences(
         repository,
         state=state,
-        source_id=normalized_source,
+        inventory=inventory,
         run_id=run_id,
         operation_id=operation_id,
-        observed_at=inventory.observed_at,
         task_name=task_name,
         decisions=reconciliation.decisions,
     )

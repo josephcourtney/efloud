@@ -32,6 +32,20 @@ jobs:
         shell: bash
         run: |
           cat tools/.review-fix-gz/part-* | base64 --decode | gzip --decompress > /tmp/apply_review_fixes.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/apply_review_fixes.py')
+          text = path.read_text()
+          text = text.replace(
+              '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n    def start_operation(\n',
+              '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n\n    def start_operation(\n',
+          )
+          text = text.replace(
+              '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...\n\n    def start_operation(\n',
+              '    def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...\n\n    def operation(self, operation_id: OperationId) -> OperationRecord | None: ...\n\n    def start_operation(\n',
+          )
+          path.write_text(text)
+          PY
           python /tmp/apply_review_fixes.py .
 
       - name: Install uv

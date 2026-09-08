@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from efloud.schema_migrations import CURRENT_SCHEMA_VERSION, initialize_or_migrate
+from efloud.schema_migrations import initialize_or_migrate
 from efloud.sqlite_metadata import SQLiteMetadataStore as _SQLiteMetadataStoreV2
 
 if TYPE_CHECKING:
@@ -16,19 +16,10 @@ def _dump(value: JsonObject) -> str:
 
 
 class SQLiteMetadataStore(_SQLiteMetadataStoreV2):
-    """Canonical SQLite metadata store with explicit Phase-13 schema migration."""
+    """Canonical SQLite metadata store with explicit ordered schema migration."""
 
     def _initialize_schema(self) -> None:
-        current = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
-        if current == CURRENT_SCHEMA_VERSION:
-            return
-        if current not in {0, 1, 2}:
-            msg = f"Unsupported efloud metadata schema version: {current}"
-            raise RuntimeError(msg)
-
-        if current in {0, 1}:
-            super()._initialize_schema()
-        initialize_or_migrate(self._connection, baseline_schema="")
+        initialize_or_migrate(self._connection)
 
     @property
     def schema_version(self) -> int:

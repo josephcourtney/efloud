@@ -127,15 +127,13 @@ class RoleDrivenSyncPolicy:
                 reason=f"role override for {source.role!r}",
                 forced=role_override,
             )
-        if kind_name in {"HTTP", "REST"} and cfg.refresh_http:
-            return RefreshDecision(refresh=True, reason="HTTP-family refresh requested", forced=True)
         if kind_name == "REST_BASE" and self.rest_base_refresh is not None:
             return RefreshDecision(
                 refresh=bool(self.rest_base_refresh),
                 reason="REST collection policy override",
                 forced=bool(self.rest_base_refresh),
             )
-        if kind_name == "REST_BASE" and cfg.refresh_http:
+        if kind_name in {"HTTP", "REST", "REST_BASE"} and cfg.refresh_http:
             return RefreshDecision(refresh=True, reason="HTTP-family refresh requested", forced=True)
         if kind_name == "RSYNC" and cfg.refresh_rsync:
             return RefreshDecision(refresh=True, reason="rsync refresh requested", forced=True)

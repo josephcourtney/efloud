@@ -84,6 +84,7 @@ from efloud.planning import PlannedOperation, PlanningDecision, SyncPlan, SyncRe
 from efloud.policy import DefaultSyncPolicy, RefreshDecision, RoleDrivenSyncPolicy
 from efloud.query import query_target, root_payload, source_payload, store_payload
 from efloud.query_targets import QueryTarget, parse_query_target
+from efloud.read_only_repository import ReadOnlyRepository
 from efloud.reconciliation import (
     PreviousInventoryItem,
     ReconciliationDecision,
@@ -124,6 +125,7 @@ from efloud.repository_models import (
 from efloud.repository_query import RepositoryQueryService, repository_query
 from efloud.repository_state import repository_mirror_state, write_repository_mirror_state
 from efloud.repository_status import RepositoryStatusService
+from efloud.repository_view import RepositoryView
 from efloud.resolve import (
     manifest_entry_for_source_aliasable,
     manifest_http_dest_for_url,
@@ -259,6 +261,7 @@ __all__ = [
     "ProducerRef",
     "ProvenanceEdge",
     "QueryTarget",
+    "ReadOnlyRepository",
     "ReconciliationDecision",
     "ReconciliationResult",
     "ReconciliationState",
@@ -267,6 +270,7 @@ __all__ = [
     "RepositoryDerivedTask",
     "RepositoryQueryService",
     "RepositoryStatusService",
+    "RepositoryView",
     "RestBaseFanoutTask",
     "RoleDrivenSyncPolicy",
     "RsyncAcquisition",

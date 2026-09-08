@@ -225,7 +225,7 @@ class Repository:
         metadata: JsonObject | None = None,
         inputs: Iterable[ObservationId] = (),
     ) -> ArtifactObservation:
-        content = self.store_bytes_content(data, media_type=media_type)
+        content = self.blobs.put_bytes(data, media_type=media_type)
         return self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
             content=content,
@@ -260,7 +260,7 @@ class Repository:
         inputs: Iterable[ObservationId] = (),
         materialization_kind: str | None = None,
     ) -> ArtifactObservation:
-        content = self.store_path_content(path, media_type=media_type)
+        content = self.blobs.put_path(path, media_type=media_type)
         observation = self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
             content=content,

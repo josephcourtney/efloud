@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from efloud.repository_models import OperationId
 from efloud.schema_migrations import initialize_or_migrate
 from efloud.sqlite_metadata import SQLiteMetadataStore as _SQLiteMetadataStoreV2
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
-    from efloud.metadata_store import DatasetRecord
+    from efloud.metadata_store import DatasetRecord, OperationRecord
 
 
 def _dump(value: JsonObject) -> str:
@@ -25,6 +26,13 @@ class SQLiteMetadataStore(_SQLiteMetadataStoreV2):
     def schema_version(self) -> int:
         """Current persisted metadata schema version."""
         return int(self._connection.execute("PRAGMA user_version").fetchone()[0])
+
+    def operation(self, operation_id: OperationId) -> OperationRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM operations WHERE operation_id = ?",
+            (str(operation_id),),
+        ).fetchone()
+        return None if row is None else self._operation_from_row(row)
 
     def record_dataset(self, record: DatasetRecord) -> None:
         existing = self.dataset(record.dataset_id)

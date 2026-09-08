@@ -19,7 +19,7 @@ from efloud.repository_models import (
 )
 
 if TYPE_CHECKING:
-    from efloud.sqlite_metadata import SQLiteMetadataStore
+    from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -195,7 +195,7 @@ def test_absence_hides_latest_artifact_but_preserves_history(tmp_path: Path) -> 
         assert absence.observation_id != old.observation_id
 
 
-def test_schema_v1_migrates_to_absence_capable_v2(tmp_path: Path) -> None:
+def test_schema_v1_migrates_through_current_schema(tmp_path: Path) -> None:
     db = tmp_path / "metadata.sqlite"
     connection = sqlite3.connect(db)
     connection.execute("CREATE TABLE sentinel(value TEXT)")
@@ -203,11 +203,9 @@ def test_schema_v1_migrates_to_absence_capable_v2(tmp_path: Path) -> None:
     connection.commit()
     connection.close()
 
-    # A v1 database receives the additive v2 tables without losing existing data.
     with Repository(tmp_path) as repo:
         metadata = cast("SQLiteMetadataStore", repo.metadata)
-        version = metadata._connection.execute("PRAGMA user_version").fetchone()[0]
-        assert version == 2
+        assert metadata.schema_version == 3
         names = {
             row[0]
             for row in metadata._connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()

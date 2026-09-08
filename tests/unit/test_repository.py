@@ -8,6 +8,7 @@ import pytest
 from efloud.blob_store import FilesystemBlobStore
 from efloud.datasets import DatasetDefinition, ExactObservation, Latest, LatestAll, LatestBefore
 from efloud.inventory import AbsenceEvidence
+from efloud.json_types import json_mapping_or_none
 from efloud.repository import Repository
 from efloud.repository_models import (
     ArtifactAbsence,
@@ -190,7 +191,9 @@ def test_absence_hides_latest_artifact_but_preserves_history(tmp_path: Path) -> 
             run_id=run,
             operation_id=op,
         )
-        assert absence.metadata["absence_evidence"]["kind"] == "direct-negative"
+        evidence = json_mapping_or_none(absence.metadata.get("absence_evidence"))
+        assert evidence is not None
+        assert evidence["kind"] == "direct-negative"
         assert isinstance(repo.latest_state("artifact:a"), ArtifactAbsence)
         assert repo.latest_state("artifact:a", before=101.5) == old
         with pytest.raises(KeyError):

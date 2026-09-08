@@ -12,7 +12,7 @@ from efloud.operation_recording import RecordedOperation, record_source_acquisit
 from efloud.planning import PlannedOperation, SyncPlan
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
-from efloud.validation import ValidationRegistry, ValidationService
+from efloud.validation import ValidationRegistry, ValidationService, builtin_validation_registry
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -329,7 +329,7 @@ def _run_status(results: tuple[OperationExecutionResult, ...]) -> str:
 @dataclass(frozen=True, slots=True)
 class SyncExecutor:
     adapters: AdapterRegistry
-    validators: ValidationRegistry
+    validators: ValidationRegistry = field(default_factory=builtin_validation_registry)
 
     async def execute(
         self,

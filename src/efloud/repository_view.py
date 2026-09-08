@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, BinaryIO, Protocol
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from efloud.datasets import ImmutableDataset
     from efloud.metadata_store import MaterializationRecord, OperationRecord, RunRecord, SourceRecord
     from efloud.repository_models import (
         ArtifactKey,
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
         DatasetId,
         DatasetSpecification,
         ObservationId,
+        OperationId,
+        ProvenanceEdge,
         RunId,
         SnapshotId,
         SourceId,
@@ -43,7 +46,7 @@ class RepositoryView(Protocol):
 
     def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]: ...
 
-    def operation(self, operation_id: str) -> OperationRecord | None: ...
+    def operation(self, operation_id: OperationId | str) -> OperationRecord | None: ...
 
     def operations_for_run(self, run_id: RunId | str) -> tuple[OperationRecord, ...]: ...
 
@@ -53,6 +56,8 @@ class RepositoryView(Protocol):
         *,
         limit: int = 50,
     ) -> tuple[OperationRecord, ...]: ...
+
+    def provenance_inputs(self, observation_id: ObservationId | str) -> tuple[ProvenanceEdge, ...]: ...
 
     def materializations_for(self, content_id: ContentId | str) -> tuple[MaterializationRecord, ...]: ...
 
@@ -105,6 +110,8 @@ class RepositoryView(Protocol):
         *,
         limit: int = 50,
     ) -> tuple[SourceSnapshot, ...]: ...
+
+    def dataset(self, dataset_id: DatasetId | str) -> ImmutableDataset: ...
 
     def dataset_specifications(
         self,

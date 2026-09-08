@@ -130,6 +130,8 @@ CREATE TABLE IF NOT EXISTS validations (
     details_json TEXT NOT NULL,
     PRIMARY KEY (content_id, validator, validator_version, checked_at)
 );
+CREATE INDEX IF NOT EXISTS validations_content_validator
+    ON validations(content_id, validator, validator_version, checked_at DESC);
 CREATE TABLE IF NOT EXISTS materializations (
     content_id TEXT NOT NULL REFERENCES content_objects(content_id),
     kind TEXT NOT NULL,
@@ -447,14 +449,7 @@ class SQLiteMetadataStore:
         ).fetchall()
         return tuple(self._operation_from_row(row) for row in rows)
 
-    def record_observation_bundle(
-        self,
-        *,
-        content: ContentRef,
-        observation: ArtifactObservation,
-        provenance_edges: Iterable[ProvenanceEdge] = (),
-    ) -> None:
-        edges = tuple(provenance_edges)
+    def record_content(self, content: ContentRef) -> None:
         with self._connection:
             existing = self._connection.execute(
                 "SELECT byte_size, storage_key FROM content_objects WHERE content_id = ?",
@@ -472,6 +467,17 @@ class SQLiteMetadataStore:
                 """,
                 (str(content.content_id), content.byte_size, content.storage_key, content.media_type),
             )
+
+    def record_observation_bundle(
+        self,
+        *,
+        content: ContentRef,
+        observation: ArtifactObservation,
+        provenance_edges: Iterable[ProvenanceEdge] = (),
+    ) -> None:
+        edges = tuple(provenance_edges)
+        self.record_content(content)
+        with self._connection:
             self._connection.execute(
                 "INSERT OR IGNORE INTO logical_artifacts(artifact_key) VALUES (?)",
                 (str(observation.artifact_key),),
@@ -616,6 +622,45 @@ class SQLiteMetadataStore:
                     _dump(result.details),
                 ),
             )
+
+    @staticmethod
+    def _validation_from_row(row: sqlite3.Row) -> ValidationResult:
+        return ValidationResult(
+            content_id=ContentId(row["content_id"]),
+            validator=row["validator"],
+            validator_version=row["validator_version"],
+            checked_at=float(row["checked_at"]),
+            status=row["status"],
+            details=_load_object(row["details_json"]),
+        )
+
+    def validation(
+        self,
+        content_id: ContentId,
+        validator: str,
+        validator_version: str,
+    ) -> ValidationResult | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM validations
+            WHERE content_id = ? AND validator = ? AND validator_version = ?
+            ORDER BY checked_at DESC
+            LIMIT 1
+            """,
+            (str(content_id), validator, validator_version),
+        ).fetchone()
+        return None if row is None else self._validation_from_row(row)
+
+    def validations_for(self, content_id: ContentId) -> tuple[ValidationResult, ...]:
+        rows = self._connection.execute(
+            """
+            SELECT * FROM validations
+            WHERE content_id = ?
+            ORDER BY validator, validator_version, checked_at
+            """,
+            (str(content_id),),
+        ).fetchall()
+        return tuple(self._validation_from_row(row) for row in rows)
 
     @staticmethod
     def _observation_from_row(row: sqlite3.Row) -> ArtifactObservation:

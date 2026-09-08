@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from efloud.json_types import JsonMapping, JsonObject
 
 SourceId = NewType("SourceId", str)
+SourceDefinitionRevisionId = NewType("SourceDefinitionRevisionId", str)
 ArtifactKey = NewType("ArtifactKey", str)
 ContentId = NewType("ContentId", str)
 ObservationId = NewType("ObservationId", str)
@@ -17,12 +18,41 @@ OperationId = NewType("OperationId", str)
 SnapshotId = NewType("SnapshotId", str)
 TreeId = NewType("TreeId", str)
 DatasetId = NewType("DatasetId", str)
+DatasetSpecificationId = NewType("DatasetSpecificationId", str)
 
 type RunStatus = Literal["running", "succeeded", "partial", "failed", "cancelled"]
 type OperationStatus = Literal["running", "succeeded", "failed", "cancelled"]
 type ValidationStatus = Literal["passed", "failed", "error"]
 
 _SHA256_HEX_LENGTH = 64
+
+
+@dataclass(frozen=True, slots=True)
+class SourceDefinitionRevision:
+    """Immutable semantic source definition identified by canonical content."""
+
+    revision_id: SourceDefinitionRevisionId
+    definition: JsonObject
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "revision_id": str(self.revision_id),
+            "definition": dict(self.definition),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetSpecification:
+    """One intensional dataset definition known to resolve to a frozen membership."""
+
+    specification_id: DatasetSpecificationId
+    definition: JsonObject
+
+    def to_dict(self) -> JsonObject:
+        return {
+            "specification_id": str(self.specification_id),
+            "definition": dict(self.definition),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +368,8 @@ __all__ = [
     "ContentId",
     "ContentRef",
     "DatasetId",
+    "DatasetSpecification",
+    "DatasetSpecificationId",
     "ObservationId",
     "OperationId",
     "OperationStatus",
@@ -346,6 +378,8 @@ __all__ = [
     "RunId",
     "RunStatus",
     "SnapshotId",
+    "SourceDefinitionRevision",
+    "SourceDefinitionRevisionId",
     "SourceId",
     "SourceSnapshot",
     "TreeEntry",

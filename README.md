@@ -1,114 +1,76 @@
 # efloud
 
-`efloud` is a Python library for building local mirrors of remote data.
+`efloud` is a local, versioned data-ingestion and artifact-repository library.
 
-It is designed for projects that need to pull data from a mix of upstream sources, keep the results on disk in a stable layout, and record enough metadata to inspect what was fetched, when it was fetched, and where the materialized artifacts live.
+It acquires data from heterogeneous upstream sources, stores immutable content by digest, records observations and provenance, and exposes repository-backed queries and immutable datasets for downstream analysis. Filesystem mirrors and JSON manifests remain useful compatibility views, but they are not the authoritative state model.
 
-## What It Does
+## Core Model
 
-`efloud` syncs external sources into a single local root and keeps a small set of machine-readable records alongside the fetched data.
+The central distinction is:
 
-Current source patterns:
+```text
+logical artifact -> observation -> immutable content
+```
 
-- `HTTP` and `REST` sources fetched into local files
-- `RSYNC` sources mirrored into local directories
-- derived `REST_BASE` fanout tasks that expand one API surface into many per-item files
+A logical artifact names a thing whose bytes may change over time. Each successful acquisition records an observation of that artifact and points to a content-addressed object. Repeated observations of unchanged bytes therefore preserve acquisition history without duplicating content.
 
-It also maintains:
+The repository also records:
 
-- a canonical merged sync manifest
-- timestamped per-run manifests
-- a mirror-state file with a hash tree for mirrored directories
-- persistent HTTP cache and rate-limit state
-- query and status helpers for downstream tooling
+- source definitions and immutable definition revisions
+- runs and operations with explicit lifecycle state
+- source inventories and source/tree snapshots
+- content validation evidence
+- provenance edges for fetched and derived artifacts
+- immutable dataset membership
+- materialization records and compatibility projections
 
-## Use Cases
+The default local repository uses SQLite for metadata and a filesystem content-addressed store for immutable blobs.
 
-`efloud` is a good fit when you want a reproducible local cache of upstream data instead of issuing ad hoc network requests throughout an application or pipeline.
+## What It Is For
 
-Typical use cases:
+`efloud` is intended for applications that need reproducible local acquisition rather than ad hoc network requests throughout an analysis pipeline.
 
-- build a local mirror of reference datasets used by analysis or ETL jobs
-- combine `rsync` mirrors and HTTP API fetches under one managed cache root
-- materialize remote API resources into stable on-disk files for offline or repeatable processing
-- expose sync status, health, and manifest metadata to other automation or observability tools
-- maintain derived per-item artifacts from a base API endpoint
+Typical uses include:
 
-It is not a generic file-sync desktop app. The current implementation is library-first and oriented toward embedding in Python workflows.
+- mirror reference datasets while retaining their historical observations
+- combine HTTP, REST/collection, and `rsync` sources behind one repository model
+- inspect exactly what was observed, when, and from which source definition
+- validate downloaded content before advancing source state
+- reuse identical content and deterministic derived outputs without losing provenance
+- freeze exact artifact observations into immutable datasets for downstream analysis
+- operate offline after acquisition
 
-## Current Scope
+It is not a desktop file-sync application, workflow scheduler, or domain-specific scientific database.
 
-The repository is still in alpha. The public surface today is centered on Python APIs such as:
+## Current Architecture
 
-- `efloud.sync()` to perform a sync run
-- `EngineConfig` and `SourceDefinition` to describe the mirror root and upstream sources
-- `query_target()`, `root_payload()`, `store_payload()`, and `source_payload()` to inspect cached artifacts
-- `collect_status_payload()` and `build_summary()` to summarize sync outcomes
-- `RestBaseFanoutTask` for derived fanout materialization
-- `http_dest_for_source_url()` and `http_dests_for_source_urls()` to resolve
-  downloaded HTTP source URLs to their local materialized paths
+The canonical acquisition path is:
 
-The stable public surface is currently the Python API.
+```text
+Engine
+  -> SyncPlanner
+  -> SyncExecutor
+  -> Repository
+       -> MetadataStore (SQLite by default)
+       -> BlobStore (filesystem CAS by default)
+```
 
-## Core Concepts
+Source adapters understand protocol-specific acquisition. Repository semantics are protocol-independent. Compatibility manifests, mirror-state files, and filesystem layouts are derived from repository state rather than acting as secondary databases.
 
-### Engine Root
+The supported read boundary is `RepositoryView`. Both the mutable `Repository` and `ReadOnlyRepository` provide that semantic read capability. Immutable datasets and repository query/status services depend on the read capability rather than requiring mutation authority.
 
-Each sync run writes into one configured root directory. Under that root, `efloud` uses conventional subdirectories for:
-
-- `http/` for HTTP and REST artifacts
-- `mirrors/` for `rsync` mirrors
-- `cache/http_cache/` for persistent HTTP cache state
-- `rate_limits/` for rate-limit and retry state
-- `log/` for sync manifests
-- `mirror-state.json` for filesystem hash-tree state
-
-### Sources
-
-Each upstream is modeled as a `SourceDefinition` with:
-
-- a stable `id`
-- a human-readable `description`
-- a `url`
-- a `SourceKind`
-
-`RSYNC` sources can also specify:
-
-- `local_subpath`
-- `mirror_mode`
-- `mirror_paths`
-
-### Manifest
-
-Every run produces a manifest with:
-
-- run timestamps
-- effective sync configuration
-- per-source HTTP results
-- per-source `rsync` results
-- derived task results
-- run-level errors
-
-The canonical manifest is merged across runs so targeted syncs do not discard older source results for untouched sources.
-
-### Derived Tasks
-
-Derived tasks run after transport sync phases and can materialize additional artifacts based on the fetched data. The built-in `RestBaseFanoutTask` supports enumerating item identifiers and writing each fetched response into a bucketed file layout.
-
-## Example
-
-The example below shows the current library-oriented usage pattern.
+## Basic Acquisition
 
 ```python
-from pathlib import Path
 import asyncio
+from pathlib import Path
 
-from efloud import EngineConfig, SourceDefinition, SourceKind, sync
+from efloud import Engine, SourceDefinition, SourceKind
 
 
 async def main() -> None:
-    cfg = EngineConfig(
-        root=Path("./mirror-root"),
+    with Engine(
+        Path("./repository"),
         sources=[
             SourceDefinition(
                 id="example-json",
@@ -116,89 +78,115 @@ async def main() -> None:
                 url="https://example.test/data.json",
                 kind=SourceKind.HTTP,
             ),
-            SourceDefinition(
-                id="example-rsync",
-                description="Example rsync mirror",
-                url="rsync.example.test::module",
-                kind=SourceKind.RSYNC,
-                local_subpath="reference/module",
-            ),
         ],
-    )
-
-    result = await sync(cfg)
-    print(result.ok)
-    print(result.manifest_path)
+    ) as engine:
+        result = await engine.sync()
+        print(result.ok)
+        print(result.repository_run_id)
 
 
 asyncio.run(main())
 ```
 
-After a successful run, downstream code can inspect the cached state without re-fetching upstream data.
+`Engine.plan()` uses the same deterministic planning path without performing acquisition. A dry-run request likewise performs no authoritative repository mutation.
+
+## Repository Reads
+
+Downstream code can inspect repository state without running acquisition:
 
 ```python
 from pathlib import Path
 
-from efloud import EngineConfig, SourceDefinition, SourceKind, query_target
+from efloud import ReadOnlyRepository
 
-cfg = EngineConfig(
-    root=Path("./mirror-root"),
-    sources=[
-        SourceDefinition(
-            id="example-json",
-            description="Example JSON payload",
-            url="https://example.test/data.json",
-            kind=SourceKind.HTTP,
-        )
-    ],
-)
 
-payload = query_target("source:example-json", cfg=cfg)
-print(payload["local_path"])
+with ReadOnlyRepository(Path("./repository")) as repository:
+    for artifact_key in repository.artifact_keys():
+        state = repository.latest_state(artifact_key)
+        print(artifact_key, state)
 ```
 
-## Query and Status Helpers
+`ReadOnlyRepository` opens SQLite in read-only mode and does not initialize or migrate repository state.
 
-The query helpers treat the mirror root as a small inspectable data store.
+## Immutable Datasets
 
-Supported target shapes include:
+A dataset freezes exact observation membership. Dataset specification identity, exact observation membership identity, and content-equivalence identity are distinct.
 
-- `root`
-- `source:<source-id>`
-- `store:sync_manifest`
-- `store:mirror_state`
-- `index:<index-id>`
-- `source:<source-id>#/json/pointer`
+```python
+from pathlib import Path
 
-These return structured payloads suitable for programmatic inspection rather than human-formatted terminal output.
+from efloud import DatasetDefinition, Latest, Repository
 
-## Installation
 
-This project uses `uv` for dependency management in development.
+with Repository(Path("./repository")) as repository:
+    dataset = repository.resolve_dataset(
+        DatasetDefinition.from_selectors(Latest("source:example-json"))
+    )
+    member = dataset.artifact("source:example-json")
+    print(dataset.id, member.content_id)
+```
 
-To work on the repository locally:
+Once resolved, later acquisition does not change that dataset's membership.
+
+Dataset resolution is being expanded to include snapshot-backed, source/role/tag, and explicit temporal/coherence policies. A deterministic detached dataset manifest is also planned as the stable handoff format for consumers that should not know about efloud's SQLite schema.
+
+## Source Support
+
+Current acquisition paths include:
+
+- HTTP files
+- REST responses
+- `rsync` file-tree sources
+- REST collection/fanout acquisition
+- repository-recorded derived artifacts and indexes
+
+Additional source adapters are intentionally use-case driven. Protocol-specific behavior should remain behind adapter/inventory contracts rather than adding protocol-specific repository semantics.
+
+## Repository Layout
+
+A default repository is approximately:
+
+```text
+repository/
+  metadata.sqlite       # authoritative metadata
+  objects/
+    sha256/...          # authoritative immutable content
+  http/                 # compatibility/materialized HTTP files
+  mirrors/              # compatibility/materialized rsync trees
+  cache/                 # disposable HTTP cache state
+  rate_limits/           # operational rate-limit state
+  log/                   # compatibility manifests
+```
+
+Only repository metadata and retained content objects are authoritative. Caches, manifests, mirror state, and materialized filesystem views are reconstructable or compatibility-oriented state.
+
+## Validation And Provenance
+
+Content identity is computed from the bytes efloud actually stores. Upstream checksums are integrity expectations, not content identity, until independently verified.
+
+Validation evidence is recorded separately from observations. Required validation failure does not advance source state as if acquisition succeeded.
+
+Fetched and derived outputs use the same provenance model. Deterministic derived work may reuse existing content while still recording a fresh observation for the current run.
+
+## Development
+
+The project uses `uv` and `just`.
 
 ```bash
 uv sync
+uv run just check
 ```
 
-To run the validation commands used by the project:
+The canonical CI gate checks syntax, Ruff formatting/linting, static typing, import architecture, the complete test suite, and coverage. The full test suite also runs across every supported Python minor version.
 
-```bash
-.venv/bin/ruff check src/ tests/
-.venv/bin/ruff format src/ tests/
-.venv/bin/ty check src/ tests/
-.venv/bin/pytest
-```
+The declared Python range is 3.12 through 3.14.
 
 ## Project Status
 
-Alpha — `0.0.9`.
+Alpha — `0.0.10`.
 
-The core HTTP, REST, rsync, manifest, query, status, indexing, and derived
-materialization functionality is implemented and tested. The package is used
-as a support library for data-mirroring workflows and is intended primarily
-for programmatic use.
+The repository-centered architecture is implemented for the main acquisition, persistence, validation, provenance, query, and immutable-dataset paths. The active work is completing immutable dataset selection/coherence semantics and a detached consumer manifest, followed by safe materialization/export and cleanup of legacy compatibility APIs.
 
-The Python API is the supported interface. The project remains pre-1.0 and its
-internal orchestration and type boundaries may continue to evolve.
+Long-lived maintenance features such as repository-wide writer coordination, crash recovery, audit/fsck, and safe garbage collection are not complete yet. Treat the public API as pre-1.0 while those boundaries continue to harden.
+
+`DESIGN.md` is normative for architectural semantics; `STATUS.md` and `PLAN.md` describe current completion and remaining work.

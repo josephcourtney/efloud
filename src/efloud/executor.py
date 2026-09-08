@@ -7,9 +7,7 @@ from typing import TYPE_CHECKING, Literal
 
 from efloud.adapters import AdapterExecutionContext, AdapterRegistry
 from efloud.fs import delete_http_cache_files, prune_orphan_mirrors
-from efloud.json_types import JsonArray, JsonObject
 from efloud.operation_recording import RecordedOperation, record_source_acquisition, run_derived_operation
-from efloud.planning import PlannedOperation, SyncPlan
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
 from efloud.validation import ValidationRegistry, ValidationService, builtin_validation_registry
@@ -17,7 +15,9 @@ from efloud.validation import ValidationRegistry, ValidationService, builtin_val
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from efloud.json_types import JsonArray, JsonObject
     from efloud.models import EngineConfig
+    from efloud.planning import PlannedOperation, SyncPlan
     from efloud.repository import Repository
 
 
@@ -50,8 +50,7 @@ class SyncExecutionResult:
             sorted(
                 operation.operation_key.removeprefix("source:")
                 for operation in self.operations
-                if operation.operation_key.startswith("source:")
-                and operation.status in {"not-executed", "blocked"}
+                if operation.operation_key.startswith("source:") and operation.status in {"not-executed", "blocked"}
             )
         )
 
@@ -344,8 +343,7 @@ class SyncExecutor:
                 plan_id=plan.plan_id,
                 run_id=None,
                 operations=tuple(
-                    OperationExecutionResult(operation.operation_key, "not-executed")
-                    for operation in plan.operations
+                    OperationExecutionResult(operation.operation_key, "not-executed") for operation in plan.operations
                 ),
             )
 
@@ -379,7 +377,7 @@ class SyncExecutor:
                     )
             repository.finish_run(run_id, status="cancelled")
             raise
-        except Exception:  # ruff: ignore[blind-except] - executor closes lifecycle state before propagating failures.
+        except Exception:
             for operation in repository.metadata.operations_for_run(run_id):
                 if operation.status == "running":
                     repository.finish_operation(

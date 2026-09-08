@@ -4,12 +4,10 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
-from efloud.adapters import AdapterRegistry
 from efloud.builtin_adapters import builtin_adapter_registry
 from efloud.executor import SyncExecutionResult, SyncExecutor
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
 from efloud.planner import SyncPlanner
-from efloud.planning import SyncPlan, SyncRequest
 from efloud.repository import Repository
 from efloud.repository_compat import repository_manifest
 from efloud.repository_outputs import publish_repository_outputs
@@ -20,6 +18,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
+    from efloud.adapters import AdapterRegistry
+    from efloud.planning import SyncPlan, SyncRequest
     from efloud.registry import SourceDefinition
     from efloud.repository_models import ObservationId, RunId
     from efloud.state import MirrorState

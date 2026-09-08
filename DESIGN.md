@@ -268,6 +268,7 @@ class InventoryCoverage:
     scope: tuple[str, ...]
     complete: bool
 
+
 @dataclass(frozen=True)
 class InventoryItem:
     item_id: str
@@ -277,6 +278,7 @@ class InventoryItem:
     change_token: ChangeToken | None = None
     expected_integrity: tuple[IntegrityExpectation, ...] = ()
     metadata: JsonObject = field(default_factory=dict)
+
 
 @dataclass(frozen=True)
 class SourceInventory:

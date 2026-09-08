@@ -248,12 +248,36 @@ upgrade-package package:
 # ======================================================================
 
 
-# Check for any pythonn syntax errors
+# Check for Python syntax errors.
 [group('code quality')]
 syntax:
-  {{PYTHON}} -m compileall "{{ROOT_DIR}}/src"
-  {{PYTHON}} -m compileall "{{ROOT_DIR}}/tests"
-  {{PYTHON}} -m compileall "{{ROOT_DIR}}/scripts"
+  #!/usr/bin/env bash
+  set -uo pipefail
+
+  just _log_start syntax
+
+  status=0
+
+  for path in "{{PY_SRC}}" "{{PY_TESTPATH}}" "{{PY_SCRIPTS}}"; do
+    set +e
+    output="$({{PYTHON}} -m compileall -q "$path" 2>&1)"
+    rc=$?
+    set -e
+
+    if [ "$rc" -ne 0 ]; then
+      printf '\033[1;31m✓ syntax: %s\033[0m\n' "$path"
+      printf '%s\n' "$output" >&2
+      status="$rc"
+    else
+      printf '\033[1;32m✓ syntax: %s\033[0m\n' "$path"
+    fi
+  done
+
+  if [ "$status" -ne 0 ]; then
+    exit "$status"
+  fi
+
+  just _log_end syntax
 
 
 # Lint with Ruff. By default fixes safe violations; use --no-fix for validation.

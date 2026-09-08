@@ -134,11 +134,7 @@ def _discover_mmcif_buckets(source: SourceDefinition) -> set[str] | None:
         )
         return None
     discovered = _parse_list_only_directories(process.stdout)
-    return {
-        f"mmCIF/{name.lower()}/"
-        for name in discovered
-        if len(name) == _MMCIF_BUCKET_WIDTH and name.isalnum()
-    }
+    return {f"mmCIF/{name.lower()}/" for name in discovered if len(name) == _MMCIF_BUCKET_WIDTH and name.isalnum()}
 
 
 def _emit_progress(text: str, *, enabled: bool, inline: bool = False, final: bool = False) -> None:

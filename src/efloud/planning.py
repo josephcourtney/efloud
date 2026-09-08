@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from efloud.json_types import JsonObject
-from efloud.policy import RefreshDecision
 from efloud.repository_models import ProducerRef, stable_id
 
 if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
     from efloud.models import EngineConfig
+    from efloud.policy import RefreshDecision
 
 
 type PlannedOperationKind = Literal["source", "derived", "housekeeping"]

@@ -280,10 +280,7 @@ class ValidationService:
             *self.registry.applicable(target),
             *(IntegrityExpectationValidator(expectation) for expectation in expectations),
         )
-        checks = tuple(
-            self._validate_one(target, validator, checked_at=checked_at)
-            for validator in validators
-        )
+        checks = tuple(self._validate_one(target, validator, checked_at=checked_at) for validator in validators)
         return ValidationBatch(checks)
 
 

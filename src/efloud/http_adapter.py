@@ -4,6 +4,7 @@ import contextlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -14,7 +15,6 @@ from efloud.adapters import (
     HttpAcquisition,
     SourceAdapter,
 )
-from efloud.json_types import JsonObject
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.transport.http import HttpCache, HttpCacheConfig
 from efloud.transport.http_utils import (
@@ -24,6 +24,9 @@ from efloud.transport.http_utils import (
     fetch_json_to_file,
     fetch_to_file,
 )
+
+if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
 
 
 def _sqlite_url(path: Path) -> str:

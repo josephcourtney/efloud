@@ -115,9 +115,7 @@ def _inventory(source_id: SourceId, payload: JsonMapping, observed_at: float) ->
     coverage = json_mapping_or_none(serialized.get("coverage")) or {}
     scope_value = coverage.get("scope")
     scope = (
-        tuple(sorted(value for value in scope_value if isinstance(value, str)))
-        if isinstance(scope_value, list)
-        else ()
+        tuple(sorted(value for value in scope_value if isinstance(value, str))) if isinstance(scope_value, list) else ()
     )
     inventory_observed_at = serialized.get("observed_at")
     upstream_identity = serialized.get("upstream_identity")

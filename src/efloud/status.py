@@ -87,8 +87,10 @@ def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]
             "health": _uninitialized_health(cfg),
         },
         [
-            ("Repository metadata is not initialized; compatibility manifests and mirror-state exports "
-            "are not used as authoritative status. Run a repository sync or adopt retained local data.")
+            (
+                "Repository metadata is not initialized; compatibility manifests and mirror-state exports "
+                "are not used as authoritative status. Run a repository sync or adopt retained local data."
+            )
         ],
     )
 

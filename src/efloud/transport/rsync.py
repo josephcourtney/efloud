@@ -290,7 +290,7 @@ def _preflight_connectivity(cfg: RsyncMirrorConfig, *, remote: str) -> None:
     except OSError as exc:
         _emit_runtime_message(cfg, f"preflight: could not resolve {host}:{port}: {exc}")
         return
-    addresses = sorted({str(info[4][0]) for info in infos if info[4]})
+    addresses = sorted({str(info[4][0]) for info in infos})
     if addresses:
         _emit_runtime_message(cfg, f"preflight: resolved {host}:{port} -> {', '.join(addresses)}")
     probe_timeout = min(float(cfg.timeout_seconds), _PREFLIGHT_TIMEOUT_SECONDS)

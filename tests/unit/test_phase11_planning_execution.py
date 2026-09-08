@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from efloud.adapters import AdapterCapabilities, AdapterDescriptor, AdapterExecutionContext, AdapterRegistry, HttpAcquisition
+from efloud.adapters import (
+    AdapterCapabilities,
+    AdapterDescriptor,
+    AdapterExecutionContext,
+    AdapterRegistry,
+    HttpAcquisition,
+)
 from efloud.engine import Engine
 from efloud.models import EngineConfig
 from efloud.planner import SyncPlanner

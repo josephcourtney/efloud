@@ -3,10 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from efloud.adapters import AdapterRegistry
 from efloud.derived import RepositoryDerivedTask
 from efloud.fanout import RestBaseFanoutTask
-from efloud.json_types import JsonArray, JsonObject
 from efloud.planning import PlannedOperation, PlanningDecision, SyncPlan, SyncRequest, make_sync_plan
 from efloud.policy import DefaultSyncPolicy
 from efloud.registry import SourceKind
@@ -15,6 +13,8 @@ from efloud.repository_models import ProducerRef
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from efloud.adapters import AdapterRegistry
+    from efloud.json_types import JsonArray, JsonObject
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
@@ -44,11 +44,7 @@ def _task_input_source_ids(task: object) -> tuple[str, ...]:
 
 def _collection_task(config: EngineConfig, source_id: str) -> RestBaseFanoutTask | None:
     return next(
-        (
-            task
-            for task in config.derived_tasks
-            if isinstance(task, RestBaseFanoutTask) and task.source_id == source_id
-        ),
+        (task for task in config.derived_tasks if isinstance(task, RestBaseFanoutTask) and task.source_id == source_id),
         None,
     )
 
@@ -190,7 +186,10 @@ class SyncPlanner:
         refresh = policy.refresh_decision(source, config, snapshot=snapshot)
         scope = policy.source_scope(source, config)
         input_source_ids = _task_input_source_ids(collection_task) if collection_task is not None else ()
-        dependencies = (*_cache_dependency(config, source), *_planned_dependency_keys(input_source_ids, selected_source_ids))
+        dependencies = (
+            *_cache_dependency(config, source),
+            *_planned_dependency_keys(input_source_ids, selected_source_ids),
+        )
         snapshot_id = str(snapshot.snapshot_id) if snapshot is not None else None
         operation = PlannedOperation(
             operation_key=f"source:{source.id}",

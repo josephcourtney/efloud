@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from efloud.json_types import JsonObject
-from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository_models import ProducerRef
-from efloud.transport.rsync_inventory import RsyncInventory
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from efloud.inventory import IntegrityExpectation
+    from efloud.json_types import JsonObject
     from efloud.models import EngineConfig
     from efloud.planning import PlannedOperation
+    from efloud.registry import SourceDefinition, SourceKind
     from efloud.repository import Repository
+    from efloud.transport.rsync_inventory import RsyncInventory
 
 
 type AcquisitionStatus = Literal["succeeded", "failed"]
@@ -132,10 +133,7 @@ class AdapterRegistry:
         for source_kind in adapter.descriptor.source_kinds:
             if source_kind in self._adapters:
                 existing = self._adapters[source_kind]
-                msg = (
-                    f"Source kind {source_kind.value!r} already has adapter "
-                    f"{existing.descriptor.adapter_id!r}."
-                )
+                msg = f"Source kind {source_kind.value!r} already has adapter {existing.descriptor.adapter_id!r}."
                 raise ValueError(msg)
             self._adapters[source_kind] = adapter
 

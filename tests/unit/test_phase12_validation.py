@@ -18,7 +18,6 @@ from efloud.adapters import (
 from efloud.collection_recording import record_collection_acquisition
 from efloud.engine import Engine
 from efloud.inventory import IntegrityExpectation, InventoryCoverage, InventoryItem, SourceInventory
-from efloud.json_types import JsonObject
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_models import ArtifactKey, ContentId, SourceId
@@ -35,6 +34,8 @@ from efloud.validation import (
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
+
+    from efloud.json_types import JsonObject
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -105,7 +106,8 @@ def test_validation_reuses_content_and_validator_version_evidence(tmp_path: Path
         first = service.validate_content(content, checked_at=100.0)
         second = service.validate_content(content, checked_at=200.0)
 
-        assert first.ok and second.ok
+        assert first.ok
+        assert second.ok
         assert version_one.calls == 1
         assert first.checks[0].reused is False
         assert second.checks[0].reused is True
@@ -144,9 +146,7 @@ def test_required_http_integrity_failure_does_not_advance_source(tmp_path: Path)
         SourceKind.HTTP,
         expected_integrity=(IntegrityExpectation.sha256(wrong_digest),),
     )
-    adapters = AdapterRegistry(
-        (_adapter(SourceKind.HTTP, destination, propagate_expectations=False),)
-    )
+    adapters = AdapterRegistry((_adapter(SourceKind.HTTP, destination, propagate_expectations=False),))
 
     with Engine(tmp_path, [source], adapters=adapters) as engine:
         result = asyncio.run(engine.sync())

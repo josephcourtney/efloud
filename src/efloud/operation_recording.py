@@ -12,7 +12,6 @@ from efloud.adapters import CollectionAcquisition, HttpAcquisition, RsyncAcquisi
 from efloud.collection_recording import record_collection_acquisition
 from efloud.derived import RepositoryDerivedTask
 from efloud.json_types import JsonObject, JsonValue, copy_json_mapping, json_mapping_or_none
-from efloud.planning import PlannedOperation
 from efloud.repository_compat import repository_manifest
 from efloud.repository_models import ObservationId, TreeEntry, canonical_json_bytes
 from efloud.rsync_reconciliation import reconcile_rsync_inventory
@@ -21,6 +20,7 @@ if TYPE_CHECKING:
     from efloud.derived import DerivedTask
     from efloud.inventory import IntegrityExpectation
     from efloud.models import EngineConfig
+    from efloud.planning import PlannedOperation
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
     from efloud.repository_models import OperationId, RunId
@@ -180,9 +180,7 @@ def _record_incomplete_rsync(
         if path is None or not path.exists():
             continue
         if path.is_symlink():
-            entries.append(
-                TreeEntry(relative_path=relative_path, kind="symlink", target=path.readlink().as_posix())
-            )
+            entries.append(TreeEntry(relative_path=relative_path, kind="symlink", target=path.readlink().as_posix()))
             continue
         if path.is_dir():
             entries.append(TreeEntry(relative_path=relative_path, kind="directory"))

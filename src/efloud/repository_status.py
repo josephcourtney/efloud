@@ -8,8 +8,8 @@ from efloud.repository_models import RunId, SourceId
 if TYPE_CHECKING:
     from efloud.json_types import JsonArray, JsonObject
     from efloud.metadata_store import OperationRecord, RunRecord, SourceRecord
-    from efloud.repository import Repository
     from efloud.repository_models import SourceSnapshot
+    from efloud.repository_view import RepositoryView
 
 
 def _compatibility_status(status: str) -> str:
@@ -66,18 +66,18 @@ def _snapshot_payload(snapshot: SourceSnapshot | None) -> JsonObject | None:
 
 @dataclass(frozen=True, slots=True)
 class RepositoryStatusService:
-    repository: Repository
+    repository: RepositoryView
 
     def root_payload(self, *, run_limit: int = 20) -> JsonObject:
         return {
             "target_kind": "repository",
-            "sources": [_source_record_payload(source) for source in self.repository.metadata.sources()],
-            "recent_runs": [_run_record_payload(run) for run in self.repository.metadata.recent_runs(limit=run_limit)],
+            "sources": [_source_record_payload(source) for source in self.repository.sources()],
+            "recent_runs": [_run_record_payload(run) for run in self.repository.recent_runs(limit=run_limit)],
         }
 
     def source_payload(self, source_id: SourceId | str) -> JsonObject:
         normalized = SourceId(str(source_id))
-        source = self.repository.metadata.source(normalized)
+        source = self.repository.source(normalized)
         if source is None:
             msg = f"Unknown repository source: {source_id}"
             raise KeyError(msg)
@@ -88,13 +88,13 @@ class RepositoryStatusService:
             "latest_snapshot": _snapshot_payload(latest_snapshot),
             "operations": [
                 _operation_record_payload(operation)
-                for operation in self.repository.metadata.operations_for_source(normalized)
+                for operation in self.repository.operations_for_source(normalized)
             ],
         }
 
     def run_payload(self, run_id: RunId | str) -> JsonObject:
         normalized = RunId(str(run_id))
-        run = self.repository.metadata.run(normalized)
+        run = self.repository.run(normalized)
         if run is None:
             msg = f"Unknown repository run: {run_id}"
             raise KeyError(msg)
@@ -103,7 +103,7 @@ class RepositoryStatusService:
             "run": _run_record_payload(run),
             "operations": [
                 _operation_record_payload(operation)
-                for operation in self.repository.metadata.operations_for_run(normalized)
+                for operation in self.repository.operations_for_run(normalized)
             ],
         }
 

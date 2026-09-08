@@ -2,6 +2,18 @@ from __future__ import annotations
 
 from importlib.metadata import version
 
+from efloud.adapters import (
+    AdapterCapabilities,
+    AdapterDescriptor,
+    AdapterExecutionContext,
+    AdapterRegistry,
+    CollectionAcquisition,
+    HttpAcquisition,
+    RsyncAcquisition,
+    SourceAcquisition,
+    SourceAdapter,
+    builtin_adapter_registry,
+)
 from efloud.adoption import AdoptionResult, adopt_existing_store
 from efloud.artifacts import build_path_index, canonical_path, sha256_hex, verify_gzip
 from efloud.blob_store import BlobStore, FilesystemBlobStore
@@ -24,6 +36,7 @@ from efloud.derivation import (
 )
 from efloud.derived import RepositoryDerivedTask
 from efloud.engine import Engine, EngineSyncResult
+from efloud.executor import OperationExecutionResult, SyncExecutionResult, SyncExecutor
 from efloud.fanout import (
     FanoutEnumeration,
     FanoutItem,
@@ -66,7 +79,9 @@ from efloud.metadata_store import (
     SourceRecord,
 )
 from efloud.models import EngineConfig
-from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
+from efloud.planner import SyncPlanner
+from efloud.planning import PlannedOperation, PlanningDecision, SyncPlan, SyncRequest
+from efloud.policy import DefaultSyncPolicy, RefreshDecision, RoleDrivenSyncPolicy
 from efloud.query import query_target, root_payload, source_payload, store_payload
 from efloud.query_targets import QueryTarget, parse_query_target
 from efloud.reconciliation import (
@@ -146,6 +161,10 @@ from efloud.transport.rsync import OpResult, RsyncCommandConfig, RsyncMirror, Rs
 __version__ = version("efloud")
 
 __all__ = [
+    "AdapterCapabilities",
+    "AdapterDescriptor",
+    "AdapterExecutionContext",
+    "AdapterRegistry",
     "AdoptionResult",
     "AliasMap",
     "ArtifactAbsence",
@@ -155,6 +174,7 @@ __all__ = [
     "BlobStore",
     "ChangeToken",
     "ChangeTokenReliability",
+    "CollectionAcquisition",
     "ContentId",
     "ContentRef",
     "DatasetDefinition",
@@ -178,6 +198,7 @@ __all__ = [
     "FanoutEnumeration",
     "FanoutItem",
     "FilesystemBlobStore",
+    "HttpAcquisition",
     "HttpCache",
     "HttpCacheConfig",
     "HttpFetchResult",
@@ -202,9 +223,12 @@ __all__ = [
     "MirrorStateNode",
     "ObservationId",
     "OpResult",
+    "OperationExecutionResult",
     "OperationId",
     "OperationRecord",
     "OperationStatus",
+    "PlannedOperation",
+    "PlanningDecision",
     "PreviousInventoryItem",
     "ProducerRef",
     "ProvenanceEdge",
@@ -212,12 +236,14 @@ __all__ = [
     "ReconciliationDecision",
     "ReconciliationResult",
     "ReconciliationState",
+    "RefreshDecision",
     "Repository",
     "RepositoryDerivedTask",
     "RepositoryQueryService",
     "RepositoryStatusService",
     "RestBaseFanoutTask",
     "RoleDrivenSyncPolicy",
+    "RsyncAcquisition",
     "RsyncCommandConfig",
     "RsyncMirror",
     "RsyncMirrorConfig",
@@ -226,6 +252,8 @@ __all__ = [
     "RunStatus",
     "SQLiteMetadataStore",
     "SnapshotId",
+    "SourceAcquisition",
+    "SourceAdapter",
     "SourceAliasResolver",
     "SourceDefinition",
     "SourceId",
@@ -236,6 +264,11 @@ __all__ = [
     "StoreMetadataProvider",
     "StorePathKind",
     "StoreSpec",
+    "SyncExecutionResult",
+    "SyncExecutor",
+    "SyncPlan",
+    "SyncPlanner",
+    "SyncRequest",
     "SyncResult",
     "TreeEntry",
     "TreeId",
@@ -245,6 +278,7 @@ __all__ = [
     "build_mirror_health_summary",
     "build_path_index",
     "build_summary",
+    "builtin_adapter_registry",
     "cache_group_name",
     "canonical_path",
     "check_integrity",

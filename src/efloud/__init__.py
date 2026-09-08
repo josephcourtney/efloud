@@ -102,6 +102,8 @@ from efloud.repository_models import (
     ContentId,
     ContentRef,
     DatasetId,
+    DatasetSpecification,
+    DatasetSpecificationId,
     ObservationId,
     OperationId,
     OperationStatus,
@@ -110,6 +112,8 @@ from efloud.repository_models import (
     RunId,
     RunStatus,
     SnapshotId,
+    SourceDefinitionRevision,
+    SourceDefinitionRevisionId,
     SourceId,
     SourceSnapshot,
     TreeEntry,
@@ -136,7 +140,7 @@ from efloud.source_results import (
     manifest_section_for_kind,
     source_status_hint,
 )
-from efloud.sqlite_metadata import SQLiteMetadataStore
+from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
 from efloud.state import MirrorState, MirrorStateNode
 from efloud.status import collect_status_payload, derived_summary, source_status_rows
 from efloud.store_inspection import (
@@ -201,6 +205,8 @@ __all__ = [
     "DatasetRecord",
     "DatasetSelection",
     "DatasetSelector",
+    "DatasetSpecification",
+    "DatasetSpecificationId",
     "DefaultSyncPolicy",
     "DependencySemantics",
     "DerivationKey",
@@ -276,6 +282,8 @@ __all__ = [
     "SourceAdapter",
     "SourceAliasResolver",
     "SourceDefinition",
+    "SourceDefinitionRevision",
+    "SourceDefinitionRevisionId",
     "SourceId",
     "SourceInventory",
     "SourceKind",

@@ -102,5 +102,6 @@ def test_engine_records_rest_base_fanout_result(tmp_path: Path, monkeypatch: pyt
         snapshot = engine.repository.latest_source_snapshot("collection")
         assert snapshot is not None
         assert snapshot.complete
+        assert result.repository_run_id is not None
         operation = engine.repository.metadata.operations_for_run(result.repository_run_id)[0]
         assert operation.producer.producer_id == "efloud:collection"

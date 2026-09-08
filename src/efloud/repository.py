@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, BinaryIO, Self
 
 from efloud.blob_store import BlobStore, FilesystemBlobStore
 from efloud.datasets import DatasetDefinition, DatasetManifest, ImmutableDataset, resolve_dataset
+from efloud.metadata_envelopes import source_definition_history_payload
 from efloud.repository_models import (
     ArtifactAbsence,
     ArtifactKey,
@@ -40,9 +41,11 @@ if TYPE_CHECKING:
     from efloud.derivation import DerivationKey
     from efloud.json_types import JsonObject
     from efloud.metadata_store import MetadataStore, OperationRecord
+    from efloud.repository_models import DatasetSpecification
 
 _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
 _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
+_SOURCE_REVISION_KEY = "source_definition_revision_id"
 
 
 def _canonical_terminal_status(status: str, *, operation: bool) -> str:
@@ -91,7 +94,26 @@ class Repository:
 
     def register_source(self, source_id: SourceId | str, definition: JsonObject) -> SourceId:
         normalized = SourceId(str(source_id))
-        self.metadata.register_source(normalized, definition)
+        existing = self.metadata.source(normalized)
+        payload = source_definition_history_payload(
+            normalized,
+            definition,
+            existing=existing.revisions if existing is not None else (),
+        )
+        self.metadata.register_source(normalized, payload)
+        return normalized
+
+    def _source_revision_id(self, source_id: SourceId) -> str:
+        source = self.metadata.source(source_id)
+        if source is None:
+            msg = f"Unknown repository source: {source_id}"
+            raise KeyError(msg)
+        return str(source.revision_id)
+
+    def _source_evidence(self, payload: JsonObject, source_id: SourceId | None) -> JsonObject:
+        normalized = dict(payload)
+        if source_id is not None:
+            normalized[_SOURCE_REVISION_KEY] = self._source_revision_id(source_id)
         return normalized
 
     def start_run(
@@ -160,6 +182,8 @@ class Repository:
         normalized_source_id = SourceId(str(source_id)) if source_id is not None else None
         operation_parameters: JsonObject = dict(parameters or {})
         operation_parameters["producer"] = (producer or _default_producer(kind)).to_dict()
+        if normalized_source_id is not None:
+            operation_parameters[_SOURCE_REVISION_KEY] = self._source_revision_id(normalized_source_id)
         self.metadata.start_operation(
             operation_id,
             run_id=run_id,
@@ -481,7 +505,7 @@ class Repository:
             upstream_modified_at=upstream_modified_at,
             upstream_version=upstream_version,
             media_type=media_type,
-            metadata=metadata,
+            metadata=self._source_evidence(metadata, source_id),
         )
         edges = tuple(
             ProvenanceEdge(output_observation_id=observation_id, input_observation_id=input_id) for input_id in inputs
@@ -524,7 +548,7 @@ class Repository:
             observed_at=observed,
             source_path=source_path,
             upstream_locator=upstream_locator,
-            metadata=metadata or {},
+            metadata=self._source_evidence(metadata or {}, normalized_source_id),
         )
         self.metadata.record_absence(absence)
         return absence
@@ -591,7 +615,7 @@ class Repository:
         self.metadata.record_tree(tree_id, ordered, created_at=observed)
         normalized_source_id = SourceId(str(source_id))
         normalized_scope = tuple(sorted(scope))
-        evidence_payload = evidence or {}
+        evidence_payload = self._source_evidence(evidence or {}, normalized_source_id)
         snapshot_id = SnapshotId(
             stable_id(
                 "snapshot",
@@ -632,7 +656,7 @@ class Repository:
         observed = time.time() if observed_at is None else observed_at
         normalized_source_id = SourceId(str(source_id))
         normalized_scope = tuple(sorted(scope))
-        evidence_payload = evidence or {}
+        evidence_payload = self._source_evidence(evidence or {}, normalized_source_id)
         snapshot_id = SnapshotId(
             stable_id(
                 "snapshot",
@@ -671,11 +695,11 @@ class Repository:
         created_at: float | None = None,
     ) -> ImmutableDataset:
         manifest = resolve_dataset(self, definition, created_at=created_at)
+        record = manifest.to_record()
         existing = self.metadata.dataset(manifest.dataset_id)
-        if existing is None:
-            self.metadata.record_dataset(manifest.to_record())
-        else:
-            manifest = type(manifest).from_record(existing)
+        if existing is not None:
+            record = record.with_specifications(existing.specifications)
+        self.metadata.record_dataset(record)
         return ImmutableDataset(self, manifest)
 
     def dataset(self, dataset_id: DatasetId | str) -> ImmutableDataset:
@@ -684,6 +708,16 @@ class Repository:
             msg = f"Unknown dataset: {dataset_id}"
             raise KeyError(msg)
         return ImmutableDataset(self, DatasetManifest.from_record(record))
+
+    def dataset_specifications(
+        self,
+        dataset_id: DatasetId | str,
+    ) -> tuple[DatasetSpecification, ...]:
+        record = self.metadata.dataset(DatasetId(str(dataset_id)))
+        if record is None:
+            msg = f"Unknown dataset: {dataset_id}"
+            raise KeyError(msg)
+        return record.specifications
 
 
 __all__ = ["Repository"]

@@ -4,19 +4,17 @@ File Purpose: Current project state and continuity notes for the next developmen
 
 ## Current Focus
 
-Phases 6 through 11 of the repository-centered migration are implemented on `main`.
-Phase 10 completed the repository-authority cutover; Phase 11 now places canonical
-`Engine` orchestration behind deterministic planning, typed operations, explicit
-source adapters, structured refresh policy decisions, dependency-aware bounded
-execution, and repository-native result recording.
+Phases 6 through 12 of the repository-centered migration are implemented on `main`.
+Phase 11 is verified by a clean local syntax/format/lint/typecheck/test gate. Phase 12
+adds validation as immutable repository evidence and keeps validation failure separate
+from successful source advancement.
 
-The pre-repair Phase 11 gate reported 139/139 tests passing while lint and typecheck
-found contract/typing/style issues in the new orchestration code. Those reported
-issues have been repaired on `main`. The immediate task is to rerun the full normal
-quality gate. Do not mark Phase 11 verified until that rerun is clean.
+The immediate task is to run the full normal quality gate against the Phase 12 changes.
+Do not advance implementation into Phase 13 until that gate is clean; repair any Phase
+12 lint, typing, or regression failures first.
 
-Once the gate is clean, the active implementation frontier is Phase 12: complete
-validation as immutable repository evidence.
+After a clean gate, the active implementation frontier is Phase 13: complete immutable
+datasets and temporal policies.
 
 ## Current State
 
@@ -36,7 +34,8 @@ Implemented on `main`:
 - conservative retained-store adoption without invented historical provenance
 - deterministic `SyncRequest`, `PlanningDecision`, `PlannedOperation`, and `SyncPlan`
 - plan identity derived from request, repository state, adapter capabilities,
-  refresh decisions, scopes, dependencies, and task inputs
+  refresh decisions, scopes, dependencies, task inputs, and configured source
+  integrity expectations
 - planning that performs no acquisition or authoritative mutation
 - structured `RefreshDecision` values rather than bare refresh booleans in the
   canonical planner
@@ -61,9 +60,40 @@ Implemented on `main`:
 - canonical `Engine` flow of `plan -> execute -> repository-derived outputs`
 - compatibility manifest and mirror-state JSON retained only as projections/exports
   on the canonical path
-- focused Phase 11 coverage for deterministic planning, repository-state-sensitive
-  plan identity, dry-run mutation boundaries, concurrency, dependencies, producer
-  identity, housekeeping, and declarative source definitions
+- Phase 11 verified locally with syntax, format, lint, typecheck, and full tests clean
+- immutable `ValidationResult` evidence keyed by content identity plus validator
+  identity/version
+- repository lookup/reuse of prior validation evidence for unchanged content and
+  validator versions
+- explicit staged-content repository operations that register immutable content
+  without creating a logical-artifact observation or advancing source state
+- ordinary ingestion still atomically records content metadata with observations;
+  failed observation metadata commits may leave only an unreferenced blob, preserving
+  the Phase 9 failure invariant
+- built-in storage-integrity, gzip-container, and JSON validators
+- source `IntegrityExpectation` validation against independently computed content
+  identity
+- source-configured HTTP/REST integrity expectations enforced at the repository
+  recording boundary even when a custom adapter omits them
+- adapter-provided additional HTTP/REST integrity expectations merged without
+  overriding duplicate configured expectations
+- configured source integrity expectations persisted in repository source definitions
+  and included in deterministic plan identity
+- collection-item integrity expectations evaluated before content observations are
+  recorded; failed validation remains unresolved evidence rather than current content
+- failed required HTTP/REST validation records immutable content plus validation
+  evidence but creates no successful source observation or source snapshot
+- failed collection-item validation prevents a complete successful collection
+  snapshot while preserving explicit unresolved evidence
+- reusable generic validation through `ValidationService` and injectable
+  `ValidationRegistry`
+- domain-validator extension contract via `ContentValidator`, `ValidatorDescriptor`,
+  and Engine validator-registry injection without domain-library dependencies
+- repository/query exposure of validation evidence for `content:<content-id>` and
+  observation queries
+- focused Phase 12 coverage for validator-version reuse, required source-integrity
+  failure, invalid JSON/gzip preservation, query exposure, source-definition
+  persistence, custom-adapter omission, and collection-item integrity gating
 
 ## Still Transitional
 
@@ -78,7 +108,10 @@ Implemented on `main`:
   preferred semantic path
 - explicit manifest/resolve/health helpers that accept caller-supplied compatibility
   data remain available for compatibility inspection
-- Phase 11 has not yet been verified by a post-repair full local quality gate
+- rsync's existing reconciliation path computes/verifies actual content identity during
+  ingestion; no upstream rsync checksum expectation source is currently configured, so
+  Phase 12 adds no synthetic rsync expectation mechanism
+- Phase 12 has not yet been verified by a post-implementation full local quality gate
 
 ## Continuity
 
@@ -88,6 +121,8 @@ Run:
 just syntax; just format; just lint; just typecheck; just test
 ```
 
-If clean, mark Phase 11 verified and begin Phase 12 by inventorying the current
-validation/integrity paths, defining validator identity/version semantics, and making
-validation evidence reusable by content identity plus validator version.
+If clean, mark Phase 12 verified and begin Phase 13. Phase 13 should build on the
+existing immutable dataset foundation rather than changing validation or acquisition
+semantics: add source/tag/role/namespace selection where justified, explicit temporal
+time basis, complete-snapshot requirements, optional skew/same-run constraints, and
+deterministic dataset export metadata.

@@ -4,11 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from efloud.inventory import AbsenceEvidence
 from efloud.reconciliation import PreviousInventoryItem, reconcile_inventory
 from efloud.repository_models import ArtifactKey, SourceId, TreeEntry
 from efloud.transport.rsync_inventory import rsync_change_token, rsync_source_inventory
 
 if TYPE_CHECKING:
+    from efloud.inventory import SourceInventory
     from efloud.json_types import JsonObject
     from efloud.reconciliation import ReconciliationDecision
     from efloud.repository import Repository
@@ -292,6 +294,7 @@ def _entry_result(
 
 def _record_absences(
     context: _ReconciliationContext,
+    inventory: SourceInventory,
     decisions: tuple[ReconciliationDecision, ...],
 ) -> tuple[ObservationId, ...]:
     observations: list[ObservationId] = []
@@ -301,16 +304,17 @@ def _record_absences(
         if decision.previous.metadata.get("kind") != "file":
             continue
         source_path = decision.previous.source_path
+        upstream_locator = f"{context.upstream_root.rstrip('/')}/{source_path}" if source_path is not None else None
         absence = context.repository.record_absence(
             decision.artifact_key,
+            evidence=AbsenceEvidence.from_inventory(
+                inventory,
+                source_path=source_path,
+                locator=upstream_locator,
+                metadata={"transport": "RSYNC"},
+            ),
             run_id=context.run_id,
             operation_id=context.operation_id,
-            source_id=context.source_id,
-            observed_at=context.observed_at,
-            source_path=source_path,
-            upstream_locator=(
-                f"{context.upstream_root.rstrip('/')}/{source_path}" if source_path is not None else None
-            ),
             metadata={"transport": "RSYNC", "inventory_observation": True},
         )
         observations.append(absence.observation_id)
@@ -435,7 +439,7 @@ def reconcile_rsync_inventory(
         local_paths=local_paths,
         decisions_by_id={decision.item_id: decision for decision in reconciliation.decisions},
     )
-    absences = _record_absences(context, reconciliation.decisions)
+    absences = _record_absences(context, source_inventory, reconciliation.decisions)
     observations = (*recorded.observations, *absences)
     snapshot_id = _record_success_snapshot(
         context,

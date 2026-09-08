@@ -309,12 +309,18 @@ class RepositoryQueryService:
     def _dataset(self, dataset_id: str, locator: str | None) -> JsonObject:
         _require_no_locator(locator, "dataset")
         dataset = self.repository.dataset(dataset_id)
+        specifications: JsonArray = []
+        specifications.extend(
+            specification.to_dict() for specification in self.repository.dataset_specifications(dataset.id)
+        )
         return {
             "target_kind": "dataset",
             "dataset_id": str(dataset.id),
+            "specification_id": str(dataset.specification_id),
             "content_identity": dataset.content_identity,
             "created_at": dataset.manifest.created_at,
             "definition": dict(dataset.manifest.definition),
+            "specifications": specifications,
             "metadata": dict(dataset.manifest.metadata),
             "members": [_member_payload(member) for member in dataset.artifacts()],
         }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, BinaryIO, Self, cast
+from typing import TYPE_CHECKING, BinaryIO, Self
 
 from efloud.blob_store import FilesystemBlobStore
 from efloud.datasets import DatasetManifest, ImmutableDataset
@@ -14,6 +14,7 @@ from efloud.repository_models import (
     ContentRef,
     DatasetId,
     ObservationId,
+    OperationId,
     SnapshotId,
     SourceId,
     SourceSnapshot,
@@ -35,7 +36,6 @@ if TYPE_CHECKING:
         RunRecord,
         SourceRecord,
     )
-    from efloud.repository import Repository
     from efloud.repository_models import (
         DatasetSpecification,
         ProvenanceEdge,
@@ -134,11 +134,16 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         return self.metadata.sources()
 
     def run(self, run_id: RunId | str) -> RunRecord | None:
-
         return self.metadata.run(RepositoryRunId(str(run_id)))
 
     def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]:
         return self.metadata.recent_runs(limit=limit)
+
+    def operation(self, operation_id: OperationId | str) -> OperationRecord | None:
+        return self.metadata.operation(OperationId(str(operation_id)))
+
+    def operations_for_run(self, run_id: RunId | str) -> tuple[OperationRecord, ...]:
+        return self.metadata.operations_for_run(RepositoryRunId(str(run_id)))
 
     def operations_for_source(
         self,
@@ -188,6 +193,9 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
     def open_content(self, content_id: ContentId | str) -> BinaryIO:
         return self.blobs.open(ContentId(str(content_id)))
 
+    def contains_content(self, content_id: ContentId | str) -> bool:
+        return self.blobs.contains(ContentId(str(content_id)))
+
     def verify_content(self, content_id: ContentId | str) -> bool:
         return self.blobs.verify(ContentId(str(content_id)))
 
@@ -224,8 +232,7 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         if record is None:
             msg = f"Unknown dataset: {dataset_id}"
             raise KeyError(msg)
-        repository = cast("Repository", self)
-        return ImmutableDataset(repository, DatasetManifest.from_record(record))
+        return ImmutableDataset(self, DatasetManifest.from_record(record))
 
     def dataset_specifications(
         self,

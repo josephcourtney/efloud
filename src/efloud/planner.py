@@ -6,13 +6,15 @@ from typing import TYPE_CHECKING
 from efloud.adapters import AdapterRegistry
 from efloud.derived import RepositoryDerivedTask
 from efloud.fanout import RestBaseFanoutTask
-from efloud.json_types import JsonObject
+from efloud.json_types import JsonArray, JsonObject
 from efloud.planning import PlannedOperation, PlanningDecision, SyncPlan, SyncRequest, make_sync_plan
 from efloud.policy import DefaultSyncPolicy
 from efloud.registry import SourceKind
 from efloud.repository_models import ProducerRef
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from efloud.models import EngineConfig
     from efloud.registry import SourceDefinition
     from efloud.repository import Repository
@@ -20,6 +22,12 @@ if TYPE_CHECKING:
 _HOUSEKEEPING_PRODUCER = ProducerRef("efloud:housekeeping", "1")
 _DELETE_HTTP_CACHES_KEY = "housekeeping:delete-http-caches"
 _PRUNE_ORPHAN_MIRRORS_KEY = "housekeeping:prune-orphan-mirrors"
+
+
+def _json_strings(values: Iterable[str]) -> JsonArray:
+    items: JsonArray = []
+    items.extend(values)
+    return items
 
 
 def _task_version(task: object) -> str:
@@ -125,7 +133,7 @@ def _housekeeping_after_sources(
             dependencies=rsync_dependencies,
             parameters={
                 "action": "prune-orphan-mirrors",
-                "expected_subpaths": expected_subpaths,
+                "expected_subpaths": _json_strings(expected_subpaths),
             },
         ),
     )
@@ -144,19 +152,31 @@ class SyncPlanner:
         selected_source_ids: set[str],
     ) -> tuple[PlanningDecision, PlannedOperation | None]:
         if source.id not in selected_source_ids:
-            return PlanningDecision(source.id, False, "source not requested"), None
+            return PlanningDecision(
+                source_id=source.id,
+                selected=False,
+                reason="source not requested",
+            ), None
         if source.kind is SourceKind.RSYNC and config.skip_rsync:
-            return PlanningDecision(source.id, False, "rsync disabled by configuration"), None
+            return PlanningDecision(
+                source_id=source.id,
+                selected=False,
+                reason="rsync disabled by configuration",
+            ), None
 
         adapter = self.adapters.adapter_for(source)
         if adapter is None:
-            return PlanningDecision(source.id, False, f"no adapter registered for {source.kind.value}"), None
+            return PlanningDecision(
+                source_id=source.id,
+                selected=False,
+                reason=f"no adapter registered for {source.kind.value}",
+            ), None
         collection_task = _collection_task(config, source.id) if source.kind is SourceKind.REST_BASE else None
         if source.kind is SourceKind.REST_BASE and collection_task is None:
             return PlanningDecision(
-                source.id,
-                False,
-                "collection source has no configured RestBaseFanoutTask",
+                source_id=source.id,
+                selected=False,
+                reason="collection source has no configured RestBaseFanoutTask",
                 adapter_id=adapter.descriptor.adapter_id,
                 adapter_version=adapter.descriptor.version,
             ), None
@@ -218,8 +238,8 @@ class SyncPlanner:
                 if snapshot is not None
             ]
             parameters: JsonObject = {
-                "input_source_ids": list(input_source_ids),
-                "input_snapshot_ids": input_snapshot_ids,
+                "input_source_ids": _json_strings(input_source_ids),
+                "input_snapshot_ids": _json_strings(input_snapshot_ids),
             }
             if isinstance(task, RepositoryDerivedTask):
                 parameters["task_parameters"] = task.repository_parameters()

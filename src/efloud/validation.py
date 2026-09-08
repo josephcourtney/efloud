@@ -27,6 +27,7 @@ class ValidatorDescriptor:
     required: bool = True
 
     def __post_init__(self) -> None:
+        """Reject invalid validator identities and empty versions."""
         namespace, separator, name = self.validator_id.partition(":")
         if not namespace or not separator or not name:
             msg = f"Validator identifiers must be namespaced: {self.validator_id!r}"

@@ -19,6 +19,7 @@ from efloud.adapters import (
 from efloud.collection_recording import record_collection_acquisition
 from efloud.engine import Engine
 from efloud.inventory import IntegrityExpectation, InventoryCoverage, InventoryItem, SourceInventory
+from efloud.json_types import JsonObject
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_models import ArtifactKey, ContentId, SourceId
@@ -114,7 +115,9 @@ def test_validation_reuses_content_and_validator_version_evidence(tmp_path: Path
         ]
         payload = RepositoryQueryService(repository).query(f"content:{content.content_id}")
         assert payload["available"] is True
-        assert len(payload["validations"]) == 2
+        serialized_validations = payload["validations"]
+        assert isinstance(serialized_validations, list)
+        assert len(serialized_validations) == 2
 
 
 def test_required_http_integrity_failure_does_not_advance_source(tmp_path: Path) -> None:
@@ -169,8 +172,9 @@ def test_invalid_json_fails_validation_without_mutating_content(tmp_path: Path) 
         assert result.ok is False
         assert engine.repository.latest_observation("source:json") is None
         assert engine.repository.latest_source_snapshot("json") is None
-        assert engine.repository.validation(actual_id, "efloud:json", "1") is not None
-        assert engine.repository.validation(actual_id, "efloud:json", "1").status == "failed"
+        json_validation = engine.repository.validation(actual_id, "efloud:json", "1")
+        assert json_validation is not None
+        assert json_validation.status == "failed"
         with engine.repository.open_content(actual_id) as stream:
             assert stream.read() == payload
 
@@ -213,7 +217,7 @@ def test_collection_item_integrity_failure_is_unresolved_not_observed(tmp_path: 
             ),
         ),
     )
-    payload = {
+    payload: JsonObject = {
         "request": {"response_mode": "json"},
         "inventory": inventory.to_dict(),
         "entries": {

@@ -368,7 +368,7 @@ class SyncExecutor:
         try:
             results = await _execute_operations(context)
         except asyncio.CancelledError:
-            for operation in repository.metadata.operations_for_run(run_id):
+            for operation in repository.operations_for_run(run_id):
                 if operation.status == "running":
                     repository.finish_operation(
                         operation.operation_id,
@@ -378,7 +378,7 @@ class SyncExecutor:
             repository.finish_run(run_id, status="cancelled")
             raise
         except Exception:
-            for operation in repository.metadata.operations_for_run(run_id):
+            for operation in repository.operations_for_run(run_id):
                 if operation.status == "running":
                     repository.finish_operation(
                         operation.operation_id,

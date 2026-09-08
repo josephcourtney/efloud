@@ -57,9 +57,11 @@ class FixtureHttpAdapter:
     descriptor: AdapterDescriptor
     destination: Path
     media_type: str | None = None
+    propagate_expectations: bool = True
 
     async def acquire(self, context: AdapterExecutionContext) -> HttpAcquisition:
         await asyncio.sleep(0)
+        expectations = context.source.expected_integrity if self.propagate_expectations else ()
         return HttpAcquisition(
             source_id=context.source.id,
             status="succeeded",
@@ -67,11 +69,17 @@ class FixtureHttpAdapter:
             observed_at=100.0,
             status_code=200,
             media_type=self.media_type,
-            expected_integrity=context.source.expected_integrity,
+            expected_integrity=expectations,
         )
 
 
-def _adapter(kind: SourceKind, destination: Path, *, media_type: str | None = None) -> FixtureHttpAdapter:
+def _adapter(
+    kind: SourceKind,
+    destination: Path,
+    *,
+    media_type: str | None = None,
+    propagate_expectations: bool = True,
+) -> FixtureHttpAdapter:
     return FixtureHttpAdapter(
         descriptor=AdapterDescriptor(
             adapter_id=f"test:{kind.value.lower()}",
@@ -81,6 +89,7 @@ def _adapter(kind: SourceKind, destination: Path, *, media_type: str | None = No
         ),
         destination=destination,
         media_type=media_type,
+        propagate_expectations=propagate_expectations,
     )
 
 
@@ -132,7 +141,9 @@ def test_required_http_integrity_failure_does_not_advance_source(tmp_path: Path)
         SourceKind.HTTP,
         expected_integrity=(IntegrityExpectation.sha256(wrong_digest),),
     )
-    adapters = AdapterRegistry((_adapter(SourceKind.HTTP, destination),))
+    adapters = AdapterRegistry(
+        (_adapter(SourceKind.HTTP, destination, propagate_expectations=False),)
+    )
 
     with Engine(tmp_path, [source], adapters=adapters) as engine:
         result = asyncio.run(engine.sync())
@@ -151,6 +162,10 @@ def test_required_http_integrity_failure_does_not_advance_source(tmp_path: Path)
         assert statuses["efloud:storage-integrity"] == "passed"
         assert statuses[f"efloud:source-integrity:sha256:{wrong_digest}"] == "failed"
         assert result.execution.operations[0].details["content_id"] == str(actual_id)
+
+        source_record = engine.repository.metadata.source(SourceId("bad"))
+        assert source_record is not None
+        assert source_record.definition["expected_integrity"] == [source.expected_integrity[0].to_dict()]
 
 
 def test_invalid_json_fails_validation_without_mutating_content(tmp_path: Path) -> None:

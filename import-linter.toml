@@ -47,14 +47,21 @@
     "efloud.sync",
   ]
 
-# Read-only consumers must use RepositoryView rather than coupling themselves to
-# the mutable Repository implementation.
+# Dataset consumers depend on narrow semantic reads, never the mutable writer.
 [[tool.importlinter.contracts]]
   name = "datasets do not depend on mutable repository"
   type = "forbidden"
-  source_modules = ["efloud.datasets", "efloud.dataset_selectors", "efloud.dataset_constraints", "efloud.dataset_export", "efloud.materialization"]
+  source_modules = [
+    "efloud.datasets",
+    "efloud.dataset_selectors",
+    "efloud.dataset_constraints",
+    "efloud.dataset_export",
+    "efloud.materialization",
+  ]
   forbidden_modules = ["efloud.repository"]
 
+# The broad alpha RepositoryView remains only until compatibility deletion; new
+# canonical consumers must use repository_capabilities instead.
 [[tool.importlinter.contracts]]
   name = "repository view does not depend on mutable repository"
   type = "forbidden"
@@ -110,4 +117,67 @@
     "efloud.repository_compat",
     "efloud.repository_state",
     "efloud.status",
+  ]
+
+# Canonical acquisition, derivation, validation, typed inspection, datasets, and
+# maintenance are a clean-break island. Alpha configuration/source models,
+# compatibility projections, parser/presentation facades, broad RepositoryView,
+# and the old derived/fanout extension shapes may exist only outside this island
+# until the next deletion milestone removes them entirely.
+[[tool.importlinter.contracts]]
+  name = "canonical execution does not depend on alpha compatibility"
+  type = "forbidden"
+  source_modules = [
+    "efloud.adapters",
+    "efloud.builtin_adapters",
+    "efloud.collection_adapter",
+    "efloud.collection_recording",
+    "efloud.collections",
+    "efloud.dataset_constraints",
+    "efloud.dataset_export",
+    "efloud.dataset_selectors",
+    "efloud.datasets",
+    "efloud.derivation",
+    "efloud.engine",
+    "efloud.executor",
+    "efloud.http_adapter",
+    "efloud.indexing",
+    "efloud.maintenance",
+    "efloud.materialization",
+    "efloud.operation_recording",
+    "efloud.planner",
+    "efloud.planning",
+    "efloud.policy",
+    "efloud.reconciliation",
+    "efloud.repository_capabilities",
+    "efloud.repository_query",
+    "efloud.repository_status",
+    "efloud.rsync_adapter",
+    "efloud.rsync_reconciliation",
+    "efloud.runtime",
+    "efloud.sources",
+    "efloud.transport.rsync_runtime",
+    "efloud.validation",
+  ]
+  forbidden_modules = [
+    "efloud.compat",
+    "efloud.derived",
+    "efloud.fanout",
+    "efloud.health",
+    "efloud.manifest",
+    "efloud.models",
+    "efloud.query",
+    "efloud.registry",
+    "efloud.repository_compat",
+    "efloud.repository_outputs",
+    "efloud.repository_state",
+    "efloud.repository_view",
+    "efloud.resolve",
+    "efloud.source_aliases",
+    "efloud.source_results",
+    "efloud.state",
+    "efloud.status",
+    "efloud.store_inspection",
+    "efloud.summary",
+    "efloud.sync",
   ]

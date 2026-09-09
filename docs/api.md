@@ -1,8 +1,7 @@
 # Target public API contract
 
-This document defines the clean-break public API selected by ADR-0010. The current
-alpha implementation is being migrated to this surface; `STATUS.md` records what is
-implemented today.
+This document defines the implemented clean-break public API selected by ADR-0010.
+`STATUS.md` records the current verification focus and remaining acceptance work.
 
 ## Principles
 

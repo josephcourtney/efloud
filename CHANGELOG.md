@@ -4,6 +4,16 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Changed
+
+- Reject historical and non-empty unversioned repository schemas instead of migrating or partially interpreting them; require canonical terminal statuses and producer metadata.
+- Keep transport staging, HTTP cache, and rate-limit state under the explicitly non-authoritative `.efloud-runtime` operational root.
+
+### Removed
+
+- Remove all maintained alpha backwards-compatibility implementation, including `efloud.compat`, deprecated `sync(cfg)`, `EngineConfig`, merged manifests and mirror-state projections, old source/fanout/derived contracts, query/status/health/summary facades, aliases/adoption, path materialization helpers, TTL cache/index compatibility, and historical schema migrations.
+- Remove compatibility-only tests and architecture exceptions; installed-wheel contracts now require the deleted modules to be absent and unimportable.
+
 ## [0.3.0] - 2026-09-09
 
 ### Added

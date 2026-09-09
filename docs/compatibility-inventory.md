@@ -1,11 +1,11 @@
 # Alpha compatibility removal inventory
 
-ADR-0010 removes backwards compatibility as a requirement. This document is now a
-finite deletion/replacement inventory: every listed alpha compatibility facility
-must either disappear or be replaced by a canonical semantic equivalent. Nothing
-listed here is retained merely because an old Efloud or BVP caller uses it.
+ADR-0010 removed backwards compatibility as a requirement. This document is retained
+as the historical audit inventory used for the clean-break deletion. The maintained
+Efloud runtime no longer contains the alpha compatibility facilities listed below.
 
-The active execution queue is in `TODO.md`.
+**Efloud compatibility deletion completed: 2026-09-09.** Downstream BVP migration is
+tracked separately in `TODO.md` and is not a compatibility requirement for Efloud.
 
 ## Removal and replacement inventory
 
@@ -63,7 +63,7 @@ proves valuable. Such a converter must read the old format explicitly and emit t
 new public interchange/repository inputs; it must not reintroduce historical schema
 code into normal repository opening.
 
-## Finite removal checklist
+## Historical removal checklist
 
 - [ ] Land the target source, repository, engine/result, dataset, error, and time APIs.
 - [ ] Migrate planner/executor/adapters/validators/derived work to the new internal

@@ -34,14 +34,22 @@ if TYPE_CHECKING:
 
 
 class ArtifactReader(Protocol):
-    def latest_state(self, artifact_key: ArtifactKey | str, *, before: float | None = None) -> ArtifactState | None: ...
+    def latest_state(
+        self,
+        artifact_key: ArtifactKey | str,
+        *,
+        before: float | None = None,
+    ) -> ArtifactState | None: ...
 
     def observation(self, observation_id: ObservationId | str) -> ArtifactObservation | None: ...
 
     def observations_for(self, artifact_key: ArtifactKey | str) -> tuple[ArtifactObservation, ...]: ...
 
     def latest_observation(
-        self, artifact_key: ArtifactKey | str, *, before: float | None = None
+        self,
+        artifact_key: ArtifactKey | str,
+        *,
+        before: float | None = None,
     ) -> ArtifactObservation | None: ...
 
     def artifact_keys(self) -> tuple[ArtifactKey, ...]: ...
@@ -69,7 +77,10 @@ class SourceReader(Protocol):
     def latest_source_snapshot(self, source_id: SourceId | str) -> SourceSnapshot | None: ...
 
     def source_snapshots_for(
-        self, source_id: SourceId | str, *, limit: int = 50
+        self,
+        source_id: SourceId | str,
+        *,
+        limit: int = 50,
     ) -> tuple[SourceSnapshot, ...]: ...
 
 
@@ -83,7 +94,10 @@ class RunReader(Protocol):
     def operations_for_run(self, run_id: RunId | str) -> tuple[OperationRecord, ...]: ...
 
     def operations_for_source(
-        self, source_id: SourceId | str, *, limit: int = 50
+        self,
+        source_id: SourceId | str,
+        *,
+        limit: int = 50,
     ) -> tuple[OperationRecord, ...]: ...
 
 
@@ -95,7 +109,10 @@ class ProvenanceReader(Protocol):
 
 class ValidationReader(Protocol):
     def validation(
-        self, content_id: ContentId | str, validator: str, validator_version: str
+        self,
+        content_id: ContentId | str,
+        validator: str,
+        validator_version: str,
     ) -> ValidationResult | None: ...
 
     def validations_for(self, content_id: ContentId | str) -> tuple[ValidationResult, ...]: ...
@@ -104,7 +121,10 @@ class ValidationReader(Protocol):
 class DatasetReader(Protocol):
     def dataset(self, dataset_id: DatasetId | str) -> ImmutableDataset: ...
 
-    def dataset_specifications(self, dataset_id: DatasetId | str) -> tuple[DatasetSpecification, ...]: ...
+    def dataset_specifications(
+        self,
+        dataset_id: DatasetId | str,
+    ) -> tuple[DatasetSpecification, ...]: ...
 
 
 class ExtensionReader(ArtifactReader, ContentReader, SourceReader, ValidationReader, Protocol):
@@ -134,6 +154,10 @@ class QueryRepository(
     root: Path
 
 
+class MaintenanceRepository(DatasetRepository, DatasetReader, Protocol):
+    """Semantic reads used while auditing repository metadata and content."""
+
+
 class ValidationRepository(ContentReader, ValidationReader, Protocol):
     """Content reads plus the sole validation-evidence mutation."""
 
@@ -161,7 +185,13 @@ class RepositoryWriter(
         metadata: JsonObject | None = None,
     ) -> RunId: ...
 
-    def finish_run(self, run_id: RunId, *, status: str, finished_at: float | None = None) -> None: ...
+    def finish_run(
+        self,
+        run_id: RunId,
+        *,
+        status: str,
+        finished_at: float | None = None,
+    ) -> None: ...
 
     def start_operation(
         self,
@@ -280,7 +310,9 @@ class RepositoryWriter(
     ) -> SourceSnapshot: ...
 
     def reusable_derived_content(
-        self, derivation_key: DerivationKey | str, artifact_key: ArtifactKey | str
+        self,
+        derivation_key: DerivationKey | str,
+        artifact_key: ArtifactKey | str,
     ) -> ContentId | None: ...
 
     def record_derived_path(
@@ -298,8 +330,25 @@ class RepositoryWriter(
         materialization_kind: str | None = None,
     ) -> ArtifactObservation: ...
 
+    def record_derived_bytes(
+        self,
+        artifact_key: ArtifactKey | str,
+        data: bytes,
+        *,
+        derivation_key: DerivationKey | str | None,
+        run_id: RunId,
+        operation_id: OperationId,
+        inputs: Iterable[ArtifactObservation],
+        observed_at: float | None = None,
+        media_type: str | None = None,
+        metadata: JsonObject | None = None,
+    ) -> ArtifactObservation: ...
+
     def resolve_dataset(
-        self, definition: DatasetDefinition, *, created_at: float | None = None
+        self,
+        definition: DatasetDefinition,
+        *,
+        created_at: float | None = None,
     ) -> ImmutableDataset: ...
 
 
@@ -309,6 +358,7 @@ __all__ = [
     "DatasetReader",
     "DatasetRepository",
     "ExtensionReader",
+    "MaintenanceRepository",
     "ProvenanceReader",
     "QueryRepository",
     "RepositoryWriter",

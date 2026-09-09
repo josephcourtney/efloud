@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -40,6 +41,11 @@ if TYPE_CHECKING:
     from efloud.repository_models import ArtifactObservation, SourceSnapshot
 
 pytestmark = [pytest.mark.medium, pytest.mark.integration, pytest.mark.regression, pytest.mark.timeout(30)]
+
+
+def _blob_path(root: Path, content_id: object) -> Path:
+    digest = str(content_id).removeprefix("sha256:")
+    return root / "objects" / "sha256" / digest[:2] / digest
 
 
 def _record(
@@ -149,7 +155,13 @@ def test_materialization_is_detached_deterministic_and_read_only(tmp_path: Path,
         plan = materializer.export(manifest, destination, strategy=strategy, dry_run=True)
         assert plan.destination == destination
         assert not destination.exists()
-        materializer.export(manifest, destination, strategy=strategy)
+        try:
+            materializer.export(manifest, destination, strategy=strategy)
+        except OSError as error:
+            unsupported_reflink = {errno.EINVAL, errno.ENOTTY, errno.EOPNOTSUPP, errno.EXDEV}
+            if strategy == "reflink" and error.errno in unsupported_reflink:
+                pytest.skip("test filesystem does not support native reflinks")
+            raise
         assert manifest.verify(destination)
         assert (destination / "dataset-manifest.json").read_bytes() == manifest.to_bytes()
         materializer.export(manifest, tmp_path / "again", strategy=strategy)
@@ -554,7 +566,7 @@ def test_cleanup_removes_unreferenced_metadata_without_blob(tmp_path: Path) -> N
 def test_cleanup_grace_period_boundary_is_inclusive(tmp_path: Path) -> None:
     with Repository(tmp_path) as repository:
         content = repository.store_bytes_content(b"unused")
-        blob = repository.blobs.path_for(content.content_id)
+        blob = _blob_path(tmp_path, content.content_id)
     os.utime(blob, (100.0, 100.0))
     maintenance = RepositoryMaintenance(tmp_path)
     assert maintenance.cleanup(now=109.999, grace_period=10.0) == ()
@@ -567,7 +579,7 @@ def test_cleanup_fails_closed_on_semantic_corruption(tmp_path: Path) -> None:
     with Repository(tmp_path) as repository:
         _record(repository)
         unused = repository.store_bytes_content(b"unused")
-        unused_blob = repository.blobs.path_for(unused.content_id)
+        unused_blob = _blob_path(tmp_path, unused.content_id)
     os.utime(unused_blob, (1.0, 1.0))
     with closing(sqlite3.connect(tmp_path / "metadata.sqlite")) as connection, connection:
         connection.execute("UPDATE tree_entries SET relative_path = 'tampered.txt'")
@@ -581,8 +593,8 @@ def test_cleanup_fails_closed_on_reachable_corrupt_content(tmp_path: Path) -> No
     with Repository(tmp_path) as repository:
         observation, _ = _record(repository)
         unused = repository.store_bytes_content(b"unused")
-        unused_blob = repository.blobs.path_for(unused.content_id)
-        referenced_blob = repository.blobs.path_for(observation.content_id)
+        unused_blob = _blob_path(tmp_path, unused.content_id)
+        referenced_blob = _blob_path(tmp_path, observation.content_id)
     os.utime(unused_blob, (1.0, 1.0))
     referenced_blob.write_bytes(b"corrupt")
     maintenance = RepositoryMaintenance(tmp_path)

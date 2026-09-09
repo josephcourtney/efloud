@@ -1,4 +1,4 @@
-"""Safe, non-mutating filesystem handoff from RepositoryView."""
+"""Safe, non-mutating filesystem handoff from semantic repository reads."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from efloud.dataset_export import MANIFEST_FILENAME, DetachedDatasetManifest, sa
 if TYPE_CHECKING:
     from typing import BinaryIO
 
-    from efloud.repository_view import RepositoryView
+    from efloud.repository_capabilities import DatasetRepository
 
 type ExportStrategy = Literal["auto", "reflink", "copy", "symlink"]
 
@@ -96,7 +96,7 @@ def _flush_tree(root: Path) -> None:
 class DatasetMaterializer:
     """Consume only semantic read operations; publish independent content copies."""
 
-    def __init__(self, repository: RepositoryView) -> None:
+    def __init__(self, repository: DatasetRepository) -> None:
         self.repository = repository
 
     def plan(

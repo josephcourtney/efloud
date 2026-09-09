@@ -75,10 +75,9 @@
       # "PLC1901", # `{expression} != ""` can be simplified to `{expression}` as an empty string is falsey
     ]
     [tool.ruff.lint.extend-per-file-ignores]
-      ## example:
-      # "src/efloud/repository.py"      = [
-      #   "PLC0415", # import should be at the top-level of a file
-      # ]
+      # The public facade deliberately wraps private transitional implementation
+      # objects until TODO 1 migrates those internals onto narrow capabilities.
+      "src/efloud/api.py" = ["SLF001"]
 
 # =================================== test ===================================
 [tool.pytest.ini_options]
@@ -150,7 +149,7 @@
     "performance_regression: Tests comparing runtime metrics to stored baselines.",
     "security: Security-focused tests.",
     "fuzz: Fuzzing-style tests feeding malformed/randomized inputs.",
-    "chaos: Chaos/resilience tests injecting faults or disruptions.",
+    "chaos: Chaos/resilience tests injecting faults/disruptions.",
     "privacy: Privacy-impact tests ensuring correct PII/data handling.",
     "data_quality: Tests of data integrity, freshness, referential integrity, etc.",
     "drift: Model/data drift detection tests (PSI, KS, etc.).",

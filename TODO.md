@@ -2,30 +2,7 @@
 
 Purpose: ephemeral, execution-level tasks for the next development work. Completed items are removed rather than retained as history.
 
-## 1. Remove backwards compatibility completely
-
-Use `docs/compatibility-inventory.md` as the deletion inventory. This is removal, not isolation.
-
-- [ ] Delete the entire `src/efloud/compat/` package.
-- [ ] Delete deprecated `sync.py` and all `sync(cfg)` compatibility behavior.
-- [ ] Delete old merged-manifest models/readers/serializers and compatibility `SyncResult` representations.
-- [ ] Delete `repository_compat`, `repository_outputs`, compatibility output projection, and `repository_state` mirror projection code.
-- [ ] Delete path-oriented `resolve`/compat materialization helpers and old mirror/tree state APIs that have no canonical use.
-- [ ] Delete compatibility presentation modules (`query`, `status`, `health`, `store_inspection`, `source_results`, `summary`) unless a specific capability is rebuilt on the typed API for current use.
-- [ ] Delete source alias migration helpers and old-store `adoption` support.
-- [ ] Delete TTL-backed legacy cache/index types and configuration after deterministic repository-backed indexes are separated.
-- [ ] Delete `sqlite_metadata_v3` and other import aliases retained solely for old callers.
-- [ ] Delete schema-v1/v2 in-place migration SQL, old schema fixtures, and migration tests; retain only clean-schema creation and future migrations introduced after this cutover.
-- [ ] Remove legacy mirror/log/manifest/cache directory fields and output filenames from canonical configuration/layout.
-- [ ] Delete or rewrite compatibility-only tests, fixtures, architecture exceptions, documentation, and examples.
-- [ ] Search the full repository for every legacy symbol/module name and classify each remaining occurrence as historical ADR/changelog text, valid current terminology, or a defect.
-- [ ] Add import and packaging contracts that assert removed modules cannot be imported and package-root exports match the intended API.
-
-Acceptance: the installed package contains no maintained backwards-compatibility implementation and unsupported old repository schemas fail clearly rather than upgrading or partially loading.
-
-## 2. Re-verify durability on the reduced mutation surface
-
-Depends on TODO 1.
+## 1. Re-verify durability on the reduced mutation surface
 
 - [ ] Enumerate every remaining authoritative mutation path and verify writer/maintenance coordination covers repository creation/opening, acquisition, validation staging, metadata commit, dataset freeze, and maintenance.
 - [ ] Review crash boundaries and recovery transitions so recovery cannot invent successful operations or complete snapshots.
@@ -35,9 +12,9 @@ Depends on TODO 1.
 
 Acceptance: destructive maintenance cannot race a supported writer, and recovery/cleanup preserve historical correctness through only the new repository API.
 
-## 3. Close dataset and export acceptance through the new API
+## 2. Close dataset and export acceptance through the new API
 
-Depends on TODO 1-2.
+Depends on TODO 1.
 
 - [ ] Verify `resolve` versus `freeze` side effects and identities through `repo.datasets`.
 - [ ] Verify freeze → export → reopen/verify elsewhere through public interfaces only.
@@ -50,9 +27,9 @@ Depends on TODO 1-2.
 
 Acceptance: generic domain-neutral handoff is reproducible, detached, and independent of compatibility representations.
 
-## 4. Run final repository gates
+## 3. Run final repository gates
 
-Depends on TODO 1-3.
+Depends on TODO 1-2.
 
 - [ ] Run the non-mutating Python 3.14 `just check` gate.
 - [ ] Run the complete suite on every Python minor version declared by `project.requires-python`.
@@ -64,7 +41,7 @@ Depends on TODO 1-3.
 
 Acceptance: all required checks pass against the committed clean-break implementation.
 
-## 5. Migrate and run external BVP acceptance
+## 4. Migrate and run external BVP acceptance
 
 Depends on the finalized clean API and generic acceptance above.
 

@@ -102,21 +102,15 @@ def test_wheel_installs_and_public_api_runs(tmp_path: Path) -> None:
             str(venv_python),
             "-c",
             (
-                "from pathlib import Path; "
-                "from efloud import DatasetDefinition, EngineConfig, Latest, "
-                "SourceDefinition, SourceKind; "
-                "cfg = EngineConfig("
-                "root=Path('repository'), "
-                "sources=[SourceDefinition("
-                "id='example', "
-                "description='Example', "
-                "url='https://example.test/data.json', "
-                "kind=SourceKind.HTTP"
-                ")]"
-                "); "
-                "definition = DatasetDefinition.from_selectors(Latest('source:example')); "
-                "assert cfg.sources[0].id == 'example'; "
-                "assert definition.selections[0].selector.artifact_key == 'source:example'; "
+                "from efloud import DatasetSpec, Engine, HttpSource, Repository, SyncRequest; "
+                "source = HttpSource(id='example', url='https://example.test/data.json'); "
+                "spec = DatasetSpec.latest('source:example'); "
+                "assert source.adapter_id == 'efloud:http'; "
+                "with Repository.create('repository') as repo: "
+                " engine = Engine(repo, [source]); "
+                " plan = engine.plan(SyncRequest(dry_run=True)); "
+                " assert plan.request.dry_run; "
+                "assert spec is not None; "
                 "print('ok')"
             ),
         ],

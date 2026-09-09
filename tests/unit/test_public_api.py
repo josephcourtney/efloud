@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -55,7 +57,7 @@ def test_repository_create_and_read_only_open_are_explicit(tmp_path: Path) -> No
 
 
 def test_dataset_spec_requires_aware_datetimes() -> None:
-    naive = datetime(2026, 9, 9)  # noqa: DTZ001 - deliberately verify rejection of a naive datetime.
+    naive = datetime(2026, 9, 9)  # ruff: ignore[call-datetime-without-tzinfo] - deliberately verify rejection of a naive datetime.
     with pytest.raises(ValueError, match="timezone-aware"):
         DatasetSpec.latest_before("source:example", naive)
 
@@ -122,3 +124,32 @@ def test_unbounded_snapshot_history_uses_none_publicly(tmp_path: Path) -> None:
         assert repository.sources.snapshots("missing", limit=None) == ()
         with pytest.raises(ValueError, match="nonnegative"):
             repository.sources.snapshots("missing", limit=-1)
+
+
+def test_public_repository_reports_writer_contention(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+
+    with Repository.create(root):
+        script = """
+import sys
+from efloud import Repository
+from efloud.errors import RepositoryBusyError
+
+try:
+    with Repository.open(sys.argv[1], mode="rw"):
+        pass
+except RepositoryBusyError:
+    print("busy")
+else:
+    print("available")
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(root)],
+            capture_output=True,
+            text=True,
+        )
+
+        print("stdout:", result.stdout)
+        print("stderr:", result.stderr)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "busy"

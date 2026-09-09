@@ -314,14 +314,16 @@ def test_writer_exclusion_across_processes_and_crash_release(tmp_path: Path) -> 
     script = """
 import sys
 from pathlib import Path
-from efloud import Repository, RepositoryBusyError
+from efloud.repository import Repository
+from efloud.writer_coordination import RepositoryBusyError
+
 try:
     with Repository(Path(sys.argv[1])):
         pass
 except RepositoryBusyError:
-    print('busy')
+    print("busy")
 else:
-    print('available')
+    print("available")
 """
     with Repository(tmp_path):
         result = subprocess.run(
@@ -329,13 +331,26 @@ else:
         )
         assert result.stdout.strip() == "busy"
     crash = """
-import os, sys
+import os
+import sys
 from pathlib import Path
-from efloud import Repository
+from efloud.repository import Repository
+
 repository = Repository(Path(sys.argv[1]))
 run = repository.start_run(started_at=1.0)
-operation = repository.start_operation(run_id=run, kind='fixture', subject='crash', started_at=1.0)
-repository.ingest_bytes('crashed', b'durable', run_id=run, operation_id=operation, observed_at=1.0)
+operation = repository.start_operation(
+    run_id=run,
+    kind="fixture",
+    subject="crash",
+    started_at=1.0,
+)
+repository.ingest_bytes(
+    "crashed",
+    b"durable",
+    run_id=run,
+    operation_id=operation,
+    observed_at=1.0,
+)
 os._exit(0)
 """
     subprocess.run([sys.executable, "-c", crash, str(tmp_path)], check=True)

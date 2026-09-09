@@ -117,14 +117,12 @@ class DatasetSpec:
 
     @classmethod
     def latest_before(cls, artifact_key: str, before: datetime, *, role: str | None = None) -> DatasetSpec:
-        return cls(
-            (
-                DatasetSelection(
-                    LatestBefore(artifact_key, _required_timestamp(before, field_name="before")),
-                    role,
-                ),
-            )
-        )
+        return cls((
+            DatasetSelection(
+                LatestBefore(artifact_key, _required_timestamp(before, field_name="before")),
+                role,
+            ),
+        ))
 
     @classmethod
     def latest_all(cls, *, before: datetime | None = None) -> DatasetSpec:

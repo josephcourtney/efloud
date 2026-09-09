@@ -16,11 +16,20 @@ _MAX_RSYNC_PORT = 65535
 class Source(Protocol):
     """Declarative external data source understood by an Efloud adapter."""
 
-    id: str
-    adapter_id: str
-    description: str
-    role: str | None
-    tags: tuple[str, ...]
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def adapter_id(self) -> str: ...
+
+    @property
+    def description(self) -> str: ...
+
+    @property
+    def role(self) -> str | None: ...
+
+    @property
+    def tags(self) -> tuple[str, ...]: ...
 
 
 def _require_text(value: str, *, field: str) -> None:

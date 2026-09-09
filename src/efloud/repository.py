@@ -51,13 +51,12 @@ _SOURCE_REVISION_KEY = "source_definition_revision_id"
 
 
 def _canonical_terminal_status(status: str, *, operation: bool) -> str:
-    normalized = "failed" if operation and status == "partial" else "succeeded" if status == "success" else status
     allowed = _OPERATION_TERMINAL if operation else _RUN_TERMINAL
-    if normalized not in allowed:
+    if status not in allowed:
         kind = "operation" if operation else "run"
         msg = f"Invalid terminal {kind} status: {status!r}"
         raise ValueError(msg)
-    return normalized
+    return status
 
 
 def _default_producer(kind: str) -> ProducerRef:

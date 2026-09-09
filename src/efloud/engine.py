@@ -78,9 +78,6 @@ class Engine:
     ) -> None:
         """Do not close the caller-owned repository."""
 
-    def close(self) -> None:
-        """Compatibility no-op; repository lifetime is caller-owned."""
-
     def plan(self, request: SyncRequest | None = None) -> SyncPlan:
         return self.planner.plan(
             sources=self.sources,

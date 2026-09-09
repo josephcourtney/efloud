@@ -33,7 +33,7 @@ from efloud.repository_models import (
     TreeId,
     ValidationResult,
 )
-from efloud.schema_migrations import initialize_or_migrate
+from efloud.schema_migrations import initialize_schema
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -44,8 +44,8 @@ if TYPE_CHECKING:
 _SHA256_HEX_LENGTH = 64
 
 
-def _legacy_storage_key_for(content_id: ContentId) -> str:
-    """Derive the historical SQLite locator without consulting any blob backend."""
+def _storage_key_for(content_id: ContentId) -> str:
+    """Derive the canonical SQLite locator without consulting any blob backend."""
     text = str(content_id)
     prefix = "sha256:"
     if not text.startswith(prefix):
@@ -82,28 +82,26 @@ def _load_string_tuple(value: str) -> tuple[str, ...]:
 
 
 def _run_terminal_status(status: str) -> str:
-    normalized = "succeeded" if status == "success" else status
-    if normalized not in _RUN_TERMINAL:
+    if status not in _RUN_TERMINAL:
         msg = f"Invalid terminal run status: {status!r}"
         raise ValueError(msg)
-    return normalized
+    return status
 
 
 def _operation_terminal_status(status: str) -> str:
-    normalized = "failed" if status == "partial" else "succeeded" if status == "success" else status
-    if normalized not in _OPERATION_TERMINAL:
+    if status not in _OPERATION_TERMINAL:
         msg = f"Invalid terminal operation status: {status!r}"
         raise ValueError(msg)
-    return normalized
+    return status
 
 
 def _operation_parameters(parameters: JsonObject) -> JsonObject:
     normalized = dict(parameters)
     raw_producer = json_mapping_or_none(normalized.get("producer"))
     if raw_producer is None:
-        normalized["producer"] = ProducerRef("efloud:legacy", "0").to_dict()
-    else:
-        ProducerRef.from_mapping(raw_producer)
+        msg = "Operation parameters require canonical producer metadata."
+        raise ValueError(msg)
+    ProducerRef.from_mapping(raw_producer)
     return normalized
 
 
@@ -124,7 +122,7 @@ class SQLiteMetadataStore:
                 connection.close()
 
     def _initialize_schema(self) -> None:
-        initialize_or_migrate(self._connection)
+        initialize_schema(self._connection)
 
     def close(self) -> None:
         self._connection.close()
@@ -333,7 +331,7 @@ class SQLiteMetadataStore:
             ).fetchone()
             if existing is not None and (
                 int(existing["byte_size"]) != content.byte_size
-                or existing["storage_key"] != _legacy_storage_key_for(content.content_id)
+                or existing["storage_key"] != _storage_key_for(content.content_id)
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)
@@ -345,7 +343,7 @@ class SQLiteMetadataStore:
                 (
                     str(content.content_id),
                     content.byte_size,
-                    _legacy_storage_key_for(content.content_id),
+                    _storage_key_for(content.content_id),
                     content.media_type,
                 ),
             )
@@ -365,7 +363,7 @@ class SQLiteMetadataStore:
             ).fetchone()
             if existing is not None and (
                 int(existing["byte_size"]) != content.byte_size
-                or existing["storage_key"] != _legacy_storage_key_for(content.content_id)
+                or existing["storage_key"] != _storage_key_for(content.content_id)
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)
@@ -377,7 +375,7 @@ class SQLiteMetadataStore:
                 (
                     str(content.content_id),
                     content.byte_size,
-                    _legacy_storage_key_for(content.content_id),
+                    _storage_key_for(content.content_id),
                     content.media_type,
                 ),
             )

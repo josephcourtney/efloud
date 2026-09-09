@@ -23,7 +23,7 @@ from efloud.repository_models import (
     ValidationResult,
 )
 from efloud.repository_models import RunId as RepositoryRunId
-from efloud.schema_migrations import CURRENT_SCHEMA_VERSION
+from efloud.schema import CURRENT_SCHEMA_VERSION
 from efloud.sqlite_metadata import SQLiteMetadataStore
 
 if TYPE_CHECKING:
@@ -59,9 +59,8 @@ class ReadOnlySQLiteMetadataStore(SQLiteMetadataStore):
         if current != CURRENT_SCHEMA_VERSION:
             self._connection.close()
             msg = (
-                "Read-only repository access requires the current metadata schema "
-                f"version {CURRENT_SCHEMA_VERSION}; found {current}. Open the repository "
-                "writable once to perform supported migrations."
+                f"Unsupported efloud metadata schema version: {current}; "
+                f"expected {CURRENT_SCHEMA_VERSION}. Historical schemas are not migrated in place."
             )
             raise RuntimeError(msg)
 

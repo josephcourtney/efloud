@@ -96,7 +96,7 @@ class RsyncSourceAdapter:
     async def acquire(self, context: AdapterExecutionContext) -> RsyncAcquisition:
         source = _source(context, self.descriptor)
         runtime = context.runtime
-        local_root = runtime.mirrors_root / (source.local_subpath or source.id)
+        local_root = runtime.rsync_root / (source.local_subpath or source.id)
         local_root.mkdir(parents=True, exist_ok=True)
         requested_scope = context.operation.scope
         rsync_paths, synthetic = await prepare_rsync_paths(

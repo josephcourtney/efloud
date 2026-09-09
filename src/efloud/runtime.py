@@ -9,14 +9,10 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class EngineRuntime:
-    """Advanced local runtime settings kept separate from sync intent."""
+    """Advanced local runtime settings for non-authoritative transport state."""
 
     root: Path
-    http_dir: str = "http"
-    cache_dir: str = "cache"
-    mirrors_dir: str = "mirrors"
-    rate_limits_dir: str = "rate_limits"
-    http_cache_dir: str = "http_cache"
+    operational_dir: str = ".efloud-runtime"
     runtime_progress: bool = False
     remove_empty_dirs_after_rsync: bool = True
 
@@ -25,20 +21,28 @@ class EngineRuntime:
         return cls(root=root.resolve())
 
     @property
-    def http_root(self) -> Path:
-        return self.root / self.http_dir
+    def operational_root(self) -> Path:
+        return self.root / self.operational_dir
 
     @property
-    def mirrors_root(self) -> Path:
-        return self.root / self.mirrors_dir
+    def staging_root(self) -> Path:
+        return self.operational_root / "staging"
+
+    @property
+    def http_root(self) -> Path:
+        return self.staging_root / "http"
+
+    @property
+    def rsync_root(self) -> Path:
+        return self.staging_root / "rsync"
 
     @property
     def http_cache_root(self) -> Path:
-        return self.root / self.cache_dir / self.http_cache_dir
+        return self.operational_root / "cache" / "http"
 
     @property
     def rate_limits_root(self) -> Path:
-        return self.root / self.rate_limits_dir
+        return self.operational_root / "rate-limits"
 
 
 __all__ = ["EngineRuntime"]

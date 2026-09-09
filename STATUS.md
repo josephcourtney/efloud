@@ -4,15 +4,18 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Delete all remaining alpha compatibility and historical schema support now that canonical execution uses the clean typed source/repository/request contracts. `docs/compatibility-inventory.md` is a deletion inventory, not a support matrix.
+Re-verify durability and maintenance correctness on the reduced, compatibility-free mutation surface before closing detached export and final release acceptance.
 
 ## Recently completed
 
 - The clean package-root API is implemented: one explicit `Repository` type with `create`/`open` and read/write modes, `Engine`, typed built-in sources, `SyncRequest`/`SyncResult`, `DatasetSpec`/`Dataset`/`DatasetManifest`, and public error categories.
-- Canonical planner, executor, adapters, policy, validation, queries, datasets, and maintenance now operate on typed `Source`, `SyncRequest`, `EngineRuntime`, and narrow repository capabilities rather than `EngineConfig`, `SourceDefinition`/`SourceKind`, merged manifests, or broad `RepositoryView` contexts.
-- Adapter dispatch is keyed by stable namespaced adapter identity; canonical derived tasks use exact inputs and declared outputs; collection execution separates inventory/enumeration from typed item acquisition and generic reconciliation.
-- Canonical derived-index validity is derivation-key based; TTL-backed indexing is compatibility-only.
-- Import contracts prevent canonical execution modules from depending back on alpha config/manifest/task modules.
+- Canonical planner, executor, adapters, policy, validation, datasets, maintenance, derived work, and collection execution operate on typed sources, requests, runtime configuration, exact inputs, declared outputs, and narrow repository capabilities.
+- Backwards compatibility has been removed rather than isolated: `src/efloud/compat/`, deprecated `sync(cfg)`, alpha config/source/manifest/fanout/derived/query/status/state/adoption modules, compatibility projections/materialization helpers, aliases, and TTL index types are deleted.
+- Historical repository schemas are no longer migrated in place. Only the current schema is opened; non-current or non-empty unversioned metadata databases fail explicitly.
+- Old terminal-status aliases and legacy producer fallback metadata are rejected rather than normalized into canonical records.
+- Transport staging, HTTP cache, and rate-limit state live under the non-authoritative `.efloud-runtime` operational root rather than legacy top-level mirror/cache layout fields.
+- Installed-wheel contracts assert removed compatibility modules are absent and unimportable; architecture contracts describe only the surviving canonical modules.
+- Canonical derived-index validity is derivation-key based; repository-backed index tests cover deterministic reuse and parameter-sensitive invalidation.
 - Public temporal selection uses timezone-aware `datetime`; unbounded snapshot history uses `limit=None`; dataset resolve/freeze/export and detached manifest verification remain exposed through the clean facade.
 - README and installed-wheel packaging examples use only the clean API, with an end-to-end regression covering acquire → freeze → export → detached verify → read-only reopen.
 
@@ -25,9 +28,9 @@ Delete all remaining alpha compatibility and historical schema support now that 
 
 ## Remaining gaps
 
-- `src/efloud/compat/`, deprecated `sync(cfg)`, compatibility manifest/state/query/status projection code, adoption/aliases, TTL caches, alpha derived/fanout contracts, and historical schema migrations remain until TODO 1 deletion.
-- Durability, detached export, Linux publication, final quality gates, remote CI, and BVP acceptance must be re-verified on the reduced post-compatibility mutation surface.
+- Durability and maintenance behavior must be re-audited after removal of the compatibility mutation/projection surface.
+- Detached export, Linux publication, final quality gates, remote CI, and BVP acceptance must be re-verified on the compatibility-free runtime.
 
 ## Resume point
 
-Start with TODO 1: execute `docs/compatibility-inventory.md` as a finite deletion plan, then re-run durability and detached-export acceptance against the compatibility-free runtime.
+Start with TODO 1: enumerate the remaining authoritative mutation paths and re-run crash/recovery/cleanup acceptance against only the clean repository API.

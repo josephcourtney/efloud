@@ -125,4 +125,34 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Added
 
-- Add a consolidated package version derived from installed metadata.
+- Add first-class rsync daemon port configuration.
+
+### Changed
+
+- Add rsync connection preflight diagnostics, bounded transient-failure retries, retry countdowns, and active-phase heartbeat output.
+- Record rsync retry metadata and attempt history in manifests and normalized summaries.
+
+### Removed
+
+- Remove obsolete check-command behavior tied to the retired `efloud.app` and `efloud.cli.root` layout.
+
+### Fixed
+
+- Retry transient rsync socket/connect failures before marking mirror operations failed.
+- Make path-scoped rsync diagnostics display the actual remote subtree being synchronized.
+
+## [0.0.1] - 2026-04-01
+
+### Changed
+
+- Add bounded retries for transient rsync transport failures and expose retry/request counts through normalized summaries.
+
+### Fixed
+
+- Avoid treating intermittent rsync daemon connection timeouts as immediate mirror-operation failures.
+
+## [0.0.0] - 2026-02-23
+
+### Added
+
+- Initial release.

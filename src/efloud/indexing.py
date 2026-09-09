@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from efloud.derivation import DependencySemantics, DerivationKey
     from efloud.repository import Repository
     from efloud.repository_models import ArtifactObservation, OperationId, RunId
+    from efloud.repository_view import RepositoryView
 
 
 class CachedIndex(Protocol):
@@ -200,7 +201,7 @@ class DerivedIndexBuilder(Protocol):
     def __call__(
         self,
         *,
-        repository: Repository,
+        repository: RepositoryView,
         inputs: tuple[ArtifactObservation, ...],
     ) -> JsonObject: ...
 
@@ -254,7 +255,7 @@ class DerivedIndexRegistry:
         return tuple(sorted(self._definitions))
 
     @staticmethod
-    def _payload_for_observation(repository: Repository, observation: ArtifactObservation) -> JsonObject:
+    def _payload_for_observation(repository: RepositoryView, observation: ArtifactObservation) -> JsonObject:
         with repository.open_content(observation.content_id) as stream:
             decoded = json.loads(stream.read().decode("utf-8"))
         mapping = json_mapping_or_none(decoded)

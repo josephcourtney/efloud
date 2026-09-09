@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from efloud.models import EngineConfig
     from efloud.planning import PlannedOperation
     from efloud.registry import SourceDefinition, SourceKind
-    from efloud.repository import Repository
+    from efloud.repository_view import RepositoryView
     from efloud.transport.rsync_inventory import RsyncInventory
 
 
@@ -66,7 +66,7 @@ class AdapterExecutionContext:
     """Read/configuration context supplied to one source-adapter operation."""
 
     config: EngineConfig
-    repository: Repository
+    repository: RepositoryView
     source: SourceDefinition
     operation: PlannedOperation
 

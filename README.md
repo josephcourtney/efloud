@@ -128,7 +128,93 @@ with Repository(Path("./repository")) as repository:
 
 Once resolved, later acquisition does not change that dataset's membership.
 
-Dataset resolution is being expanded to include snapshot-backed, source/role/tag, and explicit temporal/coherence policies. A deterministic detached dataset manifest is also planned as the stable handoff format for consumers that should not know about efloud's SQLite schema.
+Snapshot selectors use complete recorded membership. `SourceSelection` filters by source,
+role, tags, artifact-key prefix, and inclusive observation-time bounds. Role/tag
+filters use the source revision recorded with each observation; unknown historical
+revisions fail those filters explicitly. `DatasetConstraints` supports complete
+snapshot evidence, same-run membership, maximum observation skew, and existing
+validator/version evidence. Failed constraints raise `DatasetConstraintError` with
+structured results. Resolution never runs acquisition or validation.
+
+```python
+from pathlib import Path
+from efloud import (
+    DatasetDefinition, DatasetMaterializer, LatestCompleteSourceSnapshot,
+    ReadOnlyRepository, Repository, export_dataset_manifest,
+)
+
+with Repository(Path("repository")) as repository:
+    dataset = repository.resolve_dataset(DatasetDefinition.from_selectors(
+        LatestCompleteSourceSnapshot("example-json")
+    ))
+    dataset_id = dataset.id
+
+with ReadOnlyRepository(Path("repository")) as repository:
+    manifest = export_dataset_manifest(repository.dataset(dataset_id))
+    materializer = DatasetMaterializer(repository)
+    plan = materializer.export(manifest, Path("export"), dry_run=True)
+    materializer.export(manifest, Path("export"))
+    assert manifest.verify(Path("export"))
+```
+
+Exports include `dataset-manifest.json`. The default `auto` strategy tries native
+CoW and falls back to an independent copy; explicit `copy`, `reflink`, and
+`symlink` modes are available. Symlink mode points into a private content directory
+inside the export, so edits cannot affect CAS content. Destinations must be new,
+outside the repository, with an existing parent directory. Unsafe paths, reserved
+manifest paths, case-insensitive collisions, and file/directory conflicts fail
+before publication. Explicit path mappings may be supplied to
+`export_dataset_manifest`; defaults are deterministic artifact-key digests.
+
+`DetachedDatasetManifest.from_bytes` checks the version and manifest digest.
+`import_dataset_manifest(view, manifest)` reopens and verifies exact membership in
+another repository without writing metadata. `manifest.verify(export_root)`
+checks detached bytes without consulting SQLite. Neither operation reacquires
+missing content. A repository transfer must preserve observation metadata as well
+as blobs; matching bytes alone do not recreate observation identity.
+
+## Maintenance and recovery
+
+```python
+from pathlib import Path
+from efloud import RepositoryMaintenance
+
+maintenance = RepositoryMaintenance(Path("repository"))
+report = maintenance.fsck()  # read-only; report.issues and report.reachability
+# Supply explicit observation time and grace policy:
+candidates = maintenance.cleanup(now=2000000000.0, grace_period=86400.0)
+# Apply the same policy after reviewing candidates:
+# maintenance.cleanup(now=2000000000.0, grace_period=86400.0, dry_run=False)
+```
+
+Every writable `Repository` holds an exclusive local OS lease until closed.
+Concurrent writable opens or maintenance raise `RepositoryBusyError`; use
+`ReadOnlyRepository` for concurrent consumers. Always close writers or use a
+context manager. A process crash releases its lease. `recover(finished_at=...,
+dry_run=False)` marks abandoned running operations and runs failed, preserving
+content and snapshots. It is idempotent. Retry interrupted acquisition through a
+fresh `Engine.sync()` run; recovery never replays unknown transport side effects
+or upgrades partial snapshots to complete.
+
+Safe cleanup retains all historical observation, tree, dataset, provenance,
+validation, and materialization content references. It reports a reason for each
+candidate and defaults to a dry run. Historical pruning remains deferred.
+The current writer/maintenance backend targets local POSIX filesystems.
+
+## Public API and compatibility
+
+The stable package API exposes repository reads, datasets, exports, maintenance,
+`Engine`, and deliberate source-adapter/validator contracts. Adapters receive a
+`RepositoryView` and return typed acquisition evidence; authoritative writes belong
+to the executor and repository. See [the API contract](docs/api.md).
+
+Legacy `sync(cfg)` delegates to `Engine` and emits a deprecation warning.
+Compatibility projections are available as `EngineSyncResult.compatibility`.
+Legacy serializers and importers remain explicit compatibility tools, not dataset
+or query dependencies. Storage implementation classes are imported from their
+implementation modules, not the package root. `ContentRef` no longer accepts a
+storage key. Rsync configuration uses `RsyncMode`, `rsync_mode`, and `rsync_paths`;
+`MirrorMode` is confined to `efloud.compat.registry`.
 
 ## Source Support
 

@@ -6,7 +6,7 @@ import pytest
 
 from efloud.models import EngineConfig, NormalizedManifest, SyncResult
 from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
-from efloud.registry import MirrorMode, SourceDefinition, SourceKind
+from efloud.registry import RsyncMode, SourceDefinition, SourceKind
 from efloud.resolve import (
     manifest_entry_for_source,
     manifest_entry_for_source_aliasable,
@@ -42,8 +42,8 @@ def sources():
             "rsync.example.test::module",
             SourceKind.RSYNC,
             local_subpath="group/source",
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("subset",),
+            rsync_mode=RsyncMode.PATHS,
+            rsync_paths=("subset",),
         ),
         SourceDefinition("derived-id", "Derived", "https://api.example.test", SourceKind.REST_BASE),
     ]
@@ -181,14 +181,14 @@ def test_role_driven_sync_policy_overrides_refresh_by_role_and_rest_base(tmp_pat
             "Mirror",
             "rsync.example.test::mirror",
             SourceKind.RSYNC,
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("subset",),
+            rsync_mode=RsyncMode.PATHS,
+            rsync_paths=("subset",),
         ),
     ]
     policy = RoleDrivenSyncPolicy(
         http_role_refresh={"holdings": True, "mappings_exact": False},
         rest_base_refresh=True,
-        rsync_mode=MirrorMode.PATHS,
+        rsync_mode=RsyncMode.PATHS,
     )
     cfg = EngineConfig(root=tmp_path, sources=sources, refresh_http=False, refresh_rsync=True)
 

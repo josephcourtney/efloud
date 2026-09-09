@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.locator import resolve_locator_from_file
 from efloud.query_targets import parse_query_target
-from efloud.repository import Repository
+from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_compat import repository_exists, repository_source_entry
 from efloud.repository_query import RepositoryQueryService
 from efloud.source_aliases import source_by_id_or_alias
@@ -117,7 +117,7 @@ def _derived_index_payload(index_id: str, *, cfg: EngineConfig) -> dict[str, Any
     definition = registry.definition(index_id)
     if definition is None:
         return None
-    with Repository(Path(cfg.root)) as repository:
+    with ReadOnlyRepository(Path(cfg.root)) as repository:
         observation = repository.latest_observation(definition.artifact_key)
         status: dict[str, Any] = {
             "present": observation is not None,
@@ -229,7 +229,7 @@ def _content_payload(content_id: str, *, cfg: EngineConfig) -> dict[str, Any]:
     if not repository_exists(cfg):
         msg = "Repository metadata is not initialized; content validation evidence is unavailable."
         raise ValueError(msg)
-    with Repository(Path(cfg.root)) as repository:
+    with ReadOnlyRepository(Path(cfg.root)) as repository:
         return RepositoryQueryService(repository).query(f"content:{content_id}")
 
 
@@ -296,7 +296,7 @@ def _repository_source_payload(
     cfg: EngineConfig,
 ) -> dict[str, Any]:
     warnings: list[str] = []
-    with Repository(Path(cfg.root)) as repository:
+    with ReadOnlyRepository(Path(cfg.root)) as repository:
         entry = repository_source_entry(repository, source, cfg=cfg)
         local_path = _repository_local_path(entry)
         payload: dict[str, Any] = {

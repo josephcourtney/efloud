@@ -24,7 +24,7 @@ from efloud.repository_models import (
 )
 from efloud.repository_models import RunId as RepositoryRunId
 from efloud.schema_migrations import CURRENT_SCHEMA_VERSION
-from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
+from efloud.sqlite_metadata import SQLiteMetadataStore
 
 if TYPE_CHECKING:
     from pathlib import Path

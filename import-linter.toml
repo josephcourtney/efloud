@@ -10,7 +10,7 @@
 
 # Domain identity and value objects are the lowest semantic layer. They may not
 # acquire orchestration, compatibility, or presentation dependencies.
-[[importlinter.contracts]]
+[[tool.importlinter.contracts]]
   name = "repository models stay below orchestration"
   type = "forbidden"
   source_modules = ["efloud.repository_models"]
@@ -27,7 +27,7 @@
 
 # Storage implementations are infrastructure beneath repository semantics. They
 # must not reach upward into planning/execution or compatibility projections.
-[[importlinter.contracts]]
+[[tool.importlinter.contracts]]
   name = "storage stays below orchestration"
   type = "forbidden"
   source_modules = [
@@ -49,13 +49,13 @@
 
 # Read-only consumers must use RepositoryView rather than coupling themselves to
 # the mutable Repository implementation.
-[[importlinter.contracts]]
+[[tool.importlinter.contracts]]
   name = "datasets do not depend on mutable repository"
   type = "forbidden"
-  source_modules = ["efloud.datasets"]
+  source_modules = ["efloud.datasets", "efloud.dataset_selectors", "efloud.dataset_constraints", "efloud.dataset_export", "efloud.materialization"]
   forbidden_modules = ["efloud.repository"]
 
-[[importlinter.contracts]]
+[[tool.importlinter.contracts]]
   name = "repository view does not depend on mutable repository"
   type = "forbidden"
   source_modules = ["efloud.repository_view"]
@@ -63,7 +63,7 @@
 
 # Planning is deterministic description of work and must remain independent of
 # execution side effects.
-[[importlinter.contracts]]
+[[tool.importlinter.contracts]]
   name = "planning does not depend on execution"
   type = "forbidden"
   source_modules = [
@@ -78,7 +78,7 @@
 
 # Protocol adapters implement acquisition details; they should not import the
 # engine/executor that coordinates them.
-[[importlinter.contracts]]
+[[tool.importlinter.contracts]]
   name = "adapters do not depend on orchestration"
   type = "forbidden"
   source_modules = [
@@ -95,7 +95,7 @@
 
 # Compatibility manifests and mirror projections are outward-facing adapters,
 # never dependencies of the authoritative repository/read model.
-[[importlinter.contracts]]
+[[tool.importlinter.contracts]]
   name = "repository core does not depend on compatibility projections"
   type = "forbidden"
   source_modules = [

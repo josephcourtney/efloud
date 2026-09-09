@@ -15,6 +15,33 @@ Items should be categorized under these headings:
 - **Fixed** - any bug fixes
 - **Security** - in case of vulnerabilities
 
+## [0.1.0] - 2026-09-09
+
+### Added
+- add complete snapshot selectors, historical source filters, observation-time bounds, and dataset coherence constraints
+- add deterministic detached dataset manifests, exact import, and standalone content verification
+- add safe dataset export planning with copy, CoW, private symlink, provenance metadata, collision rejection, and atomic no-replace publication
+- add local POSIX writer leases, repository audit, content reachability, grace-period orphan cleanup, and interrupted-operation status recovery
+- add relocation, frozen membership, incomplete coverage, interrupted commit, export isolation, and concurrent writer tests
+
+### Changed
+- route query/status readers and adapter contexts through read-only repository capabilities
+- isolate engine compatibility output under an explicit compatibility field and rename rsync configuration to protocol terms
+- consolidate SQLite persistence into one canonical implementation while retaining supported schema upgrades
+
+### Deprecated
+- deprecate legacy `sync(cfg)` in favor of canonical `Engine` orchestration
+
+### Removed
+- remove storage placement from the public content reference and implementation-only storage/orchestration exports from the package root
+- remove the unused transient acquisition path and isolate historical import/projection helpers under compatibility code
+
+### Fixed
+- preserve frozen source-snapshot observation bindings after subsequent ingestion
+- flush CAS directory entries before returning durable content and reject corrupted reused blobs
+- enforce all seven import-architecture contracts by correcting their TOML table namespace
+- correct the unresolved collection fixture to require incomplete snapshot coverage
+
 ## Unreleased
 
 ### Added

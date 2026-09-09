@@ -5,19 +5,20 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from efloud.compat.repository_recording import RepositorySyncRecorder
 from efloud.derivation import DerivedTaskSpec, derivation_key_for
 from efloud.indexing import DerivedIndexDefinition, DerivedIndexRegistry
 from efloud.models import EngineConfig, SyncResult
 from efloud.query import index_payload
 from efloud.repository import Repository
 from efloud.repository_models import ProducerRef
-from efloud.repository_recording import RepositorySyncRecorder
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from efloud.json_types import JsonObject
     from efloud.repository_models import ArtifactObservation, RunId
+    from efloud.repository_view import RepositoryView
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -205,7 +206,7 @@ def test_observation_sensitive_derivations_distinguish_identical_bytes(tmp_path:
 def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> None:
     builds: list[str] = []
 
-    def build_index(*, repository: Repository, inputs: tuple[ArtifactObservation, ...]) -> JsonObject:
+    def build_index(*, repository: RepositoryView, inputs: tuple[ArtifactObservation, ...]) -> JsonObject:
         del repository
         builds.append(str(inputs[0].content_id))
         return {"input_content_id": str(inputs[0].content_id)}

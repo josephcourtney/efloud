@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from efloud.compat.repository_derived import import_derived_results
 from efloud.fanout import RestBaseFanoutTask
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
-from efloud.repository_derived import import_derived_results
 from efloud.repository_models import SourceId
 
 if TYPE_CHECKING:

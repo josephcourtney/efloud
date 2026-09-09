@@ -170,8 +170,8 @@ def _rsync_entry(
     entry = _base_source_entry(source, operation_payload)
     if source.local_subpath is not None:
         entry["local"] = str(Path(cfg.root) / cfg.mirrors_dir / source.local_subpath)
-    if source.mirror_mode is not None:
-        entry["mode"] = source.mirror_mode.value
+    if source.rsync_mode is not None:
+        entry["mode"] = source.rsync_mode.value
     _add_rsync_snapshot(entry, snapshot_payload)
     _add_operation(entry, operation_payload)
     return entry

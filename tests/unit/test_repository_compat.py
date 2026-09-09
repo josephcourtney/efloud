@@ -4,7 +4,7 @@ import pytest
 
 from efloud.models import EngineConfig
 from efloud.query import query_target
-from efloud.registry import MirrorMode, SourceDefinition, SourceKind
+from efloud.registry import RsyncMode, SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_models import SourceId, TreeEntry
 from efloud.status import collect_status_payload, source_status_rows_from_repository
@@ -80,7 +80,7 @@ def test_rsync_status_projects_authoritative_snapshot_without_manifest(tmp_path:
         url="rsync://example.invalid/module",
         kind=SourceKind.RSYNC,
         local_subpath="mirror",
-        mirror_mode=MirrorMode.FULL,
+        rsync_mode=RsyncMode.FULL,
     )
     cfg = EngineConfig(root=tmp_path, sources=[source])
     mirror_root = tmp_path / cfg.mirrors_dir / "mirror"

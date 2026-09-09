@@ -1,7 +1,7 @@
 # =================================== project ====================================
 [project]
   name = "efloud"
-  version = "0.0.10"
+  version = "0.1.0"
   description = "Local versioned data ingestion and immutable artifact repositories"
   readme = "README.md"
   authors = [

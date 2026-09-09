@@ -4,6 +4,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, BinaryIO, Protocol
 
+from efloud.dataset_constraints import DatasetConstraintError, DatasetConstraints
+from efloud.dataset_selectors import ExactSourceSnapshot, LatestCompleteSourceSnapshot
 from efloud.metadata_envelopes import dataset_specification_id
 from efloud.metadata_store import DatasetMemberRecord, DatasetRecord
 from efloud.repository_models import (
@@ -113,16 +115,20 @@ class DatasetSelection:
 class DatasetDefinition:
     selections: tuple[DatasetSelection, ...]
     metadata: JsonObject = field(default_factory=dict)
+    constraints: DatasetConstraints = field(default_factory=DatasetConstraints)
 
     @classmethod
     def from_selectors(cls, *selectors: DatasetSelector) -> DatasetDefinition:
         return cls(tuple(DatasetSelection(selector) for selector in selectors))
 
     def to_dict(self) -> JsonObject:
-        return {
+        payload: JsonObject = {
             "selections": [selection.to_dict() for selection in self.selections],
             "metadata": dict(self.metadata),
         }
+        if self.constraints != DatasetConstraints():
+            payload["constraints"] = self.constraints.to_dict()
+        return payload
 
     @property
     def specification_id(self) -> DatasetSpecificationId:
@@ -209,8 +215,14 @@ def resolve_dataset(
     created_at: float | None = None,
 ) -> DatasetManifest:
     resolved: list[tuple[ArtifactObservation, str | None]] = []
+    snapshot_ids: list[str] = []
     for selection in definition.selections:
-        resolved.extend((observation, selection.role) for observation in selection.selector.resolve(repository))
+        selector = selection.selector
+        if isinstance(selector, LatestCompleteSourceSnapshot):
+            selector = ExactSourceSnapshot(str(selector.snapshot(repository).snapshot_id))
+        if isinstance(selector, ExactSourceSnapshot):
+            snapshot_ids.append(str(selector.snapshot_id))
+        resolved.extend((observation, selection.role) for observation in selector.resolve(repository))
 
     resolved.sort(key=lambda item: (str(item[0].artifact_key), item[1] or "", str(item[0].observation_id)))
     seen: set[str] = set()
@@ -230,6 +242,15 @@ def resolve_dataset(
             )
         )
 
+    if not resolved and definition.constraints.complete_snapshots and not snapshot_ids:
+        raise DatasetConstraintError((
+            {
+                "constraint": "complete-snapshot",
+                "passed": False,
+                "reason": "empty selection has no complete snapshot evidence",
+            },
+        ))
+    constraint_results = definition.constraints.check(repository, tuple(item[0] for item in resolved))
     identity_payload = [
         {
             "artifact_key": str(member.artifact_key),
@@ -248,13 +269,21 @@ def resolve_dataset(
     ]
     dataset_id = DatasetId(stable_id("dataset", identity_payload))
     content_identity = stable_id("dataset-content", content_payload)
+    resolution: JsonObject = {}
+    resolution["snapshot_ids"] = [str(item) for item in sorted(set(snapshot_ids))]
+    resolution["constraint_results"] = list(constraint_results)
+    resolution["snapshots"] = [
+        snapshot.to_dict()
+        for snapshot_id in sorted(set(snapshot_ids))
+        if (snapshot := repository.source_snapshot(snapshot_id)) is not None
+    ]
     return DatasetManifest(
         dataset_id=dataset_id,
         content_identity=content_identity,
         created_at=time.time() if created_at is None else created_at,
         definition=definition.to_dict(),
         members=tuple(members),
-        metadata=dict(definition.metadata),
+        metadata={**definition.metadata, "resolution": resolution},
     )
 
 

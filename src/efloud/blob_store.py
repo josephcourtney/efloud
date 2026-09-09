@@ -134,6 +134,18 @@ class FilesystemBlobStore:
             if tmp_path is not None and tmp_path.exists():
                 tmp_path.unlink()
 
+    def _confirm_durable(self, ref: ContentRef) -> None:
+        if not self.verify(ref.content_id):
+            msg = f"Installed content failed integrity verification: {ref.content_id}"
+            raise OSError(msg)
+        destination = self.path_for(ref.content_id)
+        for directory in (destination.parent, destination.parent.parent, self.root):
+            descriptor = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+
     def put_path(self, path: Path, *, media_type: str | None = None) -> ContentRef:
         source = path.resolve(strict=True)
         if not source.is_file():
@@ -144,6 +156,7 @@ class FilesystemBlobStore:
         destination = self.path_for(ref.content_id)
         if not destination.exists():
             self._atomic_copy(source, destination)
+        self._confirm_durable(ref)
         return ref
 
     def put_bytes(self, data: bytes, *, media_type: str | None = None) -> ContentRef:
@@ -152,6 +165,7 @@ class FilesystemBlobStore:
         destination = self.path_for(ref.content_id)
         if not destination.exists():
             self._atomic_write(data, destination)
+        self._confirm_durable(ref)
         return ref
 
     def open(self, content_id: ContentId) -> BinaryIO:

@@ -147,29 +147,29 @@ def _emit_progress(text: str, *, enabled: bool, inline: bool = False, final: boo
         sys.stderr.flush()
 
 
-def _should_prefilter(source: SourceDefinition, mirror_paths: tuple[str, ...] | None) -> bool:
+def _should_prefilter(source: SourceDefinition, rsync_paths: tuple[str, ...] | None) -> bool:
     return (
         source.id == "pdb_mmcif"
-        and mirror_paths is not None
-        and len(mirror_paths) >= _MMCIF_PREFILTER_MIN_PATHS
-        and all(_looks_like_mmcif_bucket_path(path) for path in mirror_paths)
+        and rsync_paths is not None
+        and len(rsync_paths) >= _MMCIF_PREFILTER_MIN_PATHS
+        and all(_looks_like_mmcif_bucket_path(path) for path in rsync_paths)
     )
 
 
 async def prepare_rsync_paths(
     *,
     source: SourceDefinition,
-    mirror_paths: tuple[str, ...] | None,
+    rsync_paths: tuple[str, ...] | None,
     runtime_progress: bool,
 ) -> tuple[tuple[str, ...] | None, JsonObject]:
     """Filter known-missing PDB shards without turning absence into a transport failure."""
-    if not mirror_paths or not _should_prefilter(source, mirror_paths):
-        return mirror_paths, {}
+    if not rsync_paths or not _should_prefilter(source, rsync_paths):
+        return rsync_paths, {}
     existing = await asyncio.to_thread(_discover_mmcif_buckets, source)
     if existing is None:
-        return mirror_paths, {}
-    filtered = tuple(path for path in mirror_paths if path in existing)
-    skipped = tuple(path for path in mirror_paths if path not in existing)
+        return rsync_paths, {}
+    filtered = tuple(path for path in rsync_paths if path in existing)
+    skipped = tuple(path for path in rsync_paths if path not in existing)
     if skipped:
         _emit_progress(
             f"pdb_mmcif: skipping {len(skipped)} missing remote buckets discovered by rsync --list-only",
@@ -236,12 +236,12 @@ async def _run_compact_mmcif(
     *,
     source: SourceDefinition,
     mirror: RsyncMirror,
-    mirror_paths: tuple[str, ...],
+    rsync_paths: tuple[str, ...],
     force: bool,
     synthetic_count: int,
     runtime_progress: bool,
 ) -> dict[str, OpResult]:
-    total = len(mirror_paths) + synthetic_count
+    total = len(rsync_paths) + synthetic_count
     done = synthetic_count
     ok = synthetic_count
     failed = 0
@@ -252,7 +252,7 @@ async def _run_compact_mmcif(
         enabled=runtime_progress,
         inline=True,
     )
-    for relative_path in mirror_paths:
+    for relative_path in rsync_paths:
         shard_results = await mirror.update_paths([relative_path], force=force)
         raw = shard_results.get(relative_path, OpResult(status="failed", detail="missing shard result"))
         result = _normalize_path_result(source, relative_path, raw)
@@ -281,25 +281,25 @@ async def run_rsync_operation(
     *,
     source: SourceDefinition,
     mirror: RsyncMirror,
-    mirror_paths: tuple[str, ...] | None,
+    rsync_paths: tuple[str, ...] | None,
     force: bool,
     synthetic_results: JsonMapping,
     runtime_progress: bool,
 ) -> JsonObject:
     """Execute one rsync source operation and return structured transport evidence."""
-    if mirror_paths:
+    if rsync_paths:
         compact = source.id == "pdb_mmcif" and runtime_progress and not logger.isEnabledFor(logging.DEBUG)
         per_path = (
             await _run_compact_mmcif(
                 source=source,
                 mirror=mirror,
-                mirror_paths=mirror_paths,
+                rsync_paths=rsync_paths,
                 force=force,
                 synthetic_count=len(synthetic_results),
                 runtime_progress=runtime_progress,
             )
             if compact
-            else await mirror.update_paths(list(mirror_paths), force=force)
+            else await mirror.update_paths(list(rsync_paths), force=force)
         )
         results: JsonObject = {}
         for relative_path, raw_result in per_path.items():

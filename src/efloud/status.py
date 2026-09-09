@@ -6,16 +6,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from efloud.json_types import JsonArray, JsonMapping, JsonObject, JsonValue, json_mapping_or_none
+from efloud.read_only_repository import ReadOnlyRepository
 from efloud.registry import SourceDefinition, SourceKind
-from efloud.repository import Repository
 from efloud.repository_compat import repository_exists, repository_source_entry
 from efloud.source_results import manifest_entry_for_source, source_status_hint
 
 if TYPE_CHECKING:
     from efloud.models import EngineConfig, NormalizedManifest
+    from efloud.repository_view import RepositoryView
 
 
-def _repository_health(repository: Repository, cfg: EngineConfig) -> dict[str, Any]:
+def _repository_health(repository: RepositoryView, cfg: EngineConfig) -> dict[str, Any]:
     mirror_timestamps: dict[str, float | None] = {}
     missing_roots: list[str] = []
     rsync_results: dict[str, JsonObject] = {}
@@ -63,7 +64,7 @@ def collect_status_payload(cfg: EngineConfig) -> tuple[dict[str, Any], list[str]
     """
     root = Path(cfg.root)
     if repository_exists(cfg):
-        with Repository(root) as repository:
+        with ReadOnlyRepository(root) as repository:
             payload = {
                 "mirror_root": str(root),
                 "manifest_path": None,
@@ -226,7 +227,7 @@ def _kind_name(kind: object) -> str:
 
 
 def source_status_rows_from_repository(
-    repository: Repository,
+    repository: RepositoryView,
     cfg: EngineConfig,
 ) -> list[OrderedDict[str, Any]]:
     rows: list[OrderedDict[str, Any]] = []

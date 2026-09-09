@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.materialization import http_dest_for_source_url, http_dests_for_source_urls
+from efloud.compat.materialization import http_dest_for_source_url, http_dests_for_source_urls
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -24,8 +24,6 @@ type RunStatus = Literal["running", "succeeded", "partial", "failed", "cancelled
 type OperationStatus = Literal["running", "succeeded", "failed", "cancelled"]
 type ValidationStatus = Literal["passed", "failed", "error"]
 
-_SHA256_HEX_LENGTH = 64
-
 
 @dataclass(frozen=True, slots=True)
 class SourceDefinitionRevision:
@@ -94,49 +92,16 @@ def stable_id(prefix: str, value: object) -> str:
     return f"{prefix}:{digest}"
 
 
-def _legacy_storage_key_for(content_id: ContentId) -> str:
-    """Derive the historical SQLite locator without consulting any blob backend."""
-    text = str(content_id)
-    prefix = "sha256:"
-    if not text.startswith(prefix):
-        return text
-    digest = text.removeprefix(prefix)
-    if len(digest) != _SHA256_HEX_LENGTH or any(ch not in "0123456789abcdef" for ch in digest):
-        return text
-    return f"sha256/{digest[:2]}/{digest}"
-
-
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class ContentRef:
-    """Semantic description of immutable content, independent of physical storage."""
+    """Semantic immutable content description, independent of storage placement."""
 
     content_id: ContentId
     byte_size: int
     media_type: str | None = None
 
-    def __init__(
-        self,
-        content_id: ContentId,
-        byte_size: int,
-        storage_key: str | None = None,
-        media_type: str | None = None,
-    ) -> None:
-        """Build a semantic content reference while accepting obsolete storage metadata."""
-        del storage_key
-        object.__setattr__(self, "content_id", content_id)
-        object.__setattr__(self, "byte_size", byte_size)
-        object.__setattr__(self, "media_type", media_type)
-
-    @property
-    def storage_key(self) -> str:
-        """Historical SQLite compatibility value derived from content identity."""
-        return _legacy_storage_key_for(self.content_id)
-
     def to_dict(self) -> JsonObject:
-        payload: JsonObject = {
-            "content_id": str(self.content_id),
-            "byte_size": self.byte_size,
-        }
+        payload: JsonObject = {"content_id": str(self.content_id), "byte_size": self.byte_size}
         if self.media_type is not None:
             payload["media_type"] = self.media_type
         return payload

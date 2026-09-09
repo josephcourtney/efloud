@@ -31,7 +31,8 @@ from efloud.repository_models import (
     run_id_for,
     stable_id,
 )
-from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
+from efloud.sqlite_metadata import SQLiteMetadataStore
+from efloud.writer_coordination import WriterLease
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -74,8 +75,13 @@ class Repository:
     ) -> None:
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        self.metadata = metadata_store or SQLiteMetadataStore(self.root / "metadata.sqlite")
-        self.blobs = blob_store or FilesystemBlobStore(self.root / "objects")
+        self._writer_lease = WriterLease(self.root)
+        try:
+            self.metadata = metadata_store or SQLiteMetadataStore(self.root / "metadata.sqlite")
+            self.blobs = blob_store or FilesystemBlobStore(self.root / "objects")
+        except BaseException:
+            self._writer_lease.close()
+            raise
 
     def __enter__(self) -> Self:
         """Return this repository for context-manager use."""
@@ -91,7 +97,10 @@ class Repository:
         self.close()
 
     def close(self) -> None:
-        self.metadata.close()
+        try:
+            self.metadata.close()
+        finally:
+            self._writer_lease.close()
 
     def source(self, source_id: SourceId | str) -> SourceRecord | None:
         return self.metadata.source(SourceId(str(source_id)))
@@ -123,6 +132,7 @@ class Repository:
         return self.metadata.materializations_for(ContentId(str(content_id)))
 
     def register_source(self, source_id: SourceId | str, definition: JsonObject) -> SourceId:
+        self._writer_lease.require_active()
         normalized = SourceId(str(source_id))
         existing = self.metadata.source(normalized)
         payload = source_definition_history_payload(
@@ -153,6 +163,7 @@ class Repository:
         started_at: float | None = None,
         metadata: JsonObject | None = None,
     ) -> RunId:
+        self._writer_lease.require_active()
         started = time.time() if started_at is None else started_at
         normalized_source_ids = tuple(sorted(str(source_id) for source_id in source_ids))
         run_id = run_id_for(
@@ -164,6 +175,7 @@ class Repository:
         return run_id
 
     def finish_run(self, run_id: RunId, *, status: str, finished_at: float | None = None) -> None:
+        self._writer_lease.require_active()
         run = self.metadata.run(run_id)
         if run is None:
             msg = f"Unknown run: {run_id}"
@@ -194,6 +206,7 @@ class Repository:
         parameters: JsonObject | None = None,
         producer: ProducerRef | None = None,
     ) -> OperationId:
+        self._writer_lease.require_active()
         run = self.metadata.run(run_id)
         if run is None:
             msg = f"Unknown run: {run_id}"
@@ -226,6 +239,7 @@ class Repository:
         finished_at: float | None = None,
         details: JsonObject | None = None,
     ) -> None:
+        self._writer_lease.require_active()
         operation = self.operation(operation_id)
         if operation is None:
             msg = f"Unknown operation: {operation_id}"
@@ -248,12 +262,10 @@ class Repository:
 
     def store_path_content(self, path: Path, *, media_type: str | None = None) -> ContentRef:
         """Store immutable file bytes without advancing any logical artifact or source."""
+        self._writer_lease.require_active()
         content = self.blobs.put_path(path, media_type=media_type)
         self.metadata.record_content(content)
         return content
-
-    def content(self, content_id: ContentId | str) -> ContentRef | None:
-        return self.metadata.content(ContentId(str(content_id)))
 
     def ingest_bytes(
         self,
@@ -272,6 +284,7 @@ class Repository:
         metadata: JsonObject | None = None,
         inputs: Iterable[ObservationId] = (),
     ) -> ArtifactObservation:
+        self._writer_lease.require_active()
         content = self.blobs.put_bytes(data, media_type=media_type)
         return self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
@@ -307,6 +320,7 @@ class Repository:
         inputs: Iterable[ObservationId] = (),
         materialization_kind: str | None = None,
     ) -> ArtifactObservation:
+        self._writer_lease.require_active()
         content = self.blobs.put_path(path, media_type=media_type)
         observation = self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
@@ -350,6 +364,7 @@ class Repository:
         materialization_kind: str | None = None,
         materialization_path: Path | None = None,
     ) -> ArtifactObservation:
+        self._writer_lease.require_active()
         normalized_content_id = ContentId(str(content_id))
         content = self.metadata.content(normalized_content_id)
         if content is None:
@@ -409,6 +424,7 @@ class Repository:
         materialization_kind: str | None = None,
     ) -> ArtifactObservation:
         """Record a derived file, reusing deterministic output content when possible."""
+        self._writer_lease.require_active()
         input_observations = tuple(inputs)
         input_ids = tuple(observation.observation_id for observation in input_observations)
         payload: JsonObject = {**(metadata or {}), "derived_artifact": True}
@@ -453,6 +469,7 @@ class Repository:
         metadata: JsonObject | None = None,
     ) -> ArtifactObservation:
         """Record derived bytes with deterministic content reuse and fresh provenance."""
+        self._writer_lease.require_active()
         input_observations = tuple(inputs)
         input_ids = tuple(observation.observation_id for observation in input_observations)
         payload: JsonObject = {**(metadata or {}), "derived_artifact": True}
@@ -552,6 +569,7 @@ class Repository:
         metadata: JsonObject | None = None,
     ) -> ArtifactAbsence:
         """Record authoritative absence established by explicit source evidence."""
+        self._writer_lease.require_active()
         resolved_path = source_path if source_path is not None else evidence.source_path
         resolved_locator = upstream_locator if upstream_locator is not None else evidence.locator
         if evidence.source_path is not None and resolved_path != evidence.source_path:
@@ -606,6 +624,9 @@ class Repository:
     ) -> ArtifactObservation | None:
         return self.metadata.latest_observation(ArtifactKey(str(artifact_key)), before=before)
 
+    def content(self, content_id: ContentId | str) -> ContentRef | None:
+        return self.metadata.content(ContentId(str(content_id)))
+
     def artifact_keys(self) -> tuple[ArtifactKey, ...]:
         return self.metadata.artifact_keys()
 
@@ -619,6 +640,7 @@ class Repository:
         return self.blobs.verify(ContentId(str(content_id)))
 
     def record_validation(self, result: ValidationResult) -> None:
+        self._writer_lease.require_active()
         self.metadata.record_validation(result)
 
     def validation(
@@ -643,6 +665,7 @@ class Repository:
         observed_at: float | None = None,
         evidence: JsonObject | None = None,
     ) -> SourceSnapshot:
+        self._writer_lease.require_active()
         ordered = tuple(sorted(entries, key=lambda entry: entry.relative_path))
         tree_id = TreeId(stable_id("tree", [entry.identity_payload() for entry in ordered]))
         observed = time.time() if observed_at is None else observed_at
@@ -650,6 +673,14 @@ class Repository:
         normalized_source_id = SourceId(str(source_id))
         normalized_scope = tuple(sorted(scope))
         evidence_payload = self._source_evidence(evidence or {}, normalized_source_id)
+        evidence_payload["observation_ids"] = [
+            str(observation.observation_id)
+            for key in self.artifact_keys()
+            for observation in self.observations_for(key)
+            if observation.source_id == normalized_source_id
+            and observation.run_id == run_id
+            and observation.observed_at <= observed
+        ]
         snapshot_id = SnapshotId(
             stable_id(
                 "snapshot",
@@ -687,10 +718,19 @@ class Repository:
         observed_at: float | None = None,
         evidence: JsonObject | None = None,
     ) -> SourceSnapshot:
+        self._writer_lease.require_active()
         observed = time.time() if observed_at is None else observed_at
         normalized_source_id = SourceId(str(source_id))
         normalized_scope = tuple(sorted(scope))
         evidence_payload = self._source_evidence(evidence or {}, normalized_source_id)
+        evidence_payload["observation_ids"] = [
+            str(observation.observation_id)
+            for key in self.artifact_keys()
+            for observation in self.observations_for(key)
+            if observation.source_id == normalized_source_id
+            and observation.run_id == run_id
+            and observation.observed_at <= observed
+        ]
         snapshot_id = SnapshotId(
             stable_id(
                 "snapshot",
@@ -739,6 +779,7 @@ class Repository:
         *,
         created_at: float | None = None,
     ) -> ImmutableDataset:
+        self._writer_lease.require_active()
         manifest = resolve_dataset(self, definition, created_at=created_at)
         record = manifest.to_record()
         existing = self.metadata.dataset(manifest.dataset_id)

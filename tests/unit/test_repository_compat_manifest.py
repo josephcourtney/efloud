@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from efloud.compat.repository_derived import import_derived_results
 from efloud.json_types import json_mapping_or_none
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_compat import repository_manifest
-from efloud.repository_derived import import_derived_results
 from efloud.repository_models import SourceId
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]

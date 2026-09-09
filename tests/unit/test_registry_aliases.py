@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from efloud.registry import (
-    MirrorMode,
+    RsyncMode,
     SourceDefinition,
     SourceKind,
     iter_upstream_sources,
@@ -26,8 +26,8 @@ def sources():
             "rsync.example.test::module",
             SourceKind.RSYNC,
             local_subpath="mirrors/one",
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("a/b",),
+            rsync_mode=RsyncMode.PATHS,
+            rsync_paths=("a/b",),
         ),
         SourceDefinition("rest-base", "REST Base", "https://api.example.test", SourceKind.REST_BASE),
     ]

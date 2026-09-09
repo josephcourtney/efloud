@@ -33,6 +33,7 @@ from efloud.repository_models import (
     TreeId,
     ValidationResult,
 )
+from efloud.schema_migrations import initialize_or_migrate
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -40,149 +41,23 @@ if TYPE_CHECKING:
 
     from efloud.json_types import JsonObject
 
-_SCHEMA_VERSION = 2
+_SHA256_HEX_LENGTH = 64
+
+
+def _legacy_storage_key_for(content_id: ContentId) -> str:
+    """Derive the historical SQLite locator without consulting any blob backend."""
+    text = str(content_id)
+    prefix = "sha256:"
+    if not text.startswith(prefix):
+        return text
+    digest = text.removeprefix(prefix)
+    if len(digest) != _SHA256_HEX_LENGTH or any(ch not in "0123456789abcdef" for ch in digest):
+        return text
+    return f"sha256/{digest[:2]}/{digest}"
+
+
 _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
 _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS sources (
-    source_id TEXT PRIMARY KEY,
-    definition_json TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS runs (
-    run_id TEXT PRIMARY KEY,
-    started_at REAL NOT NULL,
-    finished_at REAL,
-    status TEXT NOT NULL,
-    metadata_json TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS operations (
-    operation_id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES runs(run_id),
-    source_id TEXT REFERENCES sources(source_id),
-    kind TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    started_at REAL NOT NULL,
-    finished_at REAL,
-    status TEXT NOT NULL,
-    parameters_json TEXT NOT NULL,
-    details_json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS operations_run_time
-    ON operations(run_id, started_at, operation_id);
-CREATE INDEX IF NOT EXISTS operations_source_time
-    ON operations(source_id, started_at DESC, operation_id DESC);
-CREATE TABLE IF NOT EXISTS logical_artifacts (
-    artifact_key TEXT PRIMARY KEY
-);
-CREATE TABLE IF NOT EXISTS content_objects (
-    content_id TEXT PRIMARY KEY,
-    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
-    storage_key TEXT NOT NULL,
-    media_type TEXT
-);
-CREATE TABLE IF NOT EXISTS observations (
-    observation_id TEXT PRIMARY KEY,
-    artifact_key TEXT NOT NULL REFERENCES logical_artifacts(artifact_key),
-    content_id TEXT NOT NULL REFERENCES content_objects(content_id),
-    source_id TEXT REFERENCES sources(source_id),
-    run_id TEXT NOT NULL REFERENCES runs(run_id),
-    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
-    observed_at REAL NOT NULL,
-    source_path TEXT,
-    upstream_locator TEXT,
-    upstream_modified_at REAL,
-    upstream_version TEXT,
-    media_type TEXT,
-    metadata_json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS observations_artifact_time
-    ON observations(artifact_key, observed_at DESC, observation_id DESC);
-CREATE INDEX IF NOT EXISTS observations_source_time
-    ON observations(source_id, observed_at DESC, observation_id DESC);
-CREATE TABLE IF NOT EXISTS artifact_absences (
-    observation_id TEXT PRIMARY KEY,
-    artifact_key TEXT NOT NULL REFERENCES logical_artifacts(artifact_key),
-    source_id TEXT REFERENCES sources(source_id),
-    run_id TEXT NOT NULL REFERENCES runs(run_id),
-    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
-    observed_at REAL NOT NULL,
-    source_path TEXT,
-    upstream_locator TEXT,
-    metadata_json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS artifact_absences_artifact_time
-    ON artifact_absences(artifact_key, observed_at DESC, observation_id DESC);
-CREATE INDEX IF NOT EXISTS artifact_absences_source_time
-    ON artifact_absences(source_id, observed_at DESC, observation_id DESC);
-CREATE TABLE IF NOT EXISTS provenance_edges (
-    output_observation_id TEXT NOT NULL REFERENCES observations(observation_id),
-    input_observation_id TEXT NOT NULL REFERENCES observations(observation_id),
-    relationship TEXT NOT NULL,
-    PRIMARY KEY (output_observation_id, input_observation_id, relationship)
-);
-CREATE TABLE IF NOT EXISTS validations (
-    content_id TEXT NOT NULL REFERENCES content_objects(content_id),
-    validator TEXT NOT NULL,
-    validator_version TEXT NOT NULL,
-    checked_at REAL NOT NULL,
-    status TEXT NOT NULL,
-    details_json TEXT NOT NULL,
-    PRIMARY KEY (content_id, validator, validator_version, checked_at)
-);
-CREATE INDEX IF NOT EXISTS validations_content_validator
-    ON validations(content_id, validator, validator_version, checked_at DESC);
-CREATE TABLE IF NOT EXISTS materializations (
-    content_id TEXT NOT NULL REFERENCES content_objects(content_id),
-    kind TEXT NOT NULL,
-    path TEXT NOT NULL,
-    metadata_json TEXT NOT NULL,
-    PRIMARY KEY (content_id, kind, path)
-);
-CREATE TABLE IF NOT EXISTS tree_snapshots (
-    tree_id TEXT PRIMARY KEY,
-    created_at REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS tree_entries (
-    tree_id TEXT NOT NULL REFERENCES tree_snapshots(tree_id) ON DELETE CASCADE,
-    relative_path TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    content_id TEXT REFERENCES content_objects(content_id),
-    byte_size INTEGER,
-    target TEXT,
-    metadata_json TEXT NOT NULL,
-    PRIMARY KEY (tree_id, relative_path)
-);
-CREATE TABLE IF NOT EXISTS source_snapshots (
-    snapshot_id TEXT PRIMARY KEY,
-    source_id TEXT NOT NULL REFERENCES sources(source_id),
-    run_id TEXT NOT NULL REFERENCES runs(run_id),
-    observed_at REAL NOT NULL,
-    complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
-    tree_id TEXT REFERENCES tree_snapshots(tree_id),
-    scope_json TEXT NOT NULL,
-    evidence_json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS source_snapshots_source_time
-    ON source_snapshots(source_id, observed_at DESC, snapshot_id DESC);
-CREATE TABLE IF NOT EXISTS datasets (
-    dataset_id TEXT PRIMARY KEY,
-    content_identity TEXT NOT NULL,
-    created_at REAL NOT NULL,
-    definition_json TEXT NOT NULL,
-    metadata_json TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS dataset_members (
-    dataset_id TEXT NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,
-    artifact_key TEXT NOT NULL REFERENCES logical_artifacts(artifact_key),
-    observation_id TEXT NOT NULL REFERENCES observations(observation_id),
-    role TEXT,
-    ordinal INTEGER NOT NULL,
-    PRIMARY KEY (dataset_id, artifact_key)
-);
-CREATE INDEX IF NOT EXISTS dataset_members_observation
-    ON dataset_members(observation_id);
-"""
 
 
 def _dump(value: JsonObject | list[str]) -> str:
@@ -249,13 +124,7 @@ class SQLiteMetadataStore:
                 connection.close()
 
     def _initialize_schema(self) -> None:
-        current = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
-        if current not in {0, 1, _SCHEMA_VERSION}:
-            msg = f"Unsupported efloud metadata schema version: {current}"
-            raise RuntimeError(msg)
-        with self._connection:
-            self._connection.executescript(_SCHEMA)
-            self._connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+        initialize_or_migrate(self._connection)
 
     def close(self) -> None:
         self._connection.close()
@@ -463,7 +332,8 @@ class SQLiteMetadataStore:
                 (str(content.content_id),),
             ).fetchone()
             if existing is not None and (
-                int(existing["byte_size"]) != content.byte_size or existing["storage_key"] != content.storage_key
+                int(existing["byte_size"]) != content.byte_size
+                or existing["storage_key"] != _legacy_storage_key_for(content.content_id)
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)
@@ -472,7 +342,12 @@ class SQLiteMetadataStore:
                 INSERT OR IGNORE INTO content_objects(content_id, byte_size, storage_key, media_type)
                 VALUES (?, ?, ?, ?)
                 """,
-                (str(content.content_id), content.byte_size, content.storage_key, content.media_type),
+                (
+                    str(content.content_id),
+                    content.byte_size,
+                    _legacy_storage_key_for(content.content_id),
+                    content.media_type,
+                ),
             )
 
     def record_observation_bundle(
@@ -489,7 +364,8 @@ class SQLiteMetadataStore:
                 (str(content.content_id),),
             ).fetchone()
             if existing is not None and (
-                int(existing["byte_size"]) != content.byte_size or existing["storage_key"] != content.storage_key
+                int(existing["byte_size"]) != content.byte_size
+                or existing["storage_key"] != _legacy_storage_key_for(content.content_id)
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)
@@ -498,7 +374,12 @@ class SQLiteMetadataStore:
                 INSERT OR IGNORE INTO content_objects(content_id, byte_size, storage_key, media_type)
                 VALUES (?, ?, ?, ?)
                 """,
-                (str(content.content_id), content.byte_size, content.storage_key, content.media_type),
+                (
+                    str(content.content_id),
+                    content.byte_size,
+                    _legacy_storage_key_for(content.content_id),
+                    content.media_type,
+                ),
             )
             self._connection.execute(
                 "INSERT OR IGNORE INTO logical_artifacts(artifact_key) VALUES (?)",
@@ -819,7 +700,6 @@ class SQLiteMetadataStore:
         return ContentRef(
             content_id=ContentId(row["content_id"]),
             byte_size=int(row["byte_size"]),
-            storage_key=row["storage_key"],
             media_type=row["media_type"],
         )
 
@@ -948,11 +828,32 @@ class SQLiteMetadataStore:
             ORDER BY observed_at DESC, snapshot_id DESC
             LIMIT ?
             """,
-            (str(source_id), max(0, limit)),
+            (str(source_id), limit),
         ).fetchall()
         return tuple(self._source_snapshot_from_row(row) for row in rows)
 
     def record_dataset(self, record: DatasetRecord) -> None:
+        existing = self.dataset(record.dataset_id)
+        if existing is not None:
+            if existing.content_identity != record.content_identity or existing.members != record.members:
+                msg = f"Conflicting dataset membership for {record.dataset_id}"
+                raise ValueError(msg)
+            merged = record.with_specifications(existing.specifications)
+            with self._connection:
+                self._connection.execute(
+                    """
+                    UPDATE datasets
+                    SET definition_json = ?, metadata_json = ?
+                    WHERE dataset_id = ?
+                    """,
+                    (
+                        _dump(merged.storage_definition()),
+                        _dump(merged.metadata),
+                        str(record.dataset_id),
+                    ),
+                )
+            return
+
         with self._connection:
             self._connection.execute(
                 """
@@ -964,7 +865,7 @@ class SQLiteMetadataStore:
                     str(record.dataset_id),
                     record.content_identity,
                     record.created_at,
-                    _dump(record.definition),
+                    _dump(record.storage_definition()),
                     _dump(record.metadata),
                 ),
             )
@@ -1019,6 +920,18 @@ class SQLiteMetadataStore:
                 for member in member_rows
             ),
         )
+
+    @property
+    def schema_version(self) -> int:
+        """Current persisted metadata schema version."""
+        return int(self._connection.execute("PRAGMA user_version").fetchone()[0])
+
+    def operation(self, operation_id: OperationId) -> OperationRecord | None:
+        row = self._connection.execute(
+            "SELECT * FROM operations WHERE operation_id = ?",
+            (str(operation_id),),
+        ).fetchone()
+        return None if row is None else self._operation_from_row(row)
 
 
 __all__ = ["SQLiteMetadataStore"]

@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from efloud.compat.repository_derived import import_derived_results
 from efloud.fanout import RestBaseFanoutTask
 from efloud.json_types import json_mapping_or_none
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
-from efloud.repository_derived import import_derived_results
 from efloud.repository_models import ArtifactAbsence, ArtifactObservation, SourceId
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
@@ -347,7 +347,7 @@ def test_enumerated_item_without_retrieval_result_is_unresolved_not_absent(tmp_p
         assert repository.latest_state("source:collection:item:beta") is None
         snapshot = repository.latest_source_snapshot("collection")
         assert snapshot is not None
-        assert snapshot.complete is True
+        assert snapshot.complete is False
         assert snapshot.evidence["enumerated_item_count"] == 2
         assert snapshot.evidence["unresolved_item_count"] == 1
         assert snapshot.evidence["removed_item_count"] == 0

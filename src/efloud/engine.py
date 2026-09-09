@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
 from efloud.builtin_adapters import builtin_adapter_registry
+from efloud.compat.outputs import CompatibilityOutputs
 from efloud.executor import SyncExecutionResult, SyncExecutor
-from efloud.models import EngineConfig, NormalizedManifest, SyncResult
+from efloud.models import EngineConfig, SyncResult
 from efloud.planner import SyncPlanner
 from efloud.repository import Repository
 from efloud.repository_compat import repository_manifest
@@ -27,37 +28,19 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class EngineSyncResult:
-    sync_result: SyncResult
+    """Canonical operation result with optional compatibility projections isolated."""
+
+    root: Path
     plan: SyncPlan
     execution: SyncExecutionResult
     repository_run_id: RunId | None
     observations: tuple[ObservationId, ...]
     skipped_source_ids: tuple[str, ...]
-    repository_manifest: NormalizedManifest | None = None
-    repository_manifest_path: Path | None = None
-    repository_mirror_state: MirrorState | None = None
-    repository_mirror_state_path: Path | None = None
+    compatibility: CompatibilityOutputs
 
     @property
     def ok(self) -> bool:
-        return self.sync_result.ok
-
-    @property
-    def root(self) -> Path:
-        return self.sync_result.root
-
-    @property
-    def manifest(self) -> NormalizedManifest:
-        return self.repository_manifest or self.sync_result.manifest
-
-    @property
-    def manifest_path(self) -> Path | None:
-        return self.repository_manifest_path or self.sync_result.manifest_path
-
-    @property
-    def legacy_manifest(self) -> NormalizedManifest:
-        """Compatibility manifest projection of authoritative repository state."""
-        return self.sync_result.manifest
+        return self.execution.ok
 
 
 class Engine:
@@ -155,16 +138,19 @@ class Engine:
             manifest=current_manifest,
         )
         return EngineSyncResult(
-            sync_result=sync_result,
+            root=self.config.root,
             plan=plan,
             execution=execution,
             repository_run_id=execution.run_id,
             observations=execution.observations,
             skipped_source_ids=self._skipped_source_ids(plan, execution),
-            repository_manifest=current_manifest,
-            repository_manifest_path=manifest_path,
-            repository_mirror_state=mirror_state,
-            repository_mirror_state_path=mirror_state_path,
+            compatibility=CompatibilityOutputs(
+                sync_result=sync_result,
+                repository_manifest=current_manifest,
+                repository_manifest_path=manifest_path,
+                repository_mirror_state=mirror_state,
+                repository_mirror_state_path=mirror_state_path,
+            ),
         )
 
 

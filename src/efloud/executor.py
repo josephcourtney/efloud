@@ -87,10 +87,10 @@ def _source_definition_payload(source: SourceDefinition) -> JsonObject:
         payload["cache_name"] = source.cache_name
     if source.local_subpath is not None:
         payload["local_subpath"] = source.local_subpath
-    if source.mirror_mode is not None:
-        payload["mirror_mode"] = source.mirror_mode.value
-    if source.mirror_paths is not None:
-        payload["mirror_paths"] = list(source.mirror_paths)
+    if source.rsync_mode is not None:
+        payload["rsync_mode"] = source.rsync_mode.value
+    if source.rsync_paths is not None:
+        payload["rsync_paths"] = list(source.rsync_paths)
     if source.port is not None:
         payload["port"] = source.port
     if source.include is not None:

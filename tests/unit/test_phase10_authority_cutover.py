@@ -115,14 +115,14 @@ def test_targeted_engine_sync_preserves_untouched_state_without_manifest_merge(
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync(SyncRequest(source_ids=("a",))))
 
-    assert set(result.manifest["results"]["http"]) == {"a", "b"}
-    assert result.manifest["results"]["http"]["b"]["content_id"] == str(b_observation.content_id)
+    assert set(result.compatibility.manifest["results"]["http"]) == {"a", "b"}
+    assert result.compatibility.manifest["results"]["http"]["b"]["content_id"] == str(b_observation.content_id)
     assert result.skipped_source_ids == ("b",)
-    assert json.loads(canonical.read_text(encoding="utf-8")) == result.manifest
+    assert json.loads(canonical.read_text(encoding="utf-8")) == result.compatibility.manifest
 
     timestamped = list((tmp_path / config.log_dir).glob("sync-manifest-*.json"))
     assert len(timestamped) == 1
-    assert json.loads(timestamped[0].read_text(encoding="utf-8")) == result.manifest
+    assert json.loads(timestamped[0].read_text(encoding="utf-8")) == result.compatibility.manifest
 
     canonical.unlink()
     timestamped[0].unlink()

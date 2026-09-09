@@ -15,6 +15,9 @@ from efloud.adapters import (
 )
 from efloud.blob_store import BlobStore, FilesystemBlobStore
 from efloud.builtin_adapters import builtin_adapter_registry
+from efloud.dataset_constraints import DatasetConstraintError, DatasetConstraints
+from efloud.dataset_export import DetachedDatasetManifest, export_dataset_manifest, import_dataset_manifest
+from efloud.dataset_selectors import ExactSourceSnapshot, LatestCompleteSourceSnapshot, SourceSelection
 from efloud.datasets import (
     DatasetDefinition,
     DatasetManifest,
@@ -25,12 +28,12 @@ from efloud.datasets import (
     Latest,
     LatestAll,
     LatestBefore,
+    resolve_dataset,
 )
 from efloud.derivation import DependencySemantics, DerivationKey, DerivedTaskSpec
 from efloud.derived import RepositoryDerivedTask
 from efloud.engine import Engine, EngineSyncResult
-from efloud.executor import OperationExecutionResult, SyncExecutionResult, SyncExecutor
-from efloud.fanout import RestBaseFanoutTask
+from efloud.executor import OperationExecutionResult, SyncExecutionResult
 from efloud.inventory import (
     AbsenceEvidence,
     AbsenceEvidenceKind,
@@ -42,13 +45,13 @@ from efloud.inventory import (
     InventoryItem,
     SourceInventory,
 )
-from efloud.metadata_store import MetadataStore
+from efloud.maintenance import AuditReport, CleanupCandidate, RepositoryMaintenance
+from efloud.materialization import DatasetMaterializer, ExportPlan
 from efloud.models import EngineConfig
-from efloud.planner import SyncPlanner
 from efloud.planning import PlannedOperation, PlanningDecision, SyncPlan, SyncRequest
 from efloud.policy import DefaultSyncPolicy, RefreshDecision, RoleDrivenSyncPolicy
 from efloud.read_only_repository import ReadOnlyRepository
-from efloud.registry import MirrorMode, SourceDefinition, SourceKind
+from efloud.registry import RsyncMode, SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_models import (
     ArtifactAbsence,
@@ -80,7 +83,6 @@ from efloud.repository_models import (
 from efloud.repository_query import RepositoryQueryService, repository_query
 from efloud.repository_status import RepositoryStatusService
 from efloud.repository_view import RepositoryView
-from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
 from efloud.validation import (
     ContentValidator,
     ValidationRegistry,
@@ -89,6 +91,7 @@ from efloud.validation import (
     ValidatorDescriptor,
     builtin_validation_registry,
 )
+from efloud.writer_coordination import RepositoryBusyError
 
 __version__ = version("efloud")
 
@@ -103,16 +106,21 @@ __all__ = [
     "ArtifactKey",
     "ArtifactObservation",
     "ArtifactState",
+    "AuditReport",
     "BlobStore",
     "ChangeToken",
     "ChangeTokenReliability",
+    "CleanupCandidate",
     "CollectionAcquisition",
     "ContentId",
     "ContentRef",
     "ContentValidator",
+    "DatasetConstraintError",
+    "DatasetConstraints",
     "DatasetDefinition",
     "DatasetId",
     "DatasetManifest",
+    "DatasetMaterializer",
     "DatasetSelection",
     "DatasetSelector",
     "DatasetSpecification",
@@ -121,10 +129,13 @@ __all__ = [
     "DependencySemantics",
     "DerivationKey",
     "DerivedTaskSpec",
+    "DetachedDatasetManifest",
     "Engine",
     "EngineConfig",
     "EngineSyncResult",
     "ExactObservation",
+    "ExactSourceSnapshot",
+    "ExportPlan",
     "FilesystemBlobStore",
     "HttpAcquisition",
     "ImmutableDataset",
@@ -135,8 +146,7 @@ __all__ = [
     "Latest",
     "LatestAll",
     "LatestBefore",
-    "MetadataStore",
-    "MirrorMode",
+    "LatestCompleteSourceSnapshot",
     "ObservationId",
     "OperationExecutionResult",
     "OperationId",
@@ -148,16 +158,17 @@ __all__ = [
     "ReadOnlyRepository",
     "RefreshDecision",
     "Repository",
+    "RepositoryBusyError",
     "RepositoryDerivedTask",
+    "RepositoryMaintenance",
     "RepositoryQueryService",
     "RepositoryStatusService",
     "RepositoryView",
-    "RestBaseFanoutTask",
     "RoleDrivenSyncPolicy",
     "RsyncAcquisition",
+    "RsyncMode",
     "RunId",
     "RunStatus",
-    "SQLiteMetadataStore",
     "SnapshotId",
     "SourceAcquisition",
     "SourceAdapter",
@@ -167,11 +178,10 @@ __all__ = [
     "SourceId",
     "SourceInventory",
     "SourceKind",
+    "SourceSelection",
     "SourceSnapshot",
     "SyncExecutionResult",
-    "SyncExecutor",
     "SyncPlan",
-    "SyncPlanner",
     "SyncRequest",
     "TreeEntry",
     "TreeId",
@@ -184,5 +194,8 @@ __all__ = [
     "__version__",
     "builtin_adapter_registry",
     "builtin_validation_registry",
+    "export_dataset_manifest",
+    "import_dataset_manifest",
     "repository_query",
+    "resolve_dataset",
 ]

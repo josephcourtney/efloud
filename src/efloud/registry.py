@@ -17,7 +17,7 @@ class SourceKind(StrEnum):
     RSYNC = "RSYNC"
 
 
-class MirrorMode(StrEnum):
+class RsyncMode(StrEnum):
     FULL = "full"
     PATHS = "paths"
 
@@ -31,8 +31,8 @@ class SourceDefinition:
 
     cache_name: str | None = None
     local_subpath: str | None = None
-    mirror_mode: MirrorMode | None = None
-    mirror_paths: tuple[str, ...] | None = None
+    rsync_mode: RsyncMode | None = None
+    rsync_paths: tuple[str, ...] | None = None
     port: int | None = None
 
     include: tuple[str, ...] | None = None

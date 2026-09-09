@@ -11,6 +11,11 @@ This site is a lightweight index for repository documentation.
 - **Change history:** `CHANGELOG.md`
 - **Documentation policy:** `POLICY.md`
 
+## Consumer API
+
+See [the public API and compatibility contract](api.md) for dataset export,
+read-only extension contracts, and repository maintenance.
+
 ## Architecture Decision Records
 
 See **ADRs** for durable rationale behind major architectural choices.

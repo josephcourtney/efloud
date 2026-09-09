@@ -92,9 +92,9 @@ class RsyncSourceAdapter:
         local_root = Path(cfg.root) / cfg.mirrors_dir / (source.local_subpath or source.id)
         local_root.mkdir(parents=True, exist_ok=True)
         requested_scope = context.operation.scope
-        mirror_paths, synthetic = await prepare_rsync_paths(
+        rsync_paths, synthetic = await prepare_rsync_paths(
             source=source,
-            mirror_paths=requested_scope or None,
+            rsync_paths=requested_scope or None,
             runtime_progress=cfg.runtime_progress,
         )
         mirror = _rsync_mirror(context, local_root)
@@ -104,7 +104,7 @@ class RsyncSourceAdapter:
             results = await run_rsync_operation(
                 source=source,
                 mirror=mirror,
-                mirror_paths=mirror_paths,
+                rsync_paths=rsync_paths,
                 force=force,
                 synthetic_results=synthetic,
                 runtime_progress=cfg.runtime_progress,

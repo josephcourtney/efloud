@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
     from efloud.json_types import JsonObject
     from efloud.models import EngineConfig, NormalizedManifest
-    from efloud.registry import MirrorMode, SourceDefinition
+    from efloud.registry import RsyncMode, SourceDefinition
     from efloud.repository_models import SourceSnapshot
 
 
@@ -86,7 +86,7 @@ class DefaultSyncPolicy:
     @staticmethod
     def source_scope(source: SourceDefinition, cfg: EngineConfig) -> tuple[str, ...]:
         del cfg
-        return tuple(source.mirror_paths or ()) if source.mirror_mode is not None else ()
+        return tuple(source.rsync_paths or ()) if source.rsync_mode is not None else ()
 
     @staticmethod
     def rsync_paths_for_source(
@@ -96,7 +96,7 @@ class DefaultSyncPolicy:
         manifest: NormalizedManifest | None,
     ) -> tuple[str, ...] | None:
         del cache_root, manifest
-        return source.mirror_paths if source.mirror_mode is not None else None
+        return source.rsync_paths if source.rsync_mode is not None else None
 
 
 @dataclass(frozen=True)
@@ -105,7 +105,7 @@ class RoleDrivenSyncPolicy:
 
     http_role_refresh: Mapping[str, bool] = field(default_factory=dict)
     rest_base_refresh: bool | None = None
-    rsync_mode: MirrorMode | None = None
+    rsync_mode: RsyncMode | None = None
 
     def _configured_refresh_decision(
         self,
@@ -155,8 +155,8 @@ class RoleDrivenSyncPolicy:
     def source_scope(self, source: SourceDefinition, cfg: EngineConfig) -> tuple[str, ...]:
         del cfg
         if self.rsync_mode is None:
-            return tuple(source.mirror_paths or ()) if source.mirror_mode is not None else ()
-        return tuple(source.mirror_paths or ()) if source.mirror_mode is self.rsync_mode else ()
+            return tuple(source.rsync_paths or ()) if source.rsync_mode is not None else ()
+        return tuple(source.rsync_paths or ()) if source.rsync_mode is self.rsync_mode else ()
 
     def rsync_paths_for_source(
         self,
@@ -167,8 +167,8 @@ class RoleDrivenSyncPolicy:
     ) -> tuple[str, ...] | None:
         del cache_root, manifest
         if self.rsync_mode is None:
-            return source.mirror_paths if source.mirror_mode is not None else None
-        return source.mirror_paths if source.mirror_mode is self.rsync_mode else None
+            return source.rsync_paths if source.rsync_mode is not None else None
+        return source.rsync_paths if source.rsync_mode is self.rsync_mode else None
 
 
 __all__ = ["DefaultSyncPolicy", "RefreshDecision", "RoleDrivenSyncPolicy", "SyncPolicy"]

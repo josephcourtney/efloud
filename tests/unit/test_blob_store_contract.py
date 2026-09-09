@@ -68,8 +68,8 @@ def _run(repo: Repository, *, started_at: float = 100.0):
 
 def test_content_ref_storage_location_is_not_semantic() -> None:
     content_id = ContentId("sha256:" + "a" * 64)
-    first = ContentRef(content_id, 7, storage_key="backend-one/object", media_type="application/test")
-    second = ContentRef(content_id, 7, storage_key="backend-two/object", media_type="application/test")
+    first = ContentRef(content_id, 7, media_type="application/test")
+    second = ContentRef(content_id, 7, media_type="application/test")
 
     assert first == second
     assert (

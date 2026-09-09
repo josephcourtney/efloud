@@ -9,21 +9,23 @@ from typing import Any, cast
 import httpx
 import pytest
 
-from efloud.models import EngineConfig
-from efloud.registry import MirrorMode, SourceDefinition, SourceKind
-from efloud.sync import (
+from efloud.compat.sync_runtime import (
     ManifestRecorder,
     build_http_caches,
     prepare_paths,
     run_http_phase,
     run_rsync_phase,
-    sync,
 )
+from efloud.engine import Engine
+from efloud.models import EngineConfig
+from efloud.registry import RsyncMode, SourceDefinition, SourceKind
+from efloud.repository import Repository
+from efloud.sync import sync
 from efloud.transport.http_utils import HttpFetchResult
 from efloud.transport.rsync import OpResult, RsyncMirror, RsyncMirrorConfig
 
 fanout_mod = importlib.import_module("efloud.fanout")
-sync_mod = importlib.import_module("efloud.sync")
+sync_mod = importlib.import_module("efloud.compat.sync_runtime")
 
 pytestmark = [pytest.mark.unit]
 
@@ -170,8 +172,8 @@ async def test_manifest_recorder_and_sync_helpers(tmp_path: Path, monkeypatch):
                 "rsync.example.test::module",
                 SourceKind.RSYNC,
                 local_subpath="mirror/source",
-                mirror_mode=MirrorMode.PATHS,
-                mirror_paths=("subset",),
+                rsync_mode=RsyncMode.PATHS,
+                rsync_paths=("subset",),
             ),
         ],
         derived_tasks=(DummyDerivedTask("derived-task", {"ok": True}),),
@@ -252,8 +254,8 @@ async def test_run_phases_with_fake_transports(tmp_path: Path, monkeypatch):
             "rsync.example.test::module",
             SourceKind.RSYNC,
             local_subpath="mirror/source",
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("subset",),
+            rsync_mode=RsyncMode.PATHS,
+            rsync_paths=("subset",),
         ),
     ]
     cfg = EngineConfig(root=tmp_path, sources=sources)
@@ -336,8 +338,8 @@ async def test_run_rsync_phase_passes_source_port_to_rsync_config(tmp_path: Path
         "rsync.example.test::module",
         SourceKind.RSYNC,
         local_subpath="mirror/source",
-        mirror_mode=MirrorMode.PATHS,
-        mirror_paths=("subset",),
+        rsync_mode=RsyncMode.PATHS,
+        rsync_paths=("subset",),
         port=33444,
     )
     cfg = EngineConfig(root=tmp_path, sources=[source])
@@ -391,8 +393,8 @@ async def test_run_rsync_phase_uses_less_aggressive_flags_for_pdb_mmcif(tmp_path
             "rsync.rcsb.org::ftp/data/structures/divided/",
             SourceKind.RSYNC,
             local_subpath="pdb_structures_all",
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("mmCIF/ab/",),
+            rsync_mode=RsyncMode.PATHS,
+            rsync_paths=("mmCIF/ab/",),
         ),
         SourceDefinition(
             "pdb_chemical_shifts",
@@ -400,8 +402,8 @@ async def test_run_rsync_phase_uses_less_aggressive_flags_for_pdb_mmcif(tmp_path
             "rsync.rcsb.org::ftp/data/structures/divided/",
             SourceKind.RSYNC,
             local_subpath="pdb_structures_all",
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("nmr_chemical_shifts/",),
+            rsync_mode=RsyncMode.PATHS,
+            rsync_paths=("nmr_chemical_shifts/",),
         ),
     ]
     cfg = EngineConfig(root=tmp_path, sources=sources)
@@ -456,8 +458,8 @@ async def test_run_rsync_phase_uses_compact_progress_for_pdb_mmcif_only(tmp_path
             "rsync.rcsb.org::ftp/data/structures/divided/",
             SourceKind.RSYNC,
             local_subpath="pdb_structures_all",
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("mmCIF/ab/",),
+            rsync_mode=RsyncMode.PATHS,
+            rsync_paths=("mmCIF/ab/",),
         ),
         SourceDefinition(
             "pdb_chemical_shifts",
@@ -465,8 +467,8 @@ async def test_run_rsync_phase_uses_compact_progress_for_pdb_mmcif_only(tmp_path
             "rsync.rcsb.org::ftp/data/structures/divided/",
             SourceKind.RSYNC,
             local_subpath="pdb_structures_all",
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("nmr_chemical_shifts/",),
+            rsync_mode=RsyncMode.PATHS,
+            rsync_paths=("nmr_chemical_shifts/",),
         ),
     ]
     cfg = EngineConfig(root=tmp_path, sources=sources, runtime_progress=True)
@@ -517,58 +519,24 @@ async def test_run_rsync_phase_uses_compact_progress_for_pdb_mmcif_only(tmp_path
 
 @pytest.mark.asyncio
 @pytest.mark.medium
-async def test_sync_orchestration_with_stubbed_phases(tmp_path: Path, monkeypatch):
-    sources = [
-        SourceDefinition("http-id", "HTTP", "https://example.test/data.bin", SourceKind.HTTP),
-        SourceDefinition("rest-id", "REST", "https://example.test/data.json", SourceKind.REST),
-        SourceDefinition(
-            "rsync-id",
-            "Mirror",
-            "rsync.example.test::module",
-            SourceKind.RSYNC,
-            local_subpath="mirror/source",
-            mirror_mode=MirrorMode.PATHS,
-            mirror_paths=("subset",),
-        ),
-    ]
-    cfg = EngineConfig(root=tmp_path, sources=sources)
+async def test_sync_orchestration_delegates_to_engine(tmp_path: Path, monkeypatch):
+    cfg = EngineConfig(root=tmp_path, sources=[])
+    with Engine.from_config(cfg) as engine:
+        expected = await engine.sync()
+    calls = []
 
-    async def fake_run_http_phase(*, cfg, paths, http_caches, recorder):
+    async def fake_sync(self, request=None):
         await asyncio.sleep(0)
-        recorder.record_http(manifest_key="http-id", entry={"ok": True})
+        calls.append((self.config, request))
+        return expected
 
-    async def fake_run_rsync_phase(*, cfg, paths, recorder):
-        await asyncio.sleep(0)
-        recorder.record_rsync(
-            manifest_key="rsync-id",
-            entry=sync_mod._rsync_manifest_entry(
-                cfg.sources[2],
-                paths.mirrors / "mirror/source",
-                "update_paths",
-                {"subset": {"status": "success"}},
-                force=False,
-                paths=["subset"],
-            ),
-        )
-        return {paths.mirrors / "mirror/source"}
-
-    async def fake_run_derived_tasks(*, cfg, paths, recorder):
-        await asyncio.sleep(0)
-        recorder.record_derived(name="derived", payload={"ok": True})
-
-    monkeypatch.setattr(sync_mod, "run_http_phase", fake_run_http_phase)
-    monkeypatch.setattr(sync_mod, "run_rsync_phase", fake_run_rsync_phase)
-    monkeypatch.setattr(sync_mod, "_run_derived_tasks", fake_run_derived_tasks)
-    monkeypatch.setattr(sync_mod, "build_http_caches", lambda *, sources, cache_root, rate_root: {})
-
-    async def fake_close_http_caches(http_caches):
-        await asyncio.sleep(0)
-
-    monkeypatch.setattr(sync_mod, "_close_http_caches", fake_close_http_caches)
-
-    result = await sync(cfg)
-    assert result.ok is True
-    assert result.manifest["results"]["derived"]["derived"] == {"ok": True}
+    monkeypatch.setattr(Engine, "sync", fake_sync)
+    with pytest.warns(DeprecationWarning, match="Engine"):
+        result = await sync(cfg)
+    assert result == expected.compatibility.sync_result
+    assert calls == [(cfg, None)]
+    with Repository(tmp_path):
+        pass
 
 
 @pytest.mark.asyncio
@@ -583,8 +551,8 @@ async def test_sync_marks_rsync_transport_failures_as_errors(tmp_path: Path, mon
                 "rsync.example.test::module",
                 SourceKind.RSYNC,
                 local_subpath="mirror/source",
-                mirror_mode=MirrorMode.PATHS,
-                mirror_paths=("subset",),
+                rsync_mode=RsyncMode.PATHS,
+                rsync_paths=("subset",),
             )
         ],
     )
@@ -604,7 +572,8 @@ async def test_sync_marks_rsync_transport_failures_as_errors(tmp_path: Path, mon
 
     monkeypatch.setattr(RsyncMirror, "update_paths", _fake_update_paths)
 
-    result = await sync(cfg)
+    with pytest.warns(DeprecationWarning, match="Engine"):
+        result = await sync(cfg)
 
     assert result.ok is False
     entry = result.manifest["results"]["rsync"]["rsync-id"]
@@ -613,7 +582,7 @@ async def test_sync_marks_rsync_transport_failures_as_errors(tmp_path: Path, mon
     assert result.manifest["errors"] == [
         {
             "phase": "rsync",
-            "name": "Mirror",
+            "name": "rsync-id",
             "source_id": "rsync-id",
             "error": "subset: rsync failed",
         }
@@ -629,8 +598,8 @@ async def test_run_rsync_phase_skips_missing_pdb_mmcif_bucket_dirs(tmp_path: Pat
         "rsync.rcsb.org::ftp/data/structures/divided/",
         SourceKind.RSYNC,
         local_subpath="pdb_structures_all",
-        mirror_mode=MirrorMode.PATHS,
-        mirror_paths=("mmCIF/0r/",),
+        rsync_mode=RsyncMode.PATHS,
+        rsync_paths=("mmCIF/0r/",),
     )
     cfg = EngineConfig(root=tmp_path, sources=[source])
     paths = prepare_paths(tmp_path, cfg)
@@ -675,8 +644,8 @@ async def test_run_rsync_phase_prefilters_missing_pdb_mmcif_buckets(tmp_path: Pa
         "rsync.rcsb.org::ftp/data/structures/divided/",
         SourceKind.RSYNC,
         local_subpath="pdb_structures_all",
-        mirror_mode=MirrorMode.PATHS,
-        mirror_paths=("mmCIF/0r/", "mmCIF/0s/"),
+        rsync_mode=RsyncMode.PATHS,
+        rsync_paths=("mmCIF/0r/", "mmCIF/0s/"),
     )
     cfg = EngineConfig(root=tmp_path, sources=[source], runtime_progress=True)
     paths = prepare_paths(tmp_path, cfg)
@@ -772,8 +741,8 @@ def test_incremental_rsync_subdirs_uses_manifest_paths_for_shared_root(tmp_path:
                 "rsync.rcsb.org::ftp/data/structures/all/",
                 SourceKind.RSYNC,
                 local_subpath="pdb_structures_all",
-                mirror_mode=MirrorMode.PATHS,
-                mirror_paths=("nmr_chemical_shifts/",),
+                rsync_mode=RsyncMode.PATHS,
+                rsync_paths=("nmr_chemical_shifts/",),
             ),
             SourceDefinition(
                 "pdb_mmcif",
@@ -781,8 +750,8 @@ def test_incremental_rsync_subdirs_uses_manifest_paths_for_shared_root(tmp_path:
                 "rsync.rcsb.org::ftp/data/structures/all/",
                 SourceKind.RSYNC,
                 local_subpath="pdb_structures_all",
-                mirror_mode=MirrorMode.PATHS,
-                mirror_paths=("mmcif/",),
+                rsync_mode=RsyncMode.PATHS,
+                rsync_paths=("mmcif/",),
             ),
         ],
     )
@@ -823,8 +792,8 @@ def test_build_incremental_state_uses_touched_subdirs(monkeypatch, tmp_path: Pat
                 "rsync.rcsb.org::ftp/data/structures/all/",
                 SourceKind.RSYNC,
                 local_subpath="pdb_structures_all",
-                mirror_mode=MirrorMode.PATHS,
-                mirror_paths=("nmr_chemical_shifts/",),
+                rsync_mode=RsyncMode.PATHS,
+                rsync_paths=("nmr_chemical_shifts/",),
             )
         ],
     )
@@ -876,8 +845,8 @@ def test_record_manifest_hash_state_persists_source_counts(tmp_path: Path):
         "rsync.rcsb.org::ftp/data/structures/divided/",
         SourceKind.RSYNC,
         local_subpath="pdb_structures_all",
-        mirror_mode=MirrorMode.PATHS,
-        mirror_paths=("nmr_data/",),
+        rsync_mode=RsyncMode.PATHS,
+        rsync_paths=("nmr_data/",),
     )
     cfg = EngineConfig(root=tmp_path, sources=[source], state_filename="mirror-state.json")
     paths = prepare_paths(tmp_path, cfg)
@@ -925,8 +894,8 @@ async def test_prepare_rsync_paths_skips_remote_discovery_for_single_pdb_mmcif_b
         "rsync.rcsb.org::ftp/data/structures/divided/",
         SourceKind.RSYNC,
         local_subpath="pdb_structures_all",
-        mirror_mode=MirrorMode.PATHS,
-        mirror_paths=("mmCIF/ab/",),
+        rsync_mode=RsyncMode.PATHS,
+        rsync_paths=("mmCIF/ab/",),
     )
     cfg = EngineConfig(root=tmp_path, sources=[source])
 
@@ -938,13 +907,13 @@ async def test_prepare_rsync_paths_skips_remote_discovery_for_single_pdb_mmcif_b
 
     monkeypatch.setattr(sync_mod, "_discover_existing_pdb_mmcif_buckets", fake_discover)
 
-    mirror_paths, synthetic = await sync_mod._prepare_rsync_paths_for_source(
+    rsync_paths, synthetic = await sync_mod._prepare_rsync_paths_for_source(
         source=source,
-        mirror_paths=("mmCIF/ab/",),
+        rsync_paths=("mmCIF/ab/",),
         cfg=cfg,
     )
 
-    assert mirror_paths == ("mmCIF/ab/",)
+    assert rsync_paths == ("mmCIF/ab/",)
     assert synthetic == {}
     assert called["discover"] is False
 

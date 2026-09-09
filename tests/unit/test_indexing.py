@@ -53,12 +53,12 @@ def test_derived_index_parameters_change_derivation_identity(tmp_path: Path) -> 
 
         return build
 
-    first_registry = DerivedIndexRegistry(
-        (DerivedIndexDefinition("alpha", "1", builder("first"), parameters={"mode": "a"}),)
-    )
-    second_registry = DerivedIndexRegistry(
-        (DerivedIndexDefinition("alpha", "1", builder("second"), parameters={"mode": "b"}),)
-    )
+    first_registry = DerivedIndexRegistry((
+        DerivedIndexDefinition("alpha", "1", builder("first"), parameters={"mode": "a"}),
+    ))
+    second_registry = DerivedIndexRegistry((
+        DerivedIndexDefinition("alpha", "1", builder("second"), parameters={"mode": "b"}),
+    ))
 
     with Repository(tmp_path) as repository:
         first_run = repository.start_run(started_at=1.0)

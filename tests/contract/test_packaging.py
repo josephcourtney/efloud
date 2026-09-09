@@ -40,12 +40,10 @@ _REMOVED_MODULE_PATHS = {
 }
 
 _REMOVED_IMPORTS = tuple(
-    sorted(
-        {
-            "efloud.compat",
-            *(path.removesuffix(".py").replace("/", ".") for path in _REMOVED_MODULE_PATHS),
-        }
-    )
+    sorted({
+        "efloud.compat",
+        *(path.removesuffix(".py").replace("/", ".") for path in _REMOVED_MODULE_PATHS),
+    })
 )
 
 

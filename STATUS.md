@@ -4,7 +4,7 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Close dataset and detached-export acceptance through the clean public API, with particular attention to native Linux CoW/no-replace publication and generic downstream manifest consumption.
+Run the final repository-wide quality, packaging, architecture, compatibility-removal, and coverage gates before external BVP acceptance.
 
 ## Recently completed
 
@@ -16,13 +16,20 @@ Close dataset and detached-export acceptance through the clean public API, with 
 - Every supported repository mutation path is coordinated by the writer lease; standalone byte staging now checks the active lease before touching blob storage.
 - Destructive cleanup recomputes reachability under the writer lease and fails closed on SQLite/foreign-key errors, semantic identity/source/snapshot corruption, and missing or corrupt reachable content while preserving validation-only and provenance history.
 - Recovery changes only abandoned `running` runs/operations to `failed`; failure-injection coverage verifies interrupted blob/metadata and snapshot boundaries, retry after recovery, writer exclusion, crash-release behavior, grace periods, and dry-run selection reasons.
-- Missing producer metadata is rejected instead of receiving a synthetic legacy producer, and unbounded source snapshot history now uses `limit=None` through internal repository/storage contracts as well as the public facade.
+- Missing producer metadata is rejected instead of receiving a synthetic legacy producer, and unbounded source snapshot history uses `limit=None` through internal repository/storage contracts as well as the public facade.
+- Dataset acceptance now runs through `repo.datasets`, `Dataset`, and `DatasetManifest`: `resolve` is read-only, `freeze` persists the same resolved identity, and frozen membership/source-definition evidence remains stable after newer acquisition and source revisions.
+- Snapshot-backed public dataset acceptance verifies incomplete coverage cannot imply absence or satisfy complete-snapshot reproducibility, including empty selections.
+- Detached exports are verified after the source repository is removed; missing/corrupt repository or export content fails verification without acquisition or metadata mutation.
+- Export acceptance covers unsafe paths (including `.`), reserved-layout collisions, concurrent destination creation, copy/symlink isolation from authoritative content, and strict explicit-reflink behavior.
+- CI now creates a reflink-enabled XFS filesystem and exercises native Linux `FICLONE` through public `Dataset.export(strategy="reflink")` plus native `renameat2(RENAME_NOREPLACE)` publication.
+- `docs/dataset-manifest-v1.md` specifies the portable manifest envelope, stable identity formulas, detached observation/source-revision evidence, path rules, and byte verification. A standard-library-only subprocess validates a real export without importing Efloud or reading SQLite.
+- Detached `DatasetManifest.verify()` returns `False` for missing/non-directory roots as well as unavailable or corrupt members; public export/planning consistently surface manifest-layout failures as `ExportError`.
 - Transport staging, HTTP cache, and rate-limit state live under the non-authoritative `.efloud-runtime` operational root rather than legacy top-level mirror/cache layout fields.
 - Installed-wheel contracts assert removed compatibility modules are absent and unimportable; architecture contracts describe only the surviving canonical modules.
 - Canonical derived-index validity is derivation-key based; repository-backed index tests cover deterministic reuse and parameter-sensitive invalidation.
 - Public temporal selection uses timezone-aware `datetime`; dataset resolve/freeze/export and detached manifest verification remain exposed through the clean facade.
 - README and installed-wheel packaging examples use only the clean API, with an end-to-end regression covering acquire → freeze → export → detached verify → read-only reopen.
-- The durability branch passed the full Python 3.12 and 3.13 suites and the Python 3.14 non-mutating `just check` gate before milestone bookkeeping was finalized.
+- Dataset/export acceptance head `cecda63f8409b7ff2f16d1f0ff56a24645d6e9bf` passed the full Python 3.12 and 3.13 suites, Python 3.14 `just check` with checkout cleanliness, and the native Linux XFS export-primitives job.
 
 ## Pre-cutover baseline
 
@@ -33,10 +40,9 @@ Close dataset and detached-export acceptance through the clean public API, with 
 
 ## Remaining gaps
 
-- Dataset resolve/freeze/export semantics, detached handoff, incomplete-snapshot behavior, path/publication safety, and generic manifest consumption must be closed through the public API.
-- Native Linux reflink and atomic no-replace publication still require acceptance on a filesystem that supports those primitives; unsupported CI filesystems skip only the explicit reflink case rather than silently falling back.
-- Final packaging/coverage/release gates and external BVP acceptance remain after dataset/export acceptance.
+- Final repository-wide packaging, architecture/import, installed-package compatibility-removal, coverage-comparison, and release evidence still need to be run and recorded against the committed clean-break implementation.
+- External BVP acceptance remains after the Efloud release gates are finalized.
 
 ## Resume point
 
-Start with TODO 1: audit the existing dataset/export integration coverage against the public `repo.datasets`/`Dataset`/`DatasetManifest` API, then add only the missing acceptance cases and supported-Linux publication coverage.
+Start with TODO 1: run the complete final repository gates, compare coverage to the pre-cutover baseline with deleted compatibility code/tests accounted for separately, and record the resulting release evidence.

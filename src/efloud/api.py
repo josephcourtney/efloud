@@ -33,7 +33,7 @@ from efloud.maintenance import AuditReport, RepositoryMaintenance
 from efloud.materialization import DatasetMaterializer, ExportPlan, ExportStrategy
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository import Repository as _WritableRepository
-from efloud.sources import Source, legacy_source_definition
+from efloud.sources import Source
 from efloud.writer_coordination import RepositoryBusyError as _InternalRepositoryBusyError
 
 if TYPE_CHECKING:
@@ -547,16 +547,11 @@ class Engine:
         validators: ValidationRegistry | None = None,
     ) -> None:
         writer = repository._require_writer()
-        try:
-            definitions = tuple(legacy_source_definition(source) for source in sources)
-        except ValueError as exc:
-            raise ExecutionError(str(exc)) from exc
         self.repository = repository
         self.sources = tuple(sources)
         self._core = _EngineCore(
-            repository.root,
-            definitions,
-            repository=writer,
+            writer,
+            self.sources,
             adapters=adapters,
             validators=validators,
         )

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from efloud.repository_view import RepositoryView
+    from efloud.repository_capabilities import DatasetRepository as RepositoryView
 
 _CONTROL_CHARACTER_LIMIT = 32
 _SHA256_HEX_LENGTH = 64

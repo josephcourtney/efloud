@@ -9,11 +9,14 @@ from typing import TYPE_CHECKING
 import pytest
 
 import efloud.repository_compat as compatibility
-from efloud import DerivedOutput, DerivedResult, Engine, EngineConfig, SourceDefinition, SourceKind, SyncRequest
 from efloud.compat.extensions import LegacyEnumeratorAdapter, LegacyTaskAdapter
-from efloud.derived import ExtensionContext
+from efloud.derived import DerivedOutput, DerivedResult, ExtensionContext
+from efloud.engine import Engine
 from efloud.fanout import FanoutEnumeration, RestBaseFanoutTask
+from efloud.models import EngineConfig
+from efloud.planning import SyncRequest
 from efloud.read_only_repository import ReadOnlyRepository
+from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 
 if TYPE_CHECKING:

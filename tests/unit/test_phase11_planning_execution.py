@@ -216,12 +216,15 @@ def test_failed_dependency_blocks_derived_operation_and_persists_adapter_produce
         assert derived_operation.details["failed_dependencies"] == ["source:a"]
 
 
-def test_runtime_storage_layout_does_not_affect_plan_identity(tmp_path: Path) -> None:
+def test_runtime_operational_layout_does_not_affect_plan_identity(tmp_path: Path) -> None:
     source = RsyncSource(
         id="mirror",
         url="rsync://example.test/module",
         local_subpath="mirror",
     )
+    runtime_fields = {item.name for item in fields(EngineRuntime)}
+    assert not runtime_fields & {"http_dir", "cache_dir", "mirrors_dir"}
+
     with Repository(tmp_path) as repository:
         default = Engine(repository, (source,)).plan()
         alternate = Engine(
@@ -229,9 +232,7 @@ def test_runtime_storage_layout_does_not_affect_plan_identity(tmp_path: Path) ->
             (source,),
             runtime=EngineRuntime(
                 root=tmp_path,
-                http_dir="alternate-http",
-                cache_dir="alternate-cache",
-                mirrors_dir="alternate-mirrors",
+                operational_dir="alternate-runtime",
             ),
         ).plan()
     assert default.plan_id == alternate.plan_id

@@ -13,10 +13,11 @@ from efloud.adapters import (
     CollectionAcquisition,
     SourceAdapter,
 )
+from efloud.derived import ExtensionContext, source_inputs
 from efloud.fanout import RestBaseFanoutTask
 from efloud.json_types import copy_json_mapping, json_mapping_or_none
+from efloud.read_only_repository import ReadOnlyRepository
 from efloud.registry import SourceDefinition, SourceKind
-from efloud.repository_compat import repository_manifest
 
 
 def _require_supported_source(descriptor: AdapterDescriptor, source: SourceDefinition) -> None:
@@ -54,13 +55,18 @@ class CollectionSourceAdapter:
             )
         refresh = context.operation.refresh.refresh if context.operation.refresh is not None else False
         runtime_task = replace(task, refresh=task.refresh or refresh)
-        manifest = repository_manifest(context.repository, cfg=context.config)
         try:
-            raw_payload = await runtime_task.run(
-                sync_root=Path(context.config.root),
-                manifest=manifest,
-                sources=tuple(context.config.sources),
-            )
+            with ReadOnlyRepository(context.repository.root) as view:
+                inputs = source_inputs(view, task.repository_input_source_ids)
+                result = await runtime_task.run(
+                    context=ExtensionContext(
+                        repository=view,
+                        workspace=Path(context.config.root),
+                        sources=tuple(context.config.sources),
+                        inputs=inputs,
+                    ),
+                )
+                raw_payload = result.details
         except (OSError, RuntimeError, TypeError, ValueError, httpx.HTTPError) as exc:
             return CollectionAcquisition(
                 source_id=context.source.id,
@@ -87,6 +93,7 @@ class CollectionSourceAdapter:
             task_name=task.name,
             observed_at=observed_at,
             payload=payload,
+            input_observation_ids=tuple(item.observation_id for item in inputs),
             error="One or more collection items failed." if failed else None,
         )
 

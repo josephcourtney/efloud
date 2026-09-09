@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from efloud.derived import ExtensionContext
 from efloud.fanout import (
     FanoutEnumeration,
     FanoutItem,
@@ -17,6 +18,7 @@ from efloud.inventory import ChangeToken, IntegrityExpectation, InventoryCoverag
 from efloud.json_types import json_mapping_or_none
 from efloud.reconciliation import PreviousInventoryItem, reconcile_inventory
 from efloud.registry import SourceDefinition, SourceKind
+from efloud.repository import Repository
 from efloud.repository_models import ArtifactKey, ContentId, SourceId
 
 if TYPE_CHECKING:
@@ -109,9 +111,8 @@ async def test_fanout_task_serializes_inventory_independently_of_retrieval_resul
 ) -> None:
     token = ChangeToken("api-revision", "17", reliability="strong")
 
-    async def enumerator(*, sync_root, manifest, sources):
-        del manifest, sources
-        assert sync_root == tmp_path
+    async def enumerator(*, context):
+        assert context.workspace == tmp_path
         await asyncio.gather()
         return FanoutEnumeration(
             items=(FanoutItem("alpha", change_token=token), FanoutItem("beta")),
@@ -148,16 +149,9 @@ async def test_fanout_task_serializes_inventory_independently_of_retrieval_resul
         enumerator=enumerator,
         dest_subdir="fanout",
     )
-    payload = await task.run(
-        sync_root=tmp_path,
-        manifest={
-            "results": {"http": {}, "rsync": {}, "derived": {}},
-            "errors": [],
-            "root": str(tmp_path),
-            "version": 1,
-        },
-        sources=(source,),
-    )
+    with Repository(tmp_path) as repository:
+        result = await task.run(context=ExtensionContext(repository, tmp_path, (source,)))
+    payload = result.details
 
     inventory = json_mapping_or_none(payload.get("inventory"))
     assert inventory is not None

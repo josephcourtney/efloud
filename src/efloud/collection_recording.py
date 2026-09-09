@@ -408,6 +408,7 @@ def record_collection_acquisition(
     run_id: RunId,
     operation_id: OperationId,
     observed_at: float,
+    input_observation_ids: tuple[ObservationId, ...] = (),
 ) -> CollectionRecordingResult:
     """Record collection evidence after validating staged item content."""
     normalized_source = SourceId(str(source_id))
@@ -468,7 +469,7 @@ def record_collection_acquisition(
         observed_at=inventory.observed_at,
         media_type="application/json",
         metadata={"collection": True, "adapter_execution": True, "snapshot_id": str(snapshot.snapshot_id)},
-        inputs=tuple(state.content_observations),
+        inputs=(*input_observation_ids, *state.content_observations),
     )
     observations = (*state.observations, execution.observation_id)
     return CollectionRecordingResult(

@@ -13,6 +13,7 @@ from efloud.adapters import (
     AdapterRegistry,
     HttpAcquisition,
 )
+from efloud.derived import DerivedResult
 from efloud.engine import Engine
 from efloud.models import EngineConfig
 from efloud.planner import SyncPlanner
@@ -81,11 +82,11 @@ class DependentTask:
     def repository_parameters():
         return {"fixture": True}
 
-    async def run(self, *, sync_root, manifest, sources):
-        del sync_root, manifest, sources
+    async def run(self, *, context):
+        del context
         self.calls += 1
         await asyncio.sleep(0)
-        return {"ok": True}
+        return DerivedResult()
 
 
 def _source(source_id: str) -> SourceDefinition:

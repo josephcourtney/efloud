@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
 from efloud.builtin_adapters import builtin_adapter_registry
-from efloud.compat.outputs import CompatibilityOutputs
 from efloud.executor import SyncExecutionResult, SyncExecutor
-from efloud.models import EngineConfig, SyncResult
+from efloud.models import EngineConfig
 from efloud.planner import SyncPlanner
 from efloud.repository import Repository
-from efloud.repository_compat import repository_manifest
-from efloud.repository_outputs import publish_repository_outputs
 from efloud.validation import ValidationRegistry, builtin_validation_registry
 
 if TYPE_CHECKING:
@@ -23,12 +19,11 @@ if TYPE_CHECKING:
     from efloud.planning import SyncPlan, SyncRequest
     from efloud.registry import SourceDefinition
     from efloud.repository_models import ObservationId, RunId
-    from efloud.state import MirrorState
 
 
 @dataclass(frozen=True, slots=True)
 class EngineSyncResult:
-    """Canonical operation result with optional compatibility projections isolated."""
+    """Canonical operation result independent of optional compatibility projections."""
 
     root: Path
     plan: SyncPlan
@@ -36,7 +31,6 @@ class EngineSyncResult:
     repository_run_id: RunId | None
     observations: tuple[ObservationId, ...]
     skipped_source_ids: tuple[str, ...]
-    compatibility: CompatibilityOutputs
 
     @property
     def ok(self) -> bool:
@@ -108,35 +102,9 @@ class Engine:
         return tuple(sorted(skipped))
 
     async def sync(self, request: SyncRequest | None = None) -> EngineSyncResult:
-        """Plan, execute typed operations, then publish repository-derived compatibility views."""
+        """Plan and execute typed repository operations."""
         plan = self.plan(request)
         execution = await self.executor.execute(plan=plan, config=self.config, repository=self.repository)
-        current_manifest = repository_manifest(
-            self.repository,
-            cfg=self.config,
-            run_id=execution.run_id,
-        )
-        manifest_path: Path | None = None
-        mirror_state: MirrorState | None = None
-        mirror_state_path: Path | None = None
-        if execution.run_id is not None and not plan.request.dry_run:
-            with contextlib.suppress(OSError):
-                outputs = publish_repository_outputs(
-                    self.repository,
-                    cfg=self.config,
-                    run_id=execution.run_id,
-                )
-                current_manifest = outputs.manifest
-                manifest_path = outputs.canonical_manifest_path
-                mirror_state = outputs.mirror_state
-                mirror_state_path = outputs.mirror_state_path
-
-        sync_result = SyncResult(
-            ok=execution.ok,
-            root=self.config.root,
-            manifest_path=manifest_path,
-            manifest=current_manifest,
-        )
         return EngineSyncResult(
             root=self.config.root,
             plan=plan,
@@ -144,13 +112,6 @@ class Engine:
             repository_run_id=execution.run_id,
             observations=execution.observations,
             skipped_source_ids=self._skipped_source_ids(plan, execution),
-            compatibility=CompatibilityOutputs(
-                sync_result=sync_result,
-                repository_manifest=current_manifest,
-                repository_manifest_path=manifest_path,
-                repository_mirror_state=mirror_state,
-                repository_mirror_state_path=mirror_state_path,
-            ),
         )
 
 

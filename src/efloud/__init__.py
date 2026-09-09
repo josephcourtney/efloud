@@ -31,7 +31,7 @@ from efloud.datasets import (
     resolve_dataset,
 )
 from efloud.derivation import DependencySemantics, DerivationKey, DerivedTaskSpec
-from efloud.derived import RepositoryDerivedTask
+from efloud.derived import DerivedOutput, DerivedResult, DerivedTask, ExtensionContext, RepositoryDerivedTask
 from efloud.engine import Engine, EngineSyncResult
 from efloud.executor import OperationExecutionResult, SyncExecutionResult
 from efloud.inventory import (
@@ -128,6 +128,9 @@ __all__ = [
     "DefaultSyncPolicy",
     "DependencySemantics",
     "DerivationKey",
+    "DerivedOutput",
+    "DerivedResult",
+    "DerivedTask",
     "DerivedTaskSpec",
     "DetachedDatasetManifest",
     "Engine",
@@ -136,6 +139,7 @@ __all__ = [
     "ExactObservation",
     "ExactSourceSnapshot",
     "ExportPlan",
+    "ExtensionContext",
     "FilesystemBlobStore",
     "HttpAcquisition",
     "ImmutableDataset",

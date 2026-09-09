@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from efloud.adapters import HttpAcquisition, RsyncAcquisition
+from efloud.compat.outputs import project_execution
 from efloud.engine import Engine
 from efloud.http_adapter import HttpSourceAdapter
 from efloud.models import EngineConfig
@@ -50,15 +51,16 @@ def test_engine_manifest_property_and_canonical_file_are_repository_derived(
     monkeypatch.setattr(HttpSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync())
-        assert result.compatibility.repository_manifest is not None
-        assert result.compatibility.manifest is result.compatibility.repository_manifest
-        assert result.compatibility.legacy_manifest is result.compatibility.sync_result.manifest
-        assert result.compatibility.manifest["results"]["http"]["http"]["repository_backed"] is True
-        assert result.compatibility.repository_manifest_path is not None
-        persisted = json.loads(result.compatibility.repository_manifest_path.read_text(encoding="utf-8"))
-        assert persisted == result.compatibility.manifest
-        assert result.compatibility.repository_mirror_state is None
-        assert result.compatibility.repository_mirror_state_path is None
+        outputs = project_execution(engine.repository, config=engine.config, result=result)
+        assert outputs.repository_manifest is not None
+        assert outputs.manifest is outputs.repository_manifest
+        assert outputs.legacy_manifest is outputs.sync_result.manifest
+        assert outputs.manifest["results"]["http"]["http"]["repository_backed"] is True
+        assert outputs.repository_manifest_path is not None
+        persisted = json.loads(outputs.repository_manifest_path.read_text(encoding="utf-8"))
+        assert persisted == outputs.manifest
+        assert outputs.repository_mirror_state is None
+        assert outputs.repository_mirror_state_path is None
         assert result.repository_run_id == result.execution.run_id
         assert result.plan.operation("source:http").producer.producer_id == "efloud:rest"
 
@@ -106,10 +108,11 @@ def test_engine_publishes_repository_mirror_state_after_complete_rsync_reconcili
     monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync())
-        assert result.compatibility.repository_mirror_state is not None
-        assert result.compatibility.repository_mirror_state_path is not None
-        assert result.compatibility.repository_mirror_state_path.is_file()
-        assert result.compatibility.repository_mirror_state.sources[0].source_id == "mirror"
+        outputs = project_execution(engine.repository, config=engine.config, result=result)
+        assert outputs.repository_mirror_state is not None
+        assert outputs.repository_mirror_state_path is not None
+        assert outputs.repository_mirror_state_path.is_file()
+        assert outputs.repository_mirror_state.sources[0].source_id == "mirror"
 
 
 def test_engine_does_not_replace_mirror_state_from_partial_only_history(
@@ -157,6 +160,7 @@ def test_engine_does_not_replace_mirror_state_from_partial_only_history(
     monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync())
-        assert result.compatibility.repository_mirror_state is None
-        assert result.compatibility.repository_mirror_state_path is None
+        outputs = project_execution(engine.repository, config=engine.config, result=result)
+        assert outputs.repository_mirror_state is None
+        assert outputs.repository_mirror_state_path is None
         assert state_path.read_text(encoding="utf-8") == '{"legacy":true}'

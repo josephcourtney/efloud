@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from efloud.models import EngineConfig
     from efloud.planning import PlannedOperation
     from efloud.registry import SourceDefinition, SourceKind
+    from efloud.repository_models import ObservationId
     from efloud.repository_view import RepositoryView
     from efloud.transport.rsync_inventory import RsyncInventory
 
@@ -109,6 +110,7 @@ class CollectionAcquisition:
     observed_at: float
     payload: JsonObject | None = None
     error: str | None = None
+    input_observation_ids: tuple[ObservationId, ...] = ()
 
 
 type SourceAcquisition = HttpAcquisition | RsyncAcquisition | CollectionAcquisition

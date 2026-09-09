@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
-async def _unused_enumerator(*, sync_root, manifest, sources):
-    del sync_root, manifest, sources
+async def _unused_enumerator(*, context):
+    del context
     await asyncio.sleep(0)
     return []
 

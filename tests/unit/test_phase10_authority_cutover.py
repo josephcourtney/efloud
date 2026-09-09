@@ -8,6 +8,7 @@ import pytest
 
 from efloud.adapters import HttpAcquisition
 from efloud.adoption import adopt_existing_store
+from efloud.compat.outputs import project_execution
 from efloud.engine import Engine
 from efloud.http_adapter import HttpSourceAdapter
 from efloud.models import EngineConfig
@@ -114,15 +115,16 @@ def test_targeted_engine_sync_preserves_untouched_state_without_manifest_merge(
     monkeypatch.setattr(HttpSourceAdapter, "acquire", fake_acquire)
     with Engine.from_config(config) as engine:
         result = asyncio.run(engine.sync(SyncRequest(source_ids=("a",))))
+        outputs = project_execution(engine.repository, config=engine.config, result=result)
 
-    assert set(result.compatibility.manifest["results"]["http"]) == {"a", "b"}
-    assert result.compatibility.manifest["results"]["http"]["b"]["content_id"] == str(b_observation.content_id)
+    assert set(outputs.manifest["results"]["http"]) == {"a", "b"}
+    assert outputs.manifest["results"]["http"]["b"]["content_id"] == str(b_observation.content_id)
     assert result.skipped_source_ids == ("b",)
-    assert json.loads(canonical.read_text(encoding="utf-8")) == result.compatibility.manifest
+    assert json.loads(canonical.read_text(encoding="utf-8")) == outputs.manifest
 
     timestamped = list((tmp_path / config.log_dir).glob("sync-manifest-*.json"))
     assert len(timestamped) == 1
-    assert json.loads(timestamped[0].read_text(encoding="utf-8")) == result.compatibility.manifest
+    assert json.loads(timestamped[0].read_text(encoding="utf-8")) == outputs.manifest
 
     canonical.unlink()
     timestamped[0].unlink()

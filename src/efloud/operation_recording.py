@@ -6,19 +6,17 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
-import anyio
-
 from efloud.adapters import CollectionAcquisition, HttpAcquisition, RsyncAcquisition, SourceAcquisition
 from efloud.collection_recording import record_collection_acquisition
-from efloud.derived import RepositoryDerivedTask
-from efloud.json_types import JsonObject, JsonValue, copy_json_mapping, json_mapping_or_none
-from efloud.repository_compat import repository_manifest
+from efloud.derived import DerivedResult, ExtensionContext, RepositoryDerivedTask, source_inputs
+from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_models import ObservationId, TreeEntry, canonical_json_bytes
 from efloud.rsync_reconciliation import reconcile_rsync_inventory
 
 if TYPE_CHECKING:
     from efloud.derived import DerivedTask
     from efloud.inventory import IntegrityExpectation
+    from efloud.json_types import JsonObject
     from efloud.models import EngineConfig
     from efloud.planning import PlannedOperation
     from efloud.registry import SourceDefinition
@@ -310,6 +308,7 @@ def _record_collection(
         run_id=run_id,
         operation_id=operation_id,
         observed_at=acquisition.observed_at,
+        input_observation_ids=acquisition.input_observation_ids,
     )
     failed = acquisition.status == "failed" or recorded.unresolved_count > 0
     details: JsonObject = {
@@ -366,26 +365,8 @@ def record_source_acquisition(
     )
 
 
-def _current_inputs(repository: Repository, source_ids: tuple[str, ...]) -> tuple[ObservationId, ...]:
-    wanted = set(source_ids)
-    observations: list[ObservationId] = []
-    for artifact_key in repository.artifact_keys():
-        observation = repository.latest_observation(artifact_key)
-        if observation is None or observation.source_id is None or str(observation.source_id) not in wanted:
-            continue
-        observations.append(observation.observation_id)
-    return tuple(sorted(observations, key=str))
-
-
 def _derived_task(config: EngineConfig, name: str) -> DerivedTask | None:
     return next((task for task in config.derived_tasks if task.name == name), None)
-
-
-async def _materialized_output(value: JsonValue | None) -> Path | None:
-    if not isinstance(value, str):
-        return None
-    path = Path(value)
-    return path if await anyio.to_thread.run_sync(path.is_file) else None
 
 
 async def run_derived_operation(
@@ -401,26 +382,31 @@ async def run_derived_operation(
     if task is None:
         return RecordedOperation("failed", details={"error": f"Unknown derived task: {operation.subject}"})
     input_source_ids = task.repository_input_source_ids if isinstance(task, RepositoryDerivedTask) else ()
-    inputs = _current_inputs(repository, input_source_ids)
-    manifest = repository_manifest(repository, cfg=config)
+    input_observations = source_inputs(repository, input_source_ids)
+    inputs = tuple(item.observation_id for item in input_observations)
     try:
-        raw_payload = await task.run(
-            sync_root=Path(config.root),
-            manifest=manifest,
-            sources=tuple(config.sources),
-        )
+        with ReadOnlyRepository(repository.root) as view:
+            result = await task.run(
+                context=ExtensionContext(
+                    repository=view,
+                    workspace=Path(config.root),
+                    sources=tuple(config.sources),
+                    inputs=input_observations,
+                ),
+            )
     except Exception as exc:  # ruff: ignore[blind-except] - extension tasks are isolated operation failure domains.
         return RecordedOperation("failed", details={"error": f"{type(exc).__name__}: {exc}"})
-    mapping = json_mapping_or_none(raw_payload)
-    if mapping is None:
-        return RecordedOperation("failed", details={"error": "Derived task returned a non-JSON result."})
-    payload = copy_json_mapping(mapping)
+    if not isinstance(result, DerivedResult):
+        return RecordedOperation("failed", details={"error": "Derived task must return DerivedResult."})
+    payload = result.details
     observations: list[ObservationId] = []
-    output_path = await _materialized_output(payload.get("dest"))
-    if output_path is not None:
+    names = [output.name for output in result.outputs]
+    if len(set(names)) != len(names) or any(not name for name in names):
+        return RecordedOperation("failed", details={"error": "Derived output names must be nonempty and unique."})
+    for output in result.outputs if result.ok else ():
         output_observation = repository.ingest_path(
-            f"derived:{operation.subject}:output",
-            output_path,
+            f"derived:{operation.subject}:{output.name}",
+            output.path,
             run_id=run_id,
             operation_id=operation_id,
             observed_at=time.time(),
@@ -441,11 +427,8 @@ async def run_derived_operation(
         inputs=execution_inputs,
     )
     observations.append(execution.observation_id)
-    err = payload.get("err")
-    ok = payload.get("ok")
-    failed = (isinstance(err, int) and not isinstance(err, bool) and err > 0) or ok is False
     return RecordedOperation(
-        "failed" if failed else "succeeded",
+        "succeeded" if result.ok else "failed",
         observation_ids=tuple(observations),
         details={"execution_observation_id": str(execution.observation_id)},
     )

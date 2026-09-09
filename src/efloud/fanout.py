@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 import httpx
 
-from efloud.derived import DerivedTask
+from efloud.derived import DerivedResult, DerivedTask, ExtensionContext
 from efloud.fs import atomic_write_bytes, atomic_write_text, safe_json_dump
 from efloud.inventory import (
     ChangeToken,
@@ -17,6 +17,7 @@ from efloud.inventory import (
     InventoryItem,
     SourceInventory,
 )
+from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.repository_models import ArtifactKey, SourceId
 from efloud.transport.http import HttpCache, HttpCacheConfig
 
@@ -24,7 +25,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
     from efloud.json_types import JsonObject
-    from efloud.manifest import NormalizedManifest
     from efloud.registry import SourceDefinition
 
 ResponseMode = Literal["json", "bytes"]
@@ -61,9 +61,7 @@ class FanoutEnumerator(Protocol):
     async def __call__(
         self,
         *,
-        sync_root: Path,
-        manifest: NormalizedManifest,
-        sources: tuple[SourceDefinition, ...],
+        context: ExtensionContext,
     ) -> Sequence[FanoutItem] | FanoutEnumeration: ...
 
 
@@ -160,16 +158,14 @@ class RestBaseFanoutTask(DerivedTask):
     async def run(
         self,
         *,
-        sync_root: Path,
-        manifest: NormalizedManifest,
-        sources: tuple[SourceDefinition, ...],
-    ) -> dict[str, object]:
-        source = _source_by_id(self.source_id, sources)
+        context: ExtensionContext,
+    ) -> DerivedResult:
+        source = _source_by_id(self.source_id, context.sources)
         if source is None:
             msg = f"Unknown source identifier for fanout task: {self.source_id!r}"
             raise ValueError(msg)
 
-        raw_enumeration = await self.enumerator(sync_root=sync_root, manifest=manifest, sources=sources)
+        raw_enumeration = await self.enumerator(context=context)
         enumeration = normalize_fanout_enumeration(raw_enumeration)
         inventory = fanout_source_inventory(
             source_id=source.id,
@@ -177,13 +173,12 @@ class RestBaseFanoutTask(DerivedTask):
             enumeration=enumeration,
             observed_at=time.time(),
         )
-        items = list(enumeration.items)
-        dest_root = sync_root / self.dest_subdir
+        dest_root = context.workspace / self.dest_subdir
         dest_root.mkdir(parents=True, exist_ok=True)
 
-        cache_root = sync_root / "cache" / "http_cache"
+        cache_root = context.workspace / "cache" / "http_cache"
         cache_root.mkdir(parents=True, exist_ok=True)
-        rate_root = sync_root / "rate_limits"
+        rate_root = context.workspace / "rate_limits"
         rate_root.mkdir(parents=True, exist_ok=True)
 
         cache = HttpCache(
@@ -200,7 +195,7 @@ class RestBaseFanoutTask(DerivedTask):
             statuses = await _materialize_fanout(
                 cache=cache,
                 base_url=self.base_url,
-                items=items,
+                items=list(enumeration.items),
                 dest_root=dest_root,
                 response_mode=self.response_mode,
                 bucket=self.bucket,
@@ -219,7 +214,7 @@ class RestBaseFanoutTask(DerivedTask):
         }
         if inventory.upstream_identity is not None:
             enumeration_payload["upstream_identity"] = inventory.upstream_identity
-        return {
+        payload = {
             "source_id": source.id,
             "kind": source.kind.value,
             "request": {
@@ -235,6 +230,12 @@ class RestBaseFanoutTask(DerivedTask):
             "ok": ok_n,
             "err": err_n,
         }
+
+        mapping = json_mapping_or_none(payload)
+        if mapping is None:
+            msg = "Collection acquisition produced invalid JSON diagnostics."
+            raise ValueError(msg)
+        return DerivedResult(ok=err_n == 0, details=copy_json_mapping(mapping))
 
 
 async def _fetch_and_write_fanout_item(

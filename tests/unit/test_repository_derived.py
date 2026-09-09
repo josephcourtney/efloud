@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from efloud.compat.repository_derived import import_derived_results
+from efloud.derived import DerivedResult
 from efloud.fanout import RestBaseFanoutTask
 from efloud.json_types import json_mapping_or_none
 from efloud.models import EngineConfig
@@ -20,8 +21,8 @@ if TYPE_CHECKING:
     from efloud.json_types import JsonArray, JsonObject
 
 
-async def _unused_enumerator(*, sync_root, manifest, sources):
-    del sync_root, manifest, sources
+async def _unused_enumerator(*, context):
+    del context
     await asyncio.gather()
     return []
 
@@ -391,10 +392,10 @@ class DerivedFileTask:
         return {"mode": "fixture"}
 
     @staticmethod
-    async def run(*, sync_root, manifest, sources):
-        del sync_root, manifest, sources
+    async def run(*, context):
+        del context
         await asyncio.gather()
-        return {}
+        return DerivedResult()
 
 
 def test_generic_derived_task_records_output_and_execution(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from efloud.compat.repository_derived import import_derived_results
+from efloud.derived import DerivedResult
 from efloud.json_types import json_mapping_or_none
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
@@ -28,10 +29,10 @@ class DerivedTask:
         return {"kind": "fixture"}
 
     @staticmethod
-    async def run(*, sync_root, manifest, sources):
-        del sync_root, manifest, sources
+    async def run(*, context):
+        del context
         await asyncio.sleep(0)
-        return {}
+        return DerivedResult()
 
 
 def test_manifest_is_reconstructed_from_repository_state(tmp_path: Path) -> None:

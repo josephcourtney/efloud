@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-async def _unused_enumerator(*, sync_root, manifest, sources):
-    del sync_root, manifest, sources
+async def _unused_enumerator(*, context):
+    del context
     await asyncio.sleep(0)
     return []
 

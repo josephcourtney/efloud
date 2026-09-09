@@ -29,7 +29,7 @@ Run the final repository-wide quality, packaging, architecture, compatibility-re
 - Canonical derived-index validity is derivation-key based; repository-backed index tests cover deterministic reuse and parameter-sensitive invalidation.
 - Public temporal selection uses timezone-aware `datetime`; dataset resolve/freeze/export and detached manifest verification remain exposed through the clean facade.
 - README and installed-wheel packaging examples use only the clean API, with an end-to-end regression covering acquire → freeze → export → detached verify → read-only reopen.
-- Dataset/export acceptance head `cecda63f8409b7ff2f16d1f0ff56a24645d6e9bf` passed the full Python 3.12 and 3.13 suites, Python 3.14 `just check` with checkout cleanliness, and the native Linux XFS export-primitives job.
+- Substantive dataset/export acceptance run #200 at `cecda63f8409b7ff2f16d1f0ff56a24645d6e9bf` passed the full Python 3.12 and 3.13 suites, Python 3.14 `just check` with checkout cleanliness, and the native Linux XFS export-primitives job; subsequent commits only finalize TODO/STATUS/CHANGELOG bookkeeping.
 
 ## Pre-cutover baseline
 

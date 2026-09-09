@@ -81,3 +81,56 @@ jobs:
 
       - name: Run complete test suite
         run: uv run just test
+
+  native-linux-export:
+    name: Native Linux export primitives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MODE: ci
+      UV_LOCKED: "true"
+      UV_PYTHON: "3.14"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+
+      - name: Sync locked development environment
+        run: uv sync
+
+      - name: Prepare reflink-capable XFS filesystem
+        run: |
+          if ! command -v mkfs.xfs >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xfsprogs
+          fi
+          truncate -s 512M "$RUNNER_TEMP/efloud-xfs.img"
+          mkfs.xfs -f -m reflink=1 "$RUNNER_TEMP/efloud-xfs.img"
+          sudo mkdir -p /mnt/efloud-xfs
+          sudo mount -o loop,nouuid "$RUNNER_TEMP/efloud-xfs.img" /mnt/efloud-xfs
+          sudo chown "$(id -u):$(id -g)" /mnt/efloud-xfs
+
+      - name: Exercise native FICLONE and RENAME_NOREPLACE
+        env:
+          EFLOUD_NATIVE_COW_TEST_ROOT: /mnt/efloud-xfs
+        run: >-
+          uv run pytest
+          tests/unit/test_dataset_export_public_acceptance.py::test_linux_native_reflink_public_export_on_required_cow_filesystem
+          tests/unit/test_dataset_export_public_acceptance.py::test_linux_atomic_no_replace_publication_preserves_existing_destination
+
+      - name: Unmount acceptance filesystem
+        if: always()
+        run: |
+          if mountpoint -q /mnt/efloud-xfs; then
+            sudo umount /mnt/efloud-xfs
+          fi

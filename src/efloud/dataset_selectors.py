@@ -93,7 +93,7 @@ class LatestCompleteSourceSnapshot:
         _check_times(self.before)
 
     def snapshot(self, repository: RepositoryView) -> SourceSnapshot:
-        for snapshot in repository.source_snapshots_for(self.source_id, limit=-1):
+        for snapshot in repository.source_snapshots_for(self.source_id, limit=None):
             if snapshot.complete and (self.before is None or snapshot.observed_at <= self.before):
                 return snapshot
         raise KeyError(self.source_id)

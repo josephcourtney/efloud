@@ -9,15 +9,15 @@ from typing import TYPE_CHECKING
 import pytest
 
 import efloud.repository_compat as compatibility
+from efloud.collections import CollectionContext, CollectionDefinition, CollectionInventory
 from efloud.compat.extensions import LegacyEnumeratorAdapter, LegacyTaskAdapter
-from efloud.derived import DerivedOutput, DerivedResult, ExtensionContext
+from efloud.derivation import DerivedContext, DerivedOutput, DerivedResult, DerivedTaskSpec
 from efloud.engine import Engine
-from efloud.fanout import FanoutEnumeration, RestBaseFanoutTask
-from efloud.models import EngineConfig
+from efloud.fanout import FanoutEnumeration
 from efloud.planning import SyncRequest
 from efloud.read_only_repository import ReadOnlyRepository
-from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
+from efloud.sources import CollectionSource
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,15 +28,20 @@ pytestmark = [pytest.mark.medium, pytest.mark.integration, pytest.mark.timeout(3
 @dataclass
 class CopyTask:
     name: str = "copy"
-    repository_version: str = "1"
-    repository_input_source_ids: tuple[str, ...] = ("input",)
+    input_source_ids: tuple[str, ...] = ("input",)
+    output_names: tuple[str, ...] = ("copy",)
 
-    @staticmethod
-    def repository_parameters():
-        return {"mode": "copy"}
+    @property
+    def spec(self) -> DerivedTaskSpec:
+        return DerivedTaskSpec(
+            task_id="efloud:derived:copy",
+            task_version="1",
+            deterministic=True,
+            dependency_semantics="content",
+            parameters={"mode": "copy"},
+        )
 
-    async def run(self, *, context: ExtensionContext) -> DerivedResult:
-        del self
+    async def run(self, *, context: DerivedContext) -> DerivedResult:
         assert isinstance(context.repository, ReadOnlyRepository)
         assert not hasattr(context.repository, "ingest_bytes")
         assert len(context.inputs) == 1
@@ -48,11 +53,16 @@ class CopyTask:
 
 
 def _seed(repository: Repository) -> str:
-    repository.register_source("input", {"kind": "HTTP"})
+    repository.register_source("input", {"adapter_id": "fixture:input"})
     run = repository.start_run(started_at=1.0)
     operation = repository.start_operation(run_id=run, kind="fixture", subject="input", started_at=1.0)
     observation = repository.ingest_bytes(
-        "source:input", b"fixture", run_id=run, operation_id=operation, source_id="input", observed_at=1.0
+        "source:input",
+        b"fixture",
+        run_id=run,
+        operation_id=operation,
+        source_id="input",
+        observed_at=1.0,
     )
     repository.finish_operation(operation, status="succeeded", finished_at=2.0)
     repository.finish_run(run, status="succeeded", finished_at=2.0)
@@ -66,33 +76,35 @@ def test_extensions_execute_without_compatibility_manifests(tmp_path: Path, monk
 
     monkeypatch.setattr(compatibility, "repository_manifest", unavailable)
 
-    async def enumerate_empty(*, context):
+    async def enumerate_empty(*, context: CollectionContext) -> CollectionInventory:
         assert isinstance(context.repository, ReadOnlyRepository)
         assert len(context.inputs) == 1
         await asyncio.sleep(0)
-        return FanoutEnumeration((), complete=True)
+        return CollectionInventory((), complete=True)
 
-    source = SourceDefinition("collection", "Collection", "https://example.test/", SourceKind.REST_BASE)
-    collection = RestBaseFanoutTask(
-        "collection",
-        source.id,
-        source.url,
-        enumerate_empty,
-        "collection",
-        repository_input_source_ids=("input",),
+    source = CollectionSource("collection", "https://example.test/", description="Collection")
+    collection = CollectionDefinition(
+        source_id=source.id,
+        enumerator=enumerate_empty,
+        dest_subdir="collection",
+        input_source_ids=("input",),
     )
     with Repository(tmp_path) as repository:
         input_id = _seed(repository)
-        config = EngineConfig(root=tmp_path, sources=[source], derived_tasks=(CopyTask(), collection))
-        with Engine.from_config(config, repository=repository) as engine:
-            result = asyncio.run(engine.sync())
+        engine = Engine(
+            repository,
+            (source,),
+            derived_tasks=(CopyTask(),),
+            collections=(collection,),
+        )
+        result = asyncio.run(engine.sync())
         assert result.ok, result.execution
         output = repository.latest_observation("derived:copy:copy")
         assert output is not None
         assert {str(edge.input_observation_id) for edge in repository.provenance_inputs(output.observation_id)} == {
             input_id
         }
-        collection_result = repository.latest_observation("derived:collection:execution")
+        collection_result = repository.latest_observation("source:collection:collection-execution")
         assert collection_result is not None
         assert {
             str(edge.input_observation_id) for edge in repository.provenance_inputs(collection_result.observation_id)
@@ -122,21 +134,34 @@ def test_legacy_extensions_require_explicit_adapters(tmp_path: Path) -> None:
         return FanoutEnumeration(())
 
     with Repository(tmp_path) as repository:
-        config = EngineConfig(root=tmp_path, sources=[], derived_tasks=(LegacyTaskAdapter(OldTask()),))
-        with Engine.from_config(config, repository=repository) as engine:
-            assert asyncio.run(engine.sync(SyncRequest(source_ids=()))).ok
+        adapter = LegacyTaskAdapter(OldTask())
+        engine = Engine(repository, (), derived_tasks=(adapter,))
+        assert asyncio.run(engine.sync(SyncRequest(source_ids=()))).ok
         with ReadOnlyRepository(tmp_path) as view:
-            result = asyncio.run(LegacyEnumeratorAdapter(old_enumerator)(context=ExtensionContext(view, tmp_path, ())))
-            assert result == FanoutEnumeration(())
+            source = CollectionSource("legacy", "https://example.test/")
+            result = asyncio.run(
+                LegacyEnumeratorAdapter(old_enumerator)(
+                    context=CollectionContext(view, tmp_path, source, ()),
+                )
+            )
+            assert result == CollectionInventory(())
 
 
 @pytest.mark.parametrize("mode", ["failed", "duplicate", "empty-name", "invalid-result", "raised"])
 def test_derived_failures_never_publish_outputs(tmp_path: Path, mode: str) -> None:
     class Task:
         name = "failed"
+        input_source_ids: tuple[str, ...] = ()
+        output_names: tuple[str, ...] = ("output",)
+        spec = DerivedTaskSpec(
+            task_id="efloud:derived:failed",
+            task_version="1",
+            deterministic=False,
+            dependency_semantics="observation",
+        )
 
         @staticmethod
-        async def run(*, context):
+        async def run(*, context: DerivedContext):
             await asyncio.sleep(0)
             if mode == "raised":
                 msg = "extension failure"
@@ -147,18 +172,12 @@ def test_derived_failures_never_publish_outputs(tmp_path: Path, mode: str) -> No
             output = DerivedOutput(name, context.workspace / "missing")
             return DerivedResult(ok=mode != "failed", outputs=(output, output) if mode == "duplicate" else (output,))
 
-    # The malformed runtime result is deliberately supplied through an untyped
-    # extension factory, just as independently installed extensions can do.
-    def configured_task():
-        return Task()
-
-    config = EngineConfig(root=tmp_path, sources=[], derived_tasks=(configured_task(),))
-    with Engine.from_config(config) as engine:
-        result = asyncio.run(engine.sync())
+    with Repository(tmp_path) as repository:
+        result = asyncio.run(Engine(repository, (), derived_tasks=(Task(),)).sync())
         assert not result.ok
-        assert engine.repository.latest_observation("derived:failed:output") is None
+        assert repository.latest_observation("derived:failed:output") is None
         assert result.repository_run_id is not None
-        run = engine.repository.run(result.repository_run_id)
+        run = repository.run(result.repository_run_id)
         assert run is not None
         assert run.status == "failed"
 
@@ -185,7 +204,7 @@ def test_legacy_task_status_translation(tmp_path: Path, payload) -> None:
     assert adapter.repository_input_source_ids == ("input",)
     assert adapter.repository_parameters() == {"fixture": True}
     with Repository(tmp_path), ReadOnlyRepository(tmp_path) as view:
-        result = asyncio.run(adapter.run(context=ExtensionContext(view, tmp_path, ())))
+        result = asyncio.run(adapter.run(context=DerivedContext(view, tmp_path, ())))
         assert result.ok == (payload.get("ok") is not False and payload.get("err") != 2)
 
 
@@ -212,7 +231,7 @@ def test_legacy_task_explicit_output_and_invalid_json(tmp_path: Path) -> None:
             return {"bad": output}
 
     with Repository(tmp_path), ReadOnlyRepository(tmp_path) as view:
-        context = ExtensionContext(view, tmp_path, ())
+        context = DerivedContext(view, tmp_path, ())
         adapter = LegacyTaskAdapter(FileTask())
         assert adapter.repository_version == "1"
         assert adapter.repository_input_source_ids == ()

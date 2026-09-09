@@ -10,8 +10,8 @@ from efloud.dataset_selectors import snapshot_observations
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
+    from efloud.repository_capabilities import DatasetRepository as RepositoryView
     from efloud.repository_models import ArtifactObservation
-    from efloud.repository_view import RepositoryView
 
 
 class DatasetConstraintError(ValueError):

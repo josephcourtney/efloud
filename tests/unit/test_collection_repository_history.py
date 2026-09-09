@@ -5,17 +5,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.compat.repository_derived import import_derived_results
-from efloud.fanout import RestBaseFanoutTask
-from efloud.models import EngineConfig
-from efloud.registry import SourceDefinition, SourceKind
+from efloud.adapters import CollectionAcquisition, CollectionItemAcquisition
+from efloud.collection_adapter import CollectionSourceAdapter
+from efloud.collections import CollectionDefinition
+from efloud.engine import Engine
+from efloud.inventory import InventoryCoverage, InventoryItem, SourceInventory
 from efloud.repository import Repository
-from efloud.repository_models import SourceId
+from efloud.repository_models import ArtifactKey, SourceId
+from efloud.sources import CollectionSource
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from efloud.json_types import JsonObject
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -26,79 +26,61 @@ async def _unused_enumerator(*, context):
     return []
 
 
-def test_collection_history_survives_deleted_materialization_and_reopen(tmp_path: Path) -> None:
-    source = SourceDefinition(
-        "collection",
-        "Collection",
-        "https://api.example.test/items",
-        SourceKind.REST_BASE,
-    )
-    task = RestBaseFanoutTask(
-        name="fanout",
-        source_id=source.id,
-        base_url=source.url,
-        enumerator=_unused_enumerator,
-        dest_subdir="fanout",
-    )
-    config = EngineConfig(root=tmp_path, sources=[source], derived_tasks=(task,))
-    materialized = tmp_path / "fanout" / "alpha.json"
+def test_collection_history_survives_deleted_materialization_and_reopen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    materialized = tmp_path / "collection" / "alpha.json"
     materialized.parent.mkdir(parents=True)
     materialized.write_text('{"id":"alpha"}', encoding="utf-8")
-    payload: JsonObject = {
-        "source_id": source.id,
-        "kind": source.kind.value,
-        "request": {
-            "base_url": source.url,
-            "fanout_root": str(materialized.parent),
-            "response_mode": "json",
-        },
-        "inventory": {
-            "source_id": source.id,
-            "observed_at": 10.0,
-            "coverage": {"scope": [], "complete": True},
-            "items": [
-                {
-                    "item_id": "alpha",
-                    "artifact_key": "source:collection:item:alpha",
-                    "locator": f"{source.url}/alpha",
-                    "expected_integrity": [],
-                    "metadata": {},
-                }
-            ],
-            "metadata": {"transport": "REST_BASE", "collection": True},
-        },
-        "enumeration": {
-            "complete": True,
-            "item_count": 1,
-            "model": "source-inventory-v1",
-        },
-        "entries": {
-            "alpha": {
-                "status": "ok",
-                "item_id": "alpha",
-                "dest": str(materialized),
-                "request": {
-                    "url": f"{source.url}/alpha",
-                    "request_path": "alpha",
-                    "fanout_path": "alpha.json",
-                },
-                "metadata": {},
-            }
-        },
-        "ok": 1,
-        "err": 0,
-    }
+
+    source = CollectionSource(
+        id="collection",
+        description="Collection",
+        url="https://api.example.test/items",
+    )
+    definition = CollectionDefinition(
+        source_id=source.id,
+        enumerator=_unused_enumerator,
+        dest_subdir="collection",
+    )
+    inventory = SourceInventory(
+        source_id=SourceId(source.id),
+        observed_at=10.0,
+        coverage=InventoryCoverage(complete=True),
+        items=(
+            InventoryItem(
+                item_id="alpha",
+                artifact_key=ArtifactKey("source:collection:item:alpha"),
+                locator=f"{source.url}/alpha",
+                source_path="alpha.json",
+            ),
+        ),
+    )
+
+    async def fake_acquire(self, context):
+        del self, context
+        await asyncio.sleep(0)
+        return CollectionAcquisition(
+            source_id=source.id,
+            status="succeeded",
+            observed_at=10.0,
+            inventory=inventory,
+            items=(
+                CollectionItemAcquisition(
+                    item_id="alpha",
+                    status="ok",
+                    destination=materialized,
+                ),
+            ),
+            media_type="application/json",
+        )
+
+    monkeypatch.setattr(CollectionSourceAdapter, "acquire", fake_acquire)
 
     with Repository(tmp_path) as repository:
-        repository.register_source(SourceId(source.id), {"kind": source.kind.value})
-        run_id = repository.start_run(source_ids=(source.id,), started_at=10.0)
-        import_derived_results(
-            repository,
-            config=config,
-            run_id=run_id,
-            started_at=10.0,
-            derived_results={"fanout": payload},
-        )
+        result = asyncio.run(Engine(repository, (source,), collections=(definition,)).sync())
+        assert result.ok
         observation = repository.latest_observation("source:collection:item:alpha")
         snapshot = repository.latest_source_snapshot(source.id)
         assert observation is not None

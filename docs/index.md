@@ -17,8 +17,8 @@ See [the public API contract](api.md) for repository, acquisition, dataset, expo
 and maintenance semantics.
 
 See [Detached dataset manifest v1](dataset-manifest-v1.md) for the portable handoff
-format and the identity/byte checks a generic consumer can implement without Efloud
-or SQLite.
+format and the identity/byte checks a generic standard-library consumer can
+implement without Efloud or SQLite.
 
 ## Architecture Decision Records
 

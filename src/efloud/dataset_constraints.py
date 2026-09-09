@@ -80,7 +80,7 @@ class DatasetConstraints:
     def _snapshot_check(repository: RepositoryView, observation: ArtifactObservation) -> JsonObject:
         matched: list[str] = []
         if observation.source_id is not None:
-            for snapshot in repository.source_snapshots_for(observation.source_id, limit=-1):
+            for snapshot in repository.source_snapshots_for(observation.source_id, limit=None):
                 if snapshot.complete and snapshot.run_id == observation.run_id:
                     try:
                         members = snapshot_observations(repository, snapshot)

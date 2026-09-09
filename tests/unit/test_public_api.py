@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -11,6 +11,9 @@ from efloud import DatasetManifest, DatasetSpec, Engine, HttpSource, Repository,
 from efloud.adapters import HttpAcquisition
 from efloud.errors import RepositoryOpenError
 from efloud.http_adapter import HttpSourceAdapter
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -52,8 +55,9 @@ def test_repository_create_and_read_only_open_are_explicit(tmp_path: Path) -> No
 
 
 def test_dataset_spec_requires_aware_datetimes() -> None:
+    naive = datetime(2026, 9, 9)  # noqa: DTZ001 - deliberately verify rejection of a naive datetime.
     with pytest.raises(ValueError, match="timezone-aware"):
-        DatasetSpec.latest_before("source:example", datetime(2026, 9, 9))
+        DatasetSpec.latest_before("source:example", naive)
 
     spec = DatasetSpec.latest_before("source:example", datetime(2026, 9, 9, tzinfo=UTC))
     assert spec is not None

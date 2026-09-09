@@ -35,6 +35,9 @@ an explicit time and grace period. Historical pruning is outside this decision.
 ## Consequences
 
 Only one writable repository instance per local root is supported at a time.
-Consumers should use ReadOnlyRepository. Existing supported schema upgrades stay
-available, but migration fixtures and compatibility APIs are explicitly isolated.
-Detached manifests are integrity records, not signatures or proof of authenticity.
+Consumers should use a read-only repository mode. Detached manifests are integrity
+records, not signatures or proof of authenticity.
+
+ADR-0010 supersedes the earlier compatibility consequence of this decision:
+historical alpha repository schema upgrades and compatibility APIs are no longer
+retained as supported runtime behavior.

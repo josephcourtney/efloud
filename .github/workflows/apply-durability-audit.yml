@@ -14,106 +14,30 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Apply durability changes
+      - name: Fix durability test formatting
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(path: str, old: str, new: str) -> None:
+          for path in (
+              "tests/unit/test_phase14_17.py",
+              "tests/unit/test_phase11_planning_execution.py",
+          ):
               file = Path(path)
               text = file.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{path}: expected one match, found {count}")
-              file.write_text(text.replace(old, new, 1))
-
-          # Reject missing producer metadata instead of manufacturing a legacy producer.
-          replace_once(
-              "src/efloud/metadata_store.py",
-              '''    @property\n    def producer(self) -> ProducerRef:\n        raw = json_mapping_or_none(self.parameters.get("producer"))\n        if raw is None:\n            return ProducerRef("efloud:legacy", "0")\n        return ProducerRef.from_mapping(raw)\n''',
-              '''    @property\n    def producer(self) -> ProducerRef:\n        raw = json_mapping_or_none(self.parameters.get("producer"))\n        if raw is None:\n            msg = f"Operation {self.operation_id} has no producer metadata."\n            raise ValueError(msg)\n        return ProducerRef.from_mapping(raw)\n''',
-          )
-
-          # Every content mutation must prove that the writer lease is still active.
-          replace_once(
-              "src/efloud/repository.py",
-              '''    def store_bytes_content(self, data: bytes, *, media_type: str | None = None) -> ContentRef:\n        """Store immutable bytes and register content identity without creating an observation."""\n        content = self.blobs.put_bytes(data, media_type=media_type)\n''',
-              '''    def store_bytes_content(self, data: bytes, *, media_type: str | None = None) -> ContentRef:\n        """Store immutable bytes and register content identity without creating an observation."""\n        self._writer_lease.require_active()\n        content = self.blobs.put_bytes(data, media_type=media_type)\n''',
-          )
-
-          # Remove the final internal -1 sentinel for unbounded source snapshot history.
-          for path in (
-              "src/efloud/metadata_store.py",
-              "src/efloud/repository_capabilities.py",
-              "src/efloud/repository.py",
-              "src/efloud/read_only_repository.py",
-          ):
-              text = Path(path).read_text()
-              marker = "    def source_snapshots_for("
+              marker = r"\n\ndef test_"
+              if marker not in text:
+                  raise SystemExit(f"{path}: malformed append marker not found")
               start = text.index(marker)
-              end = text.index("    ) -> tuple[SourceSnapshot, ...]:", start)
-              block = text[start:end]
-              if "limit: int = 50" not in block:
-                  raise SystemExit(f"{path}: source snapshot limit signature not found")
-              block = block.replace("limit: int = 50", "limit: int | None = 50", 1)
-              Path(path).write_text(text[:start] + block + text[end:])
-
-          replace_once(
-              "src/efloud/sqlite_metadata.py",
-              '''    def source_snapshots_for(\n        self,\n        source_id: SourceId,\n        *,\n        limit: int = 50,\n    ) -> tuple[SourceSnapshot, ...]:\n        rows = self._connection.execute(\n            """\n            SELECT * FROM source_snapshots\n            WHERE source_id = ?\n            ORDER BY observed_at DESC, snapshot_id DESC\n            LIMIT ?\n            """,\n            (str(source_id), limit),\n        ).fetchall()\n        return tuple(self._source_snapshot_from_row(row) for row in rows)\n''',
-              '''    def source_snapshots_for(\n        self,\n        source_id: SourceId,\n        *,\n        limit: int | None = 50,\n    ) -> tuple[SourceSnapshot, ...]:\n        if limit is not None and limit < 0:\n            msg = "limit must be nonnegative or None"\n            raise ValueError(msg)\n        query = """\n            SELECT * FROM source_snapshots\n            WHERE source_id = ?\n            ORDER BY observed_at DESC, snapshot_id DESC\n        """\n        if limit is None:\n            rows = self._connection.execute(query, (str(source_id),)).fetchall()\n        else:\n            rows = self._connection.execute(f"{query} LIMIT ?", (str(source_id), limit)).fetchall()\n        return tuple(self._source_snapshot_from_row(row) for row in rows)\n''',
-          )
-
-          replace_once(
-              "src/efloud/api.py",
-              '''        return self._repository._view.source_snapshots_for(source_id, limit=-1 if limit is None else limit)\n''',
-              '''        return self._repository._view.source_snapshots_for(source_id, limit=limit)\n''',
-          )
-          replace_once(
-              "src/efloud/maintenance.py",
-              '''            for snapshot in repository.source_snapshots_for(source.source_id, limit=-1):\n''',
-              '''            for snapshot in repository.source_snapshots_for(source.source_id, limit=None):\n''',
-          )
-
-          # Fail closed before destructive cleanup if semantic metadata or reachable content is invalid.
-          replace_once(
-              "src/efloud/maintenance.py",
-              '''    def _blobs(self) -> tuple[tuple[str, Path], ...]:\n''',
-              '''    @staticmethod\n    def _cleanup_blocking_issues(\n        connection: sqlite3.Connection,\n        repository: ReadOnlyRepository,\n        roots: dict[str, set[str]],\n    ) -> tuple[AuditIssue, ...]:\n        issues = [\n            AuditIssue("sqlite-integrity", str(row[0]))\n            for row in connection.execute("PRAGMA integrity_check")\n            if row[0] != "ok"\n        ]\n        issues.extend(\n            AuditIssue("dangling-reference", str(row[0]), str(tuple(row)))\n            for row in connection.execute("PRAGMA foreign_key_check")\n        )\n        if issues:\n            return tuple(sorted(issues))\n        try:\n            issues.extend(\n                issue\n                for issue in RepositoryMaintenance._semantic_issues(connection, repository)\n                if issue.code != "running-lifecycle"\n            )\n        except (ValueError, TypeError, KeyError) as error:\n            issues.append(AuditIssue("invalid-semantic-metadata", "metadata", str(error)))\n        for content_id in sorted(roots):\n            if repository.content(content_id) is None:\n                issues.append(AuditIssue("missing-content-metadata", content_id))\n            elif not repository.contains_content(content_id):\n                issues.append(AuditIssue("missing-blob", content_id))\n            elif not repository.verify_content(content_id):\n                issues.append(AuditIssue("corrupt-blob", content_id))\n        return tuple(sorted(issues))\n\n    def _blobs(self) -> tuple[tuple[str, Path], ...]:\n''',
-          )
-          replace_once(
-              "src/efloud/maintenance.py",
-              '''            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:\n                msg = "Cleanup refused: repair dangling metadata references first"\n                raise ValueError(msg)\n            roots = self._reachability(connection)\n            known = {row[0] for row in connection.execute("SELECT content_id FROM content_objects")}\n''',
-              '''            roots = self._reachability(connection)\n            with ReadOnlyRepository(self.root) as repository:\n                blockers = self._cleanup_blocking_issues(connection, repository, roots)\n            if blockers:\n                summary = ", ".join(f"{issue.code}:{issue.subject}" for issue in blockers)\n                msg = f"Cleanup refused: repository audit failed ({summary})"\n                raise ValueError(msg)\n            known = {row[0] for row in connection.execute("SELECT content_id FROM content_objects")}\n''',
-          )
-
-          # Extend durability acceptance with only the uncovered invariants.
-          phase = Path("tests/unit/test_phase14_17.py")
-          text = phase.read_text()
-          old = '''    repository.close()\n    with pytest.raises(RuntimeError, match="closed"):\n        repository.store_path_content(path)\n    maintenance = RepositoryMaintenance(tmp_path)\n'''
-          new = '''    repository.close()\n    with pytest.raises(RuntimeError, match="closed"):\n        repository.store_path_content(path)\n    with pytest.raises(RuntimeError, match="closed"):\n        repository.store_bytes_content(b"unused")\n    maintenance = RepositoryMaintenance(tmp_path)\n'''
-          if text.count(old) != 1:
-              raise SystemExit("closed writer guard anchor not found")
-          text = text.replace(old, new, 1)
-          append = r'''\n\ndef test_cleanup_grace_period_boundary_is_inclusive(tmp_path: Path) -> None:\n    with Repository(tmp_path) as repository:\n        content = repository.store_bytes_content(b"unused")\n        blob = repository.blobs.path_for(content.content_id)\n    os.utime(blob, (100.0, 100.0))\n    maintenance = RepositoryMaintenance(tmp_path)\n    assert maintenance.cleanup(now=109.999, grace_period=10.0) == ()\n    candidates = maintenance.cleanup(now=110.0, grace_period=10.0)\n    assert len(candidates) == 1\n    assert candidates[0].content_id == content.content_id\n\n\ndef test_cleanup_fails_closed_on_semantic_corruption(tmp_path: Path) -> None:\n    with Repository(tmp_path) as repository:\n        _record(repository)\n        unused = repository.store_bytes_content(b"unused")\n        unused_blob = repository.blobs.path_for(unused.content_id)\n    os.utime(unused_blob, (1.0, 1.0))\n    with closing(sqlite3.connect(tmp_path / "metadata.sqlite")) as connection, connection:\n        connection.execute("UPDATE tree_entries SET relative_path = 'tampered.txt'")\n    maintenance = RepositoryMaintenance(tmp_path)\n    with pytest.raises(ValueError, match="tree-identity"):\n        maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)\n    assert unused_blob.is_file()\n\n\ndef test_cleanup_fails_closed_on_reachable_corrupt_content(tmp_path: Path) -> None:\n    with Repository(tmp_path) as repository:\n        observation, _ = _record(repository)\n        unused = repository.store_bytes_content(b"unused")\n        unused_blob = repository.blobs.path_for(unused.content_id)\n        referenced_blob = repository.blobs.path_for(observation.content_id)\n    os.utime(unused_blob, (1.0, 1.0))\n    referenced_blob.write_bytes(b"corrupt")\n    maintenance = RepositoryMaintenance(tmp_path)\n    with pytest.raises(ValueError, match="corrupt-blob"):\n        maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)\n    assert unused_blob.is_file()\n\n\ndef test_cleanup_preserves_provenance_history(tmp_path: Path) -> None:\n    with Repository(tmp_path) as repository:\n        source, _ = _record(repository)\n        run = repository.start_run(started_at=10.0)\n        operation = repository.start_operation(\n            run_id=run,\n            kind="derive",\n            subject="derived",\n            started_at=10.0,\n        )\n        derived = repository.record_derived_bytes(\n            "derived:item",\n            b"derived",\n            derivation_key=None,\n            run_id=run,\n            operation_id=operation,\n            inputs=(source,),\n            observed_at=10.0,\n        )\n        repository.finish_operation(operation, status="succeeded", finished_at=10.0)\n        repository.finish_run(run, status="succeeded", finished_at=10.0)\n        source_content = source.content_id\n        derived_content = derived.content_id\n    maintenance = RepositoryMaintenance(tmp_path)\n    assert maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False) == ()\n    with ReadOnlyRepository(tmp_path) as repository:\n        assert repository.verify_content(source_content)\n        assert repository.verify_content(derived_content)\n        edges = repository.provenance_inputs(derived.observation_id)\n        assert len(edges) == 1\n        assert edges[0].input_observation_id == source.observation_id\n'''
-          if "test_cleanup_grace_period_boundary_is_inclusive" in text:
-              raise SystemExit("durability tests already appended")
-          phase.write_text(text + append)
-
-          planning = Path("tests/unit/test_phase11_planning_execution.py")
-          text = planning.read_text()
-          append = r'''\n\ndef test_dry_run_records_selection_reasons_without_mutation(tmp_path: Path) -> None:\n    adapter = RecordingHttpAdapter()\n    sources = (_source("a"), _source("b"))\n    request = SyncRequest(source_ids=("a",), dry_run=True)\n    with Repository(tmp_path) as repository:\n        engine = Engine(repository, sources, adapters=AdapterRegistry((adapter,)))\n        plan = engine.plan(request)\n        decisions = {decision.source_id: decision for decision in plan.decisions}\n        assert decisions["a"].selected is True\n        assert decisions["a"].reason == "source selected for acquisition"\n        assert decisions["b"].selected is False\n        assert decisions["b"].reason == "source not requested"\n        result = asyncio.run(engine.sync(request))\n        assert {operation.status for operation in result.execution.operations} == {"not-executed"}\n        assert adapter.calls == []\n        assert repository.artifact_keys() == ()\n'''
-          if "test_dry_run_records_selection_reasons_without_mutation" in text:
-              raise SystemExit("dry-run reason test already appended")
-          planning.write_text(text + append)
-
-          Path("docs/durability-audit.md").write_text('''# Durability audit after compatibility removal\n\nThis audit enumerates the authoritative mutation surface that remains after the clean-break compatibility deletion. Non-authoritative transport staging and detached export files are excluded.\n\n| Mutation path | Coordination / crash boundary | Required invariant | Acceptance evidence |\n| --- | --- | --- | --- |\n| Repository create/open for write | `WriterLease` is acquired before writable metadata/blob stores are exposed | At most one authoritative writer or destructive maintenance process owns a repository | public writer-contention and cross-process crash-release tests |\n| Source registration | SQLite transaction under active writer lease | definition revision history is append-only and new evidence pins the active revision | source-definition revision tests |\n| Run lifecycle | SQLite lifecycle rows under writer lease | terminal runs cannot regain running state; runs cannot finish with running operations | lifecycle transition tests |\n| Operation lifecycle | SQLite lifecycle rows under writer lease | producer identity is explicit; terminal state is one-way; recovery only converts abandoned running work to failed | producer/lifecycle and recovery tests |\n| Content staging | blob write precedes metadata registration | interruption may leave an orphan blob, never metadata pointing at bytes that were never written | injected metadata-failure and closed-writer tests |\n| Observation/provenance ingestion | one metadata transaction records content, observation, and provenance after blob staging | no partial observation/provenance bundle is published | observation-bundle failure and provenance-history tests |\n| Absence recording | single metadata transaction under writer lease | absence is published only with explicit source evidence and cannot conflict with its locator/path | absence-evidence tests |\n| Validation evidence | single validation record after immutable content exists | validation-only content remains reachable; validation failure does not mutate content | validation reuse/integrity and cleanup reachability tests |\n| Tree/source snapshots | tree content is recorded before snapshot publication; source snapshot is atomic | a crash can leave conservative unreferenced tree metadata but cannot invent a complete source snapshot | interrupted-snapshot recovery test |\n| Deterministic derived outputs/indexes | exact input observations plus derivation identity under the same writer | reuse preserves bytes but creates fresh observation/provenance evidence | derivation/index reuse tests |\n| Dataset freeze | dataset membership/specification rows commit transactionally under the writer lease | immutable membership is either recorded completely or not advanced | dataset identity/reopen and public freeze tests |\n| Cleanup | exclusive writer lease; complete reachability recomputation; semantic and reachable-content audit before deletion | destructive cleanup refuses invalid metadata/reachable corruption and deletes metadata before blobs | fail-closed cleanup, grace-boundary, validation-only, provenance, and writer coordination tests |\n| Recovery | exclusive writer lease; only `running` lifecycle records are changed | recovery never creates successful operations or complete snapshots; retry occurs in a new run | interrupted-write/snapshot and process-crash retry tests |\n\n## Findings closed by this pass\n\n- `store_bytes_content()` now checks the active writer lease before touching the blob store.\n- Missing operation producer metadata is rejected instead of receiving a synthetic legacy producer.\n- Destructive cleanup now fails closed on SQLite/FK errors, semantic identity/source/snapshot corruption, and missing or corrupt reachable content.\n- Unbounded source snapshot history uses `None` through the internal repository/storage contracts rather than translating back to `-1`.\n- Grace-period boundary, dry-run selection-reason, semantic-corruption, reachable-corruption, and provenance-preservation cases are explicit regressions.\n\n## Accepted conservative behavior\n\n`record_tree_snapshot()` can leave an unreferenced tree if the process fails after tree recording but before snapshot publication. Tree-entry content remains conservatively reachable. This leaks metadata/storage rather than inventing history or deleting referenced content, so it is safe; future tree garbage collection may reclaim it only with an independently proven reachability rule.\n''')
+              prefix = text[:start]
+              suffix = text[start:].replace(r"\n", "\n")
+              file.write_text(prefix + suffix)
           PY
-      - name: Commit durability audit
+      - name: Commit corrected tests
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src tests docs/durability-audit.md
+          git add tests
           git diff --cached --check
-          git commit -m "Reverify durability on reduced mutation surface"
+          git commit -m "Fix durability regression formatting"
           git push

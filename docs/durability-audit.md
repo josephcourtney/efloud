@@ -15,7 +15,7 @@ This audit enumerates the authoritative mutation surface that remains after the 
 | Tree/source snapshots | tree content is recorded before snapshot publication; source snapshot is atomic | a crash can leave conservative unreferenced tree metadata but cannot invent a complete source snapshot | interrupted-snapshot recovery test |
 | Deterministic derived outputs/indexes | exact input observations plus derivation identity under the same writer | reuse preserves bytes but creates fresh observation/provenance evidence | derivation/index reuse tests |
 | Dataset freeze | dataset membership/specification rows commit transactionally under the writer lease | immutable membership is either recorded completely or not advanced | dataset identity/reopen and public freeze tests |
-| Cleanup | exclusive writer lease; complete reachability recomputation; semantic and reachable-content audit before deletion | destructive cleanup refuses invalid metadata/reachable corruption and deletes metadata before blobs | fail-closed cleanup, grace-boundary, validation-only, provenance, and writer coordination tests |
+| Cleanup | exclusive writer lease even for dry-run planning; complete reachability recomputation; semantic and reachable-content audit before deletion | destructive cleanup refuses invalid metadata/reachable corruption and deletes metadata before blobs | fail-closed cleanup, grace-boundary, validation-only, provenance, and writer coordination tests |
 | Recovery | exclusive writer lease; only `running` lifecycle records are changed | recovery never creates successful operations or complete snapshots; retry occurs in a new run | interrupted-write/snapshot and process-crash retry tests |
 
 ## Findings closed by this pass

@@ -1,0 +1,27 @@
+name: Format compatibility-removal tests
+
+on:
+  push:
+    branches: [remove-backwards-compatibility]
+    paths:
+      - .github/workflows/format-compat-removal.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - run: uvx ruff format tests/contract/test_packaging.py tests/unit/test_indexing.py
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/contract/test_packaging.py tests/unit/test_indexing.py
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Format compatibility-removal tests"
+          git push origin HEAD:remove-backwards-compatibility

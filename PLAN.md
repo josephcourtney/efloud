@@ -1,235 +1,70 @@
 # PLAN.md
 
-Purpose:
-
-- define the remaining execution strategy for the repository-centered architecture in `DESIGN.md`
-- sequence work so each milestone leaves Efloud runnable, testable, and easier for downstream consumers to use
-- record ordering constraints and transitional considerations without duplicating architectural rationale or project status
-
-This file intentionally omits completed migration history. Detailed historical evolution belongs in git history; current completion state belongs in `STATUS.md`.
-
-## Execution Rules
-
-- `DESIGN.md` is authoritative for intended architecture and invariants.
-- Significant durable decisions that are costly to reverse should be captured in ADRs before implementation.
-- Prefer deleting or isolating obsolete migration mechanisms over extending dual implementations.
-- Do not introduce destructive maintenance until repository identity, migration, and coordination semantics are explicit.
-- Keep consumer-facing reads acquisition-free and non-mutating.
-- Keep the default implementation local and service-free.
-- Add protocols, storage backends, plugin discovery, or distributed features only from concrete requirements.
-- CI must verify the committed checkout; it must not make a dirty checkout pass by formatting or autofixing it in-place.
-
-## Remaining Strategy
+Purpose: define how the current design will be completed, including milestone ordering, dependencies, and contingent follow-on work. Current completion state belongs in `STATUS.md`; concrete execution tasks belong in `TODO.md`.
 
-The remaining work is ordered around the consumer boundary first, then cleanup and maintenance:
+`DESIGN.md` is authoritative for architecture, requirements, and invariants. ADR-0007, ADR-0008, and ADR-0009 record durable decisions relevant to the remaining work.
 
-1. complete immutable dataset selection and temporal/coherence policies
-2. export and materialize immutable datasets safely for consumers that should not need Efloud internals
-3. collapse the public/API compatibility perimeter to one canonical implementation path
-4. add repository audit, coordination, recovery, and safe non-historical garbage collection
-5. add historical retention/pruning only if a concrete storage requirement justifies it
-6. add new source adapters only from concrete source requirements
-7. keep advanced storage/distribution features deferred until measurements or workflows justify them
-
-## Cross-Phase Invariants
+## Execution strategy
 
-Every phase must preserve these constraints:
-
-- authoritative mutation goes through repository-facing services
-- metadata never commits a reference to blob content that is not durably available
-- content objects are immutable and identified by digest
-- observation identity remains distinct from content identity
-- generic content semantics do not depend on local paths or storage keys
-- absence requires successful complete coverage of the relevant scope
-- source-relative paths are provenance/structure, not content identity
-- source configuration changes must not retroactively change the meaning of historical observations
-- historical evidence must not be assigned source-definition provenance that the repository cannot establish
-- validation evidence is immutable content evidence and failed required validation does not advance source state
-- deterministic derived reuse still records current-run observations and provenance
-- dataset specification identity, exact membership identity, and content equivalence remain distinct as established by ADR-0008
-- frozen datasets remain immutable after later ingestion
-- read-only repository access must not initialize, migrate, acquire, validate, or otherwise mutate repository state
-- compatibility manifests, mirrors, caches, and materializations are projections or conveniences, never authoritative databases
+Complete the repository-centered architecture by stabilizing the compatibility boundary first, then re-validating durability and consumer handoff against that final boundary.
 
-## Phase 14: Complete Immutable Datasets And Temporal Policies
+### Milestone 1 — Finalize the canonical API and compatibility boundary
 
-Objective:
+Complete the remaining Phase 16 cleanup using `docs/compatibility-inventory.md` as the support/caller inventory.
 
-- finish the generic immutable-data boundary required by downstream consumers
+- Keep `Engine`, `Repository`, read-only repository views, immutable datasets, and deliberate adapter/validator interfaces as the canonical surfaces.
+- Remove obsolete migration/import implementations when no supported path requires them.
+- Keep required schema upgrades and intentionally supported legacy entry points behind explicit compatibility adapters.
+- Prevent canonical execution and extension contracts from depending on compatibility manifests, mirrors, caches, or serializers.
 
-Existing foundation to preserve:
+Exit condition: compatibility is optional and isolated, with one canonical execution/state path and a deliberately small public semantic API.
 
-- exact/latest/latest-before/latest-all selectors
-- frozen exact observation membership
-- source-definition revision semantics from ADR-0007
-- dataset specification/membership/content identities from ADR-0008
-- read-only artifact open/verify and `ReadOnlyRepository`
+### Milestone 2 — Re-validate durability on the finalized mutation paths
 
-Work:
+After Milestone 1, re-audit writer coordination, crash boundaries, recovery, reachability, and cleanup against the actual final execution paths.
 
-- add snapshot-backed selection, including exact source snapshots and latest complete source snapshots where appropriate
-- add selection by source, role, and tag using authoritative source-definition revisions
-- treat namespace initially as an artifact-key prefix/filter convention unless a concrete requirement justifies first-class namespace metadata
-- define temporal resolution against an explicit time basis; use repository observation time as the initial universal basis
-- define conservative behavior for migrated evidence whose source-definition revision is unknown
-- enforce complete-snapshot requirements without inferring absence from partial or failed coverage
-- add optional same-run and maximum-observation-skew constraints
-- permit datasets to require already-recorded validation evidence without triggering validation during resolution
-- preserve the dataset specification/membership/content identity model established in Phase 13/ADR-0008
-- define a versioned deterministic detached dataset manifest/lockfile containing exact members, observation/content IDs, roles, relevant source/snapshot revisions, constraint results, content metadata, and safe logical export paths
-- keep BVP catalog/verification parity as an external acceptance fixture using generic Efloud dataset APIs and detached manifests; do not add BVP-specific repository semantics
+Do not broaden this milestone into historical retention/pruning. Safe cleanup may remove only storage objects that are not required by surviving authoritative metadata.
 
-Acceptance criteria:
+Exit condition: destructive maintenance cannot race supported writers, and recovery/cleanup cannot invalidate or fabricate historical repository evidence.
 
-- a frozen dataset never changes after newer ingestion
-- local repository root or blob placement does not affect semantic dataset identity
-- temporal resolution never infers absence from incomplete coverage
-- historical source/role/tag resolution uses the associated source-definition revision rather than current configuration
-- snapshot completeness, same-run, skew, and validation requirements are explicit and testable
-- resolution through read-only access performs no migration or mutation
-- detached dataset metadata is deterministic and sufficient for a downstream consumer to understand exact membership without reading Efloud's SQLite schema
-- downstream BVP catalog behavior can be represented through generic Efloud dataset semantics
+### Milestone 3 — Close immutable dataset and detached-export acceptance
 
-## Phase 15: Safe Dataset Materialization And Export
+After the public boundary and durability paths are stable, exercise the complete freeze → export → reopen elsewhere → verify workflow through public interfaces.
 
-Objective:
+Include incomplete-coverage behavior, source-definition changes, missing/corrupt content, export collision/path safety, concurrent destination publication, and native Linux publication/CoW branches.
 
-- provide ordinary filesystem handoff without weakening repository authority or requiring consumers to understand Efloud internals
+Exit condition: a generic downstream consumer can interpret and validate a reproducible detached export without Efloud internals, mutation, or domain-specific semantics.
 
-Work:
+### Milestone 4 — Complete release verification
 
-- materialize immutable datasets, and exact source snapshots where useful, from repository content
-- support `auto`, `reflink`, `copy`, and explicit `symlink` strategies
-- make `auto` prefer reflink/CoW and fall back to copy
-- do not use hardlinks as the default user-visible strategy
-- derive output paths only from explicit safe logical paths in immutable export metadata
-- validate path traversal, duplicate paths, and collisions before writing
-- build into a temporary sibling tree and atomically publish where the platform permits
-- include the versioned detached dataset manifest in every self-contained dataset export
+Run the repository's non-mutating quality gate, supported-Python matrix, packaging checks, architecture contracts, coverage comparison, and remote CI against the committed checkout.
 
-Acceptance criteria:
+Exit condition: Phase 14-17 acceptance evidence distinguishes implementation completion, local verification, and committed-checkout CI verification.
 
-- deleting or modifying a materialized copy does not affect repository correctness or authoritative CAS content
-- materialization rejects path traversal and collisions before publishing partial output
-- repeated materialization of the same dataset has deterministic structure and metadata
-- a downstream package can consume a detached export without importing Efloud
+### Milestone 5 — Validate the external consumer boundary
 
-## Phase 16: Canonical Public API And Migration Cleanup
+Run the BVP acceptance fixture only after the generic Efloud boundary is complete. Treat it as external integration evidence, not as a source of BVP-specific behavior for Efloud.
 
-Objective:
+Any failure must first be classified as either a generic Efloud capability gap or a BVP-specific interpretation requirement.
 
-- leave one canonical implementation path and a deliberately small public semantic surface
+Exit condition: BVP can implement its workflow through Efloud public APIs and detached manifests without private SQLite or compatibility representations.
 
-Work:
+## Contingent later milestones
 
-- make `Engine`, `Repository`, and deliberate read-only/dataset interfaces the canonical operational surfaces
-- make legacy `sync(cfg)` delegate to canonical orchestration and deprecate or remove it according to compatibility policy
-- remove `RepositorySyncRecorder`, transient manifest-import paths, schema-v2 migration substrate, and other migration-only infrastructure when no supported path requires them
-- isolate remaining manifest/mirror serializers and inspectors under explicit compatibility code
-- replace compatibility-manifest-based materialization helpers with repository/dataset-backed equivalents
-- reduce top-level exports to stable semantic APIs plus deliberate adapter/validator extension contracts
-- identify and deprecate redundant TTL index, cache/status, mirror-resolution, and provenance compatibility abstractions where repository-native equivalents exist
+These are activated only by concrete requirements; they are not part of current Phase 14-17 completion.
 
-Acceptance criteria:
+### Historical retention and pruning
 
-- one canonical ingestion path and one authoritative state model remain
-- no internal feature depends on compatibility JSON as a database
-- compatibility code is isolated and removable
-- migration-only schema implementation layers are removed once supported upgrades no longer require them
-- the documented top-level API contains semantic interfaces rather than migration-history implementation details
+If storage pressure requires deletion of valid historical state, define explicit retention roots and policies before implementation. Preserve retained datasets and their required transitive provenance, and require dry-run impact reporting before destructive pruning.
 
-## Phase 17: Repository Maintenance, Audit, Recovery, And Safe GC
+### Additional source adapters
 
-Objective:
+Add a protocol adapter only when an actual upstream source cannot be represented by existing adapters. Protocol-specific evidence must fit the existing normalized coverage/reconciliation model without protocol-specific repository semantics.
 
-- make repository maintenance safe without yet deleting valid historical state
+### Advanced storage and distribution
 
-Work:
+Recursive Merkle trees, mutable references, replica tracking, alternate blob stores, plugin discovery, and distributed coordination remain deferred until measurements or concrete workflows justify their complexity.
 
-- add repository-wide writer/maintenance coordination so destructive maintenance cannot race acquisition, validation staging, schema migration, or metadata mutation
-- define recovery/reporting for abandoned `running` runs and operations after crashes
-- implement repository audit/fsck over metadata references, blob availability, digest verification, source snapshots, datasets, source-definition revisions, and provenance edges
-- compute and explain reachability across observations, trees, datasets, provenance, validations, and materializations
-- detect CAS blobs left by interrupted metadata commits and content rows with no semantic references
-- implement dry-run-first cleanup with explicit grace periods and reason codes for every proposed deletion
-- preserve validation-only content evidence and all content required by existing historical metadata
+## Verification policy
 
-Acceptance criteria:
-
-- maintenance cannot run destructively while a writer holds the repository
-- audit reports missing/corrupt blobs and dangling metadata without mutating the repository
-- dry-run explains every proposed deletion
-- safe GC removes only true orphan/unreferenced storage objects and cannot invalidate any existing dataset, observation, snapshot, provenance edge, source-definition revision, or validation record
-
-## Phase 18: Historical Retention And Pruning (Contingent)
-
-Objective:
-
-- reclaim valid historical state only if a concrete storage/retention requirement justifies doing so
-
-This is not an automatic continuation of safe GC.
-
-Work, if activated:
-
-- define explicit retention roots and policies for observations, source snapshots, source-definition revisions, runs, datasets, derivations, and validation evidence
-- define deletion semantics so metadata never remains while required content has been intentionally removed
-- preserve retained datasets and required transitive provenance
-- provide dry-run impact reports before destructive pruning
-- make policy decisions reversible where practical and protect recent state with grace periods
-
-Acceptance criteria:
-
-- pruning cannot invalidate retained datasets or retained provenance
-- historical evidence never survives while the source-definition revision required to interpret it has been pruned
-- every removed historical object is attributable to an explicit retention policy
-- no surviving metadata claims unavailable intentionally-pruned content
-
-## Phase 19: Additional Source Adapters (Use-Case Driven)
-
-Objective:
-
-- add protocols only when an actual upstream requirement cannot be represented by existing adapters
-
-Work, when required:
-
-- implement the concrete adapter against existing `SourceAdapter`, `SourceInventory`, validation, reconciliation, and repository contracts
-- add protocol-specific source evidence without adding protocol-specific repository semantics
-- add external entry-point discovery only when a real external-plugin requirement appears
-- treat Git as one candidate adapter, not a mandatory architectural milestone
-
-Acceptance criteria for any new adapter:
-
-- no repository-schema special case is required for the protocol
-- membership/absence semantics use the normalized coverage model
-- artifacts from the new source mix freely with existing dataset semantics
-
-## Phase 20: Deferred Advanced Features
-
-These remain design targets rather than current implementation commitments.
-
-### Recursive Merkle Trees
-
-Consider recursive/versioned Merkle trees only if measurements show flat tree snapshot or diff costs are material. Historical tree identities must remain readable.
-
-### Mutable References
-
-Add human-friendly mutable refs only if required. Refs point to immutable targets, use compare-and-swap/generation semantics, and may become GC roots without participating in immutable identity.
-
-### Replica And Availability Tracking
-
-Add replica records only if content must be offloaded or shared across stores. Mutable upstream locators are not replicas unless exact content identity is established.
-
-### Alternate Blob Backends
-
-Implement alternate stores only from concrete requirements. The semantic `BlobStore` contract must remain sufficient without turning the local core into a general storage framework.
-
-## Verification Strategy
-
-Every active phase should be completed only when:
-
-- the non-mutating Python 3.14 quality gate passes in CI
-- the complete test suite passes across every Python minor version declared by `project.requires-python`
-- migration tests cover any metadata schema change
-- repository invariants receive focused regression tests
-- read-only paths are tested to prove that inspection does not initialize, migrate, or mutate state
-- downstream acceptance fixtures exercise generic Efloud APIs rather than importing private repository implementation details
+Every active milestone must preserve the architecture and invariants in `DESIGN.md` and relevant ADRs. Completion requires focused regression tests for changed repository invariants, non-mutating read-only behavior, migration coverage for schema changes, and downstream fixtures that use generic public interfaces rather than private implementation details.

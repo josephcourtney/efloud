@@ -1,7 +1,7 @@
 # =================================== project ====================================
 [project]
   name = "efloud"
-  version = "0.2.0"
+  version = "0.3.0"
   description = "Local versioned data ingestion and immutable artifact repositories"
   readme = "README.md"
   authors = [
@@ -88,8 +88,8 @@
       #
     ]
     [tool.ruff.lint.extend-per-file-ignores]
-      # The public facade deliberately wraps private transitional implementation
-      # objects until TODO 1 migrates those internals onto narrow capabilities.
+      # The public facade deliberately wraps private compatibility implementation
+      # objects until TODO 1 deletes the remaining alpha compatibility layer.
       "src/efloud/api.py" = ["SLF001"]
 
       # These two classes intentionally implement wide repository contracts. Splitting them solely to satisfy

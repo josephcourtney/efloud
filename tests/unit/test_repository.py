@@ -1,7 +1,6 @@
 import hashlib
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -19,9 +18,6 @@ from efloud.repository_models import (
     TreeEntry,
     ValidationResult,
 )
-
-if TYPE_CHECKING:
-    from efloud.sqlite_metadata_v3 import SQLiteMetadataStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -203,7 +199,7 @@ def test_absence_hides_latest_artifact_but_preserves_history(tmp_path: Path) -> 
         assert absence.observation_id != old.observation_id
 
 
-def test_schema_v1_migrates_through_current_schema(tmp_path: Path) -> None:
+def test_schema_v1_is_rejected_without_migration(tmp_path: Path) -> None:
     db = tmp_path / "metadata.sqlite"
     connection = sqlite3.connect(db)
     connection.execute("CREATE TABLE sentinel(value TEXT)")
@@ -211,12 +207,19 @@ def test_schema_v1_migrates_through_current_schema(tmp_path: Path) -> None:
     connection.commit()
     connection.close()
 
-    with Repository(tmp_path) as repo:
-        metadata = cast("SQLiteMetadataStore", repo.metadata)
-        assert metadata.schema_version == 3
+    with pytest.raises(
+        RuntimeError,
+        match=r"Unsupported efloud metadata schema version: 1; expected 3",
+    ):
+        Repository(tmp_path)
+
+    connection = sqlite3.connect(db)
+    try:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 1
         names = {
             row[0]
-            for row in metadata._connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-        assert "artifact_absences" in names
-        assert "sentinel" in names
+        assert names == {"sentinel"}
+    finally:
+        connection.close()

@@ -12,6 +12,42 @@ import pytest
 
 import efloud
 
+_REMOVED_MODULE_PATHS = {
+    "efloud/adoption.py",
+    "efloud/derived.py",
+    "efloud/fanout.py",
+    "efloud/health.py",
+    "efloud/manifest.py",
+    "efloud/models.py",
+    "efloud/query.py",
+    "efloud/query_targets.py",
+    "efloud/registry.py",
+    "efloud/repository_compat.py",
+    "efloud/repository_outputs.py",
+    "efloud/repository_query.py",
+    "efloud/repository_state.py",
+    "efloud/repository_status.py",
+    "efloud/repository_view.py",
+    "efloud/resolve.py",
+    "efloud/source_aliases.py",
+    "efloud/source_results.py",
+    "efloud/sqlite_metadata_v3.py",
+    "efloud/state.py",
+    "efloud/status.py",
+    "efloud/store_inspection.py",
+    "efloud/summary.py",
+    "efloud/sync.py",
+}
+
+_REMOVED_IMPORTS = tuple(
+    sorted(
+        {
+            "efloud.compat",
+            *(path.removesuffix(".py").replace("/", ".") for path in _REMOVED_MODULE_PATHS),
+        }
+    )
+)
+
 
 def _run(
     cmd: list[str],
@@ -115,6 +151,15 @@ def test_wheel_installs_and_public_api_runs(tmp_path: Path) -> None:
     )
     assert api_result.stdout.strip() == "ok"
 
+    removed_imports = repr(_REMOVED_IMPORTS)
+    absence_script = (
+        "import importlib.util\n"
+        f"removed = {removed_imports}\n"
+        "present = [name for name in removed if importlib.util.find_spec(name) is not None]\n"
+        "assert not present, present\n"
+    )
+    _run([str(venv_python), "-c", absence_script], cwd=tmp_path)
+
 
 @pytest.mark.contract
 @pytest.mark.medium
@@ -123,9 +168,11 @@ def test_wheel_contains_only_intended_package_files(tmp_path: Path) -> None:
     wheel_path, _ = _build_wheel(tmp_path)
 
     with zipfile.ZipFile(wheel_path) as wheel:
-        names = wheel.namelist()
+        names = set(wheel.namelist())
 
     assert "efloud/__init__.py" in names
+    assert not any(name.startswith("efloud/compat/") for name in names)
+    assert _REMOVED_MODULE_PATHS.isdisjoint(names)
     assert not any(".ropeproject" in name for name in names)
     assert not any("autoimport.db" in name for name in names)
     assert not any("/tests/" in name or name.startswith("tests/") for name in names)

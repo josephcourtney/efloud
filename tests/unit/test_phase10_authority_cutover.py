@@ -17,6 +17,7 @@ from efloud.query import query_target
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.repository_models import SourceId
+from efloud.sources import RestSource
 from efloud.status import collect_status_payload
 from efloud.transport.http_utils import dest_for_http_source
 
@@ -113,9 +114,21 @@ def test_targeted_engine_sync_preserves_untouched_state_without_manifest_merge(
         )
 
     monkeypatch.setattr(HttpSourceAdapter, "acquire", fake_acquire)
-    with Engine.from_config(config) as engine:
-        result = asyncio.run(engine.sync(SyncRequest(source_ids=("a",))))
-        outputs = project_execution(engine.repository, config=engine.config, result=result)
+    typed_sources = tuple(
+        RestSource(
+            id=source.id,
+            description=source.description,
+            url=source.url,
+            cache_name=source.cache_name,
+            role=source.role,
+            tags=source.tags,
+            expected_integrity=source.expected_integrity,
+        )
+        for source in (source_a, source_b)
+    )
+    with Repository(tmp_path) as repository:
+        result = asyncio.run(Engine(repository, typed_sources).sync(SyncRequest(source_ids=("a",))))
+        outputs = project_execution(repository, config=config, result=result)
 
     assert set(outputs.manifest["results"]["http"]) == {"a", "b"}
     assert outputs.manifest["results"]["http"]["b"]["content_id"] == str(b_observation.content_id)

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from efloud.indexing import IndexDefinition, IndexRegistry, JsonTtlIndex, load_index, write_index
+from efloud.compat.indexing import IndexDefinition, IndexRegistry, JsonTtlIndex, load_index, write_index
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,7 +17,7 @@ pytestmark = [pytest.mark.unit]
 def test_json_ttl_index_round_trip_and_expiry(monkeypatch):
     index = JsonTtlIndex(fetched_at=100.0, ttl_seconds=10, payload={"ok": True})
 
-    monkeypatch.setattr("efloud.indexing.time.time", lambda: 105.0)
+    monkeypatch.setattr("efloud.compat.indexing.time.time", lambda: 105.0)
     assert index.expires_at == pytest.approx(110.0)
     assert index.is_expired() is False
     assert index.to_dict() == {"fetched_at": 100.0, "ttl_seconds": 10, "payload": {"ok": True}}
@@ -25,7 +25,7 @@ def test_json_ttl_index_round_trip_and_expiry(monkeypatch):
     loaded = JsonTtlIndex.from_dict({"fetched_at": 100, "ttl_seconds": 10, "payload": {"ok": True}})
     assert loaded == index
 
-    monkeypatch.setattr("efloud.indexing.time.time", lambda: 200.0)
+    monkeypatch.setattr("efloud.compat.indexing.time.time", lambda: 200.0)
     assert index.is_expired() is True
 
     with pytest.raises(TypeError, match="Index payload must be an object"):
@@ -68,7 +68,7 @@ def test_index_registry_build_reuses_fresh_cache_and_reports_status(tmp_path: Pa
         )
     ])
 
-    monkeypatch.setattr("efloud.indexing.time.time", lambda: 101.0)
+    monkeypatch.setattr("efloud.compat.indexing.time.time", lambda: 101.0)
     built = cast("JsonTtlIndex", registry.build("alpha", root=tmp_path))
     assert built.payload == {"root": tmp_path.name}
     assert built_values == [tmp_path]

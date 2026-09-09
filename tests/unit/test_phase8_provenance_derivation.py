@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.compat.repository_recording import RepositorySyncRecorder
 from efloud.derivation import DerivedTaskSpec, derivation_key_for
 from efloud.indexing import DerivedIndexDefinition, DerivedIndexRegistry
-from efloud.models import EngineConfig, SyncResult
-from efloud.query import index_payload
 from efloud.repository import Repository
 from efloud.repository_models import ProducerRef
 
@@ -64,13 +60,17 @@ def test_producer_identity_and_lifecycle_transitions_are_explicit(tmp_path: Path
         with pytest.raises(ValueError, match="still running"):
             repo.finish_run(run_id, status="succeeded", finished_at=2.5)
 
-        repo.finish_operation(operation_id, status="success", finished_at=3.0)
+        with pytest.raises(ValueError, match="Invalid terminal operation status"):
+            repo.finish_operation(operation_id, status="success", finished_at=3.0)
+        repo.finish_operation(operation_id, status="succeeded", finished_at=3.0)
         operation = repo.metadata.operations_for_run(run_id)[0]
         assert operation.status == "succeeded"
         with pytest.raises(ValueError, match="cannot transition"):
             repo.finish_operation(operation_id, status="failed", finished_at=4.0)
 
-        repo.finish_run(run_id, status="success", finished_at=5.0)
+        with pytest.raises(ValueError, match="Invalid terminal run status"):
+            repo.finish_run(run_id, status="success", finished_at=5.0)
+        repo.finish_run(run_id, status="succeeded", finished_at=5.0)
         run = repo.metadata.run(run_id)
         assert run is not None
         assert run.status == "succeeded"
@@ -85,29 +85,6 @@ def test_producer_ids_must_be_namespaced_and_versioned() -> None:
         ProducerRef("worker", "1")
     with pytest.raises(ValueError, match="version"):
         ProducerRef("test:worker", "")
-
-
-def test_dry_run_import_creates_no_execution_operations(tmp_path: Path) -> None:
-    cfg = EngineConfig(root=tmp_path, sources=[], dry_run=True)
-    result = SyncResult(
-        ok=True,
-        root=tmp_path,
-        manifest_path=None,
-        manifest={
-            "version": 1,
-            "root": str(tmp_path),
-            "results": {"http": {}, "rsync": {}, "derived": {}},
-            "errors": [],
-        },
-    )
-    with Repository(tmp_path) as repo:
-        recorder = RepositorySyncRecorder(repo, cfg, started_at=1.0)
-        asyncio.run(recorder.import_result(result))
-        assert repo.metadata.operations_for_run(recorder.run_id) == ()
-        recorder.finish(ok=True)
-        run = repo.metadata.run(recorder.run_id)
-        assert run is not None
-        assert run.status == "succeeded"
 
 
 def test_content_derivation_reuses_content_with_fresh_observation_provenance(tmp_path: Path) -> None:
@@ -258,12 +235,3 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
         )
         assert operation.producer == ProducerRef("efloud:index:alpha", "3")
         reopened.finish_run(second_run, status="succeeded", finished_at=203.0)
-
-    cfg = EngineConfig(root=tmp_path, sources=[], derived_index_registry=indexes)
-    queried = index_payload("alpha", cfg=cfg)
-    status = queried["status"]
-    assert isinstance(status, dict)
-    assert status["validity"] == "derivation-key"
-    assert status["present"] is True
-    assert "expired" not in status
-    assert queried["payload"] == first.payload

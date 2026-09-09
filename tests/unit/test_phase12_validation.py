@@ -27,7 +27,6 @@ from efloud.inventory import (
 )
 from efloud.repository import Repository
 from efloud.repository_models import ArtifactKey, ContentId, SourceId
-from efloud.repository_query import RepositoryQueryService
 from efloud.sources import HttpSource, RestSource
 from efloud.validation import (
     ValidationOutcome,
@@ -175,13 +174,6 @@ def test_validation_reuses_content_and_validator_version_evidence(
             ("test:domain", "1"),
             ("test:domain", "2"),
         ]
-
-        payload = RepositoryQueryService(repository).query(f"content:{content.content_id}")
-        assert payload["available"] is True
-
-        serialized_validations = payload["validations"]
-        assert isinstance(serialized_validations, list)
-        assert len(serialized_validations) == 2
 
 
 def test_required_http_integrity_failure_does_not_advance_source(

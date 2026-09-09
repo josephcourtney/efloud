@@ -6,9 +6,9 @@ import pytest
 from efloud.adapters import AdapterRegistry, HttpAcquisition, RsyncAcquisition
 from efloud.engine import Engine
 from efloud.http_adapter import HttpSourceAdapter
-from efloud.models import EngineConfig
-from efloud.registry import SourceDefinition, SourceKind
+from efloud.repository import Repository
 from efloud.rsync_adapter import RsyncSourceAdapter
+from efloud.sources import HttpSource, RsyncSource
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
@@ -18,13 +18,11 @@ def test_engine_records_http_adapter_result(tmp_path: Path, monkeypatch: pytest.
     materialized = tmp_path / "http" / "data.txt"
     materialized.parent.mkdir(parents=True)
     materialized.write_bytes(b"payload")
-    source = SourceDefinition(
+    source = HttpSource(
         id="example",
         description="Example",
         url="https://example.test/data.txt",
-        kind=SourceKind.HTTP,
     )
-    config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_acquire(self, context):
         del self, context
@@ -39,41 +37,41 @@ def test_engine_records_http_adapter_result(tmp_path: Path, monkeypatch: pytest.
         )
 
     monkeypatch.setattr(HttpSourceAdapter, "acquire", fake_acquire)
-    with Engine.from_config(config) as engine:
+    with Repository(tmp_path) as repository:
+        engine = Engine(repository, (source,))
         result = asyncio.run(engine.sync())
         assert result.ok
         assert len(result.observations) == 1
-        observation = engine.repository.latest_observation("source:example")
+        observation = repository.latest_observation("source:example")
         assert observation is not None
         assert observation.observed_at == pytest.approx(123.0)
         assert observation.upstream_version == '"v1"'
-        with engine.repository.open_content(observation.content_id) as stream:
+        with repository.open_content(observation.content_id) as stream:
             assert stream.read() == b"payload"
-        snapshot = engine.repository.latest_source_snapshot("example")
+        snapshot = repository.latest_source_snapshot("example")
         assert snapshot is not None
         assert snapshot.complete
         assert snapshot.evidence["status_code"] == 200
         assert result.repository_run_id is not None
-        operation = engine.repository.metadata.operations_for_run(result.repository_run_id)[0]
+        operation = repository.metadata.operations_for_run(result.repository_run_id)[0]
         assert operation.producer.producer_id == "efloud:http"
         assert operation.producer.version == "1"
 
 
 def test_engine_leaves_source_without_adapter_unrecorded(tmp_path: Path) -> None:
-    source = SourceDefinition(
+    source = RsyncSource(
         id="mirror",
         description="Mirror",
         url="rsync://example.test/module",
-        kind=SourceKind.RSYNC,
         local_subpath="mirror",
     )
-    config = EngineConfig(root=tmp_path, sources=[source])
 
-    with Engine.from_config(config, adapters=AdapterRegistry()) as engine:
+    with Repository(tmp_path) as repository:
+        engine = Engine(repository, (source,), adapters=AdapterRegistry())
         result = asyncio.run(engine.sync())
         assert result.skipped_source_ids == ("mirror",)
-        assert engine.repository.artifact_keys() == ()
-        assert result.plan.decisions[0].reason == "no adapter registered for RSYNC"
+        assert repository.artifact_keys() == ()
+        assert result.plan.decisions[0].reason == "no adapter registered for efloud:rsync"
 
 
 def test_engine_falls_back_to_rsync_delta_when_inventory_fails(
@@ -84,14 +82,12 @@ def test_engine_falls_back_to_rsync_delta_when_inventory_fails(
     changed = mirror_root / "aa" / "entry.txt"
     changed.parent.mkdir(parents=True)
     changed.write_bytes(b"version one")
-    source = SourceDefinition(
+    source = RsyncSource(
         id="mirror",
         description="Mirror",
         url="rsync://example.test/module",
-        kind=SourceKind.RSYNC,
         local_subpath="mirror",
     )
-    config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_acquire(self, context):
         del self, context
@@ -107,22 +103,23 @@ def test_engine_falls_back_to_rsync_delta_when_inventory_fails(
         )
 
     monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
-    with Engine.from_config(config) as engine:
+    with Repository(tmp_path) as repository:
+        engine = Engine(repository, (source,))
         result = asyncio.run(engine.sync())
         assert result.skipped_source_ids == ()
-        observation = engine.repository.latest_observation("source:mirror:path:aa/entry.txt")
+        observation = repository.latest_observation("source:mirror:path:aa/entry.txt")
         assert observation is not None
         assert observation.source_path == "aa/entry.txt"
-        with engine.repository.open_content(observation.content_id) as stream:
+        with repository.open_content(observation.content_id) as stream:
             assert stream.read() == b"version one"
-        snapshot = engine.repository.latest_source_snapshot("mirror")
+        snapshot = repository.latest_source_snapshot("mirror")
         assert snapshot is not None
         assert snapshot.complete is False
         assert snapshot.scope == ("aa/",)
         assert snapshot.evidence["reconciliation_complete"] is False
         assert snapshot.evidence["inventory_error"] == "offline"
         assert snapshot.tree_id is not None
-        assert engine.repository.tree_entries(snapshot.tree_id)[0].relative_path == "aa/entry.txt"
+        assert repository.tree_entries(snapshot.tree_id)[0].relative_path == "aa/entry.txt"
 
 
 def test_engine_authoritatively_records_rsync_inventory(
@@ -133,14 +130,12 @@ def test_engine_authoritatively_records_rsync_inventory(
     materialized = mirror_root / "aa" / "entry.txt"
     materialized.parent.mkdir(parents=True)
     materialized.write_bytes(b"version one")
-    source = SourceDefinition(
+    source = RsyncSource(
         id="mirror",
         description="Mirror",
         url="rsync://example.test/module",
-        kind=SourceKind.RSYNC,
         local_subpath="mirror",
     )
-    config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_acquire(self, context):
         del self, context
@@ -167,12 +162,13 @@ def test_engine_authoritatively_records_rsync_inventory(
         )
 
     monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
-    with Engine.from_config(config) as engine:
+    with Repository(tmp_path) as repository:
+        engine = Engine(repository, (source,))
         result = asyncio.run(engine.sync())
         assert len(result.observations) == 1
-        observation = engine.repository.latest_observation("source:mirror:path:aa/entry.txt")
+        observation = repository.latest_observation("source:mirror:path:aa/entry.txt")
         assert observation is not None
-        snapshot = engine.repository.latest_source_snapshot("mirror")
+        snapshot = repository.latest_source_snapshot("mirror")
         assert snapshot is not None
         assert snapshot.complete is True
         assert snapshot.evidence["reconciliation_complete"] is True
@@ -185,14 +181,12 @@ def test_engine_does_not_infer_rsync_deletion_when_inventory_fails(
 ) -> None:
     mirror_root = tmp_path / "mirrors" / "mirror"
     mirror_root.mkdir(parents=True)
-    source = SourceDefinition(
+    source = RsyncSource(
         id="mirror",
         description="Mirror",
         url="rsync://example.test/module",
-        kind=SourceKind.RSYNC,
         local_subpath="mirror",
     )
-    config = EngineConfig(root=tmp_path, sources=[source])
 
     async def fake_acquire(self, context):
         del self, context
@@ -208,9 +202,10 @@ def test_engine_does_not_infer_rsync_deletion_when_inventory_fails(
         )
 
     monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
-    with Engine.from_config(config) as engine:
+    with Repository(tmp_path) as repository:
+        engine = Engine(repository, (source,))
         asyncio.run(engine.sync())
-        assert engine.repository.latest_state("source:mirror:path:stale.txt") is None
-        snapshot = engine.repository.latest_source_snapshot("mirror")
+        assert repository.latest_state("source:mirror:path:stale.txt") is None
+        snapshot = repository.latest_source_snapshot("mirror")
         assert snapshot is not None
         assert snapshot.complete is False

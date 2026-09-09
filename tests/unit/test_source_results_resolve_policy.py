@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.models import EngineConfig, NormalizedManifest, SyncResult
+from efloud.models import NormalizedManifest, SyncResult
+from efloud.planning import SyncRequest
 from efloud.policy import DefaultSyncPolicy, RoleDrivenSyncPolicy
 from efloud.registry import RsyncMode, SourceDefinition, SourceKind
 from efloud.resolve import (
@@ -25,6 +26,7 @@ from efloud.source_results import (
 from efloud.source_results import (
     manifest_entry_for_source as manifest_entry_for_source_result,
 )
+from efloud.sources import CollectionSource, HttpSource, RestSource, RsyncSource
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -138,62 +140,50 @@ def test_resolve_helpers_locate_mirror_and_materialized_paths(sources, manifest,
 
 
 @pytest.mark.small
-def test_default_sync_policy_uses_refresh_flags_and_rsync_paths(tmp_path: Path, sources):
-    cfg = EngineConfig(root=tmp_path, sources=sources, refresh_http=True, refresh_rsync=False)
+def test_default_sync_policy_uses_request_refresh_and_typed_rsync_scope() -> None:
+    http = HttpSource("http-id", "https://example.test/file")
+    rsync = RsyncSource("rsync-id", "rsync.example.test::module", paths=("subset",))
+    request = SyncRequest(refresh_source_ids=(http.id,))
 
-    assert DefaultSyncPolicy.should_refresh(sources[0], cfg) is True
-    assert DefaultSyncPolicy.should_refresh(sources[1], cfg) is False
+    assert DefaultSyncPolicy.refresh_decision(http, request, snapshot=None).refresh is True
+    assert DefaultSyncPolicy.refresh_decision(rsync, request, snapshot=None).refresh is False
 
-    refresh_all_cfg = EngineConfig(root=tmp_path, sources=sources, refresh_all=True)
-    assert DefaultSyncPolicy.should_refresh(sources[1], refresh_all_cfg) is True
+    refresh_all = SyncRequest(refresh=True)
+    assert DefaultSyncPolicy.refresh_decision(rsync, refresh_all, snapshot=None).refresh is True
 
-    assert DefaultSyncPolicy.rsync_paths_for_source(source=sources[1], cache_root=tmp_path, manifest=None) == (
-        "subset",
-    )
-    assert DefaultSyncPolicy.rsync_paths_for_source(source=sources[0], cache_root=tmp_path, manifest=None) is None
+    assert DefaultSyncPolicy.source_scope(rsync, request) == ("subset",)
+    assert DefaultSyncPolicy.source_scope(http, request) == ()
 
 
 @pytest.mark.small
-def test_role_driven_sync_policy_overrides_refresh_by_role_and_rest_base(tmp_path: Path):
-    sources = [
-        SourceDefinition(
-            "holdings-id",
-            "Holdings",
-            "https://example.test/holdings",
-            SourceKind.HTTP,
-            role="holdings",
-        ),
-        SourceDefinition(
-            "mapping-id",
-            "Mappings",
-            "https://example.test/map",
-            SourceKind.REST,
-            role="mappings_exact",
-        ),
-        SourceDefinition(
-            "core-id",
-            "Core",
-            "https://example.test/core",
-            SourceKind.REST_BASE,
-        ),
-        SourceDefinition(
-            "mirror-id",
-            "Mirror",
-            "rsync.example.test::mirror",
-            SourceKind.RSYNC,
-            rsync_mode=RsyncMode.PATHS,
-            rsync_paths=("subset",),
-        ),
-    ]
-    policy = RoleDrivenSyncPolicy(
-        http_role_refresh={"holdings": True, "mappings_exact": False},
-        rest_base_refresh=True,
-        rsync_mode=RsyncMode.PATHS,
+def test_role_driven_sync_policy_overrides_refresh_by_role_and_collection() -> None:
+    holdings = HttpSource(
+        "holdings-id",
+        "https://example.test/holdings",
+        role="holdings",
     )
-    cfg = EngineConfig(root=tmp_path, sources=sources, refresh_http=False, refresh_rsync=True)
+    mappings = RestSource(
+        "mapping-id",
+        "https://example.test/map",
+        role="mappings_exact",
+    )
+    collection = CollectionSource(
+        "core-id",
+        "https://example.test/core",
+    )
+    mirror = RsyncSource(
+        "mirror-id",
+        "rsync.example.test::mirror",
+        paths=("subset",),
+    )
+    policy = RoleDrivenSyncPolicy(
+        role_refresh={"holdings": True, "mappings_exact": False},
+        collection_refresh=True,
+    )
+    request = SyncRequest(refresh_source_ids=(mirror.id,))
 
-    assert policy.should_refresh(sources[0], cfg) is True
-    assert policy.should_refresh(sources[1], cfg) is False
-    assert policy.should_refresh(sources[2], cfg) is True
-    assert policy.should_refresh(sources[3], cfg) is True
-    assert policy.rsync_paths_for_source(source=sources[3], cache_root=tmp_path, manifest=None) == ("subset",)
+    assert policy.refresh_decision(holdings, request, snapshot=None).refresh is True
+    assert policy.refresh_decision(mappings, request, snapshot=None).refresh is False
+    assert policy.refresh_decision(collection, request, snapshot=None).refresh is True
+    assert policy.refresh_decision(mirror, request, snapshot=None).refresh is True
+    assert policy.source_scope(mirror, request) == ("subset",)

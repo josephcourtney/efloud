@@ -1,240 +1,144 @@
 # CHANGELOG.md
 
-Curated, user-facing record, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+All notable changes to Efloud are documented here following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/).
 
-All notable changes to this project will be documented in this file.
-
-This project follows [Semantic Versioning](https://semver.org/)
-
-Items should be categorized under these headings:
-
-- **Added** - new features
-- **Changed** - changes in existing functionality
-- **Deprecated** - soon-to-be removed features
-- **Removed** - now removed features
-- **Fixed** - any bug fixes
-- **Security** - in case of vulnerabilities
+## [Unreleased]
 
 ## [0.2.0] - 2026-09-09
 
 ### Added
-- add repository-native extension contexts, exact input observations, typed derived outputs, and explicit legacy extension adapters
+
+- Add repository-native extension contexts, exact input observations, typed derived outputs, and explicit legacy extension adapters.
 
 ### Changed
-- make compatibility output publication an explicit post-execution operation through `compat.outputs.project_execution`
-- require Hishel's HTTPX extra and compatible AnyIO to support async SQLite acquisition caches in fresh installations
+
+- Make compatibility output publication an explicit post-execution operation through `compat.outputs.project_execution`.
+- Require Hishel's HTTPX extra and compatible AnyIO so fresh installations support async SQLite acquisition caches.
 
 ### Removed
-- remove the unused duplicate sync runtime and its obsolete orchestration tests while retaining transport regressions
+
+- Remove the unused duplicate sync runtime while retaining the canonical transport behavior.
 
 ## [0.1.0] - 2026-09-09
 
 ### Added
-- add complete snapshot selectors, historical source filters, observation-time bounds, and dataset coherence constraints
-- add deterministic detached dataset manifests, exact import, and standalone content verification
-- add safe dataset export planning with copy, CoW, private symlink, provenance metadata, collision rejection, and atomic no-replace publication
-- add local POSIX writer leases, repository audit, content reachability, grace-period orphan cleanup, and interrupted-operation status recovery
-- add relocation, frozen membership, incomplete coverage, interrupted commit, export isolation, and concurrent writer tests
+
+- Add repository-centered immutable storage with stable source, artifact, content, observation, run, operation, snapshot, and dataset identities; SHA-256 content-addressed blobs; and SQLite metadata.
+- Add provenance, validation evidence, source/tree snapshots, source-definition revisions, and explicit artifact-absence states so repository history distinguishes unchanged, changed, and proven-absent content.
+- Add normalized source inventory and coverage-aware reconciliation for protocol-independent new/changed/unchanged/absent classification, including authoritative rsync and collection membership evidence.
+- Add immutable datasets with exact/latest temporal selection, snapshot-backed and historical source metadata selection, coherence constraints, and distinct specification, membership, and content-equivalence identities.
+- Add deterministic derived-task identities, provenance-aware reuse, and repository-backed semantic indexes.
+- Add deterministic detached dataset manifests, exact import, standalone verification, and safe materialization using copy, native CoW, or explicit private-content symlinks.
+- Add repository-native inspection/status APIs and read-only repository access that can operate without canonical manifests or mirror-state files.
+- Add local POSIX writer leases, repository audit/reachability, grace-period orphan cleanup, and abandoned-operation recovery.
 
 ### Changed
-- route query/status readers and adapter contexts through read-only repository capabilities
-- isolate engine compatibility output under an explicit compatibility field and rename rsync configuration to protocol terms
-- consolidate SQLite persistence into one canonical implementation while retaining supported schema upgrades
 
-### Deprecated
-- deprecate legacy `sync(cfg)` in favor of canonical `Engine` orchestration
-
-### Removed
-- remove storage placement from the public content reference and implementation-only storage/orchestration exports from the package root
-- remove the unused transient acquisition path and isolate historical import/projection helpers under compatibility code
-
-### Fixed
-- preserve frozen source-snapshot observation bindings after subsequent ingestion
-- flush CAS directory entries before returning durable content and reject corrupted reused blobs
-- enforce all seven import-architecture contracts by correcting their TOML table namespace
-- correct the unresolved collection fixture to require incomplete snapshot coverage
-
-## Unreleased
-
-### Added
-- add a repository-centered storage foundation with stable source/artifact/content/observation/run/operation/snapshot/dataset identities, SHA-256 content-addressed blob storage, and SQLite metadata persistence
-- add provenance edges, validation records, materialization records, source/tree snapshots, and explicit artifact-absence states so repository history can distinguish unchanged content, changed content, and known absence
-- add immutable datasets with exact, latest, latest-before, and latest-all selection plus separate provenance-sensitive dataset identity and content-equivalence identity
-- add a transitional `Engine` that preserves existing sync outputs while recording HTTP/REST acquisitions and rsync file deltas into the repository
-- add repository-native artifact, observation, source-snapshot/tree, dataset, source, and run inspection APIs, including locator evaluation directly against immutable blob content
-- add repository-backed source/run status reporting that works after reopening a repository without canonical manifests or mirror-state files
-- add authoritative rsync inventory and coverage-aware reconciliation, including complete/scoped source snapshots, unchanged-content reuse, and explicit absence observations when enumeration proves deletion
-- add normalized `SourceInventory`, `InventoryCoverage`, `InventoryItem`, `ChangeToken`, and `IntegrityExpectation` models for protocol-independent source evidence
-- add generic reconciliation that classifies normalized inventory items as new, changed, unchanged, or absent while restricting absence to proven complete coverage
-- add explicit `FanoutEnumeration` membership evidence with complete/partial coverage, upstream enumeration identity, change tokens, and integrity expectations
-- add namespaced, versioned `ProducerRef` identity plus explicit canonical run/operation lifecycle states enforced at repository and SQLite boundaries
-- add `DerivedTaskSpec` and canonical `DerivationKey` identities with content-sensitive and observation-sensitive dependency semantics
-- add deterministic derived-content reuse that preserves immutable content while recording new current-run observations and provenance edges
-- add repository-backed deterministic semantic indexes whose reuse is governed by derivation identity rather than wall-clock TTL
-
-### Changed
-- change temporal dataset resolution to treat an explicit later absence as authoritative instead of falling back to an older content-bearing observation
-- record legacy rsync changes as scoped, incomplete repository snapshots; source-relative paths are preserved, but deletion is not inferred when the existing rsync mode cannot prove upstream absence
-- add additive SQLite schema migration support for repository metadata evolution
-- change `Engine.sync()` rsync recording to attempt authoritative remote enumeration after successful transfer and fall back to conservative delta recording when enumeration is incomplete or unavailable
-- change initialized-repository `source:` queries and source status rows to prefer SQLite/blob repository state while preserving manifest fallback for older stores without repository metadata
-- expose the repository, immutable dataset selectors/types, repository identities, query service, and repository status service through the package public API
-- route rsync inventory classification through the generic reconciliation layer while preserving repository observations, unchanged-content reuse, scoped snapshots, and deletion semantics
-- route collection/fanout membership through `SourceInventory` and generic reconciliation so removed-item absence is inferred only from complete enumeration coverage
-- serialize fanout `SourceInventory` immediately after enumeration and before item retrieval so membership evidence remains independent from acquisition results
-- preserve the latest complete collection snapshot as the reconciliation baseline across intervening partial enumerations
-- store successful lifecycle state canonically as `succeeded` while preserving legacy `success` spelling in compatibility status and manifest projections
-- derive run `partial` state from mixed repository operation outcomes rather than relying only on the legacy sync success boolean
-- make configured repository-backed semantic indexes authoritative for `index:<id>` queries while retaining TTL indexes for compatibility/source-refresh cache use
+- Treat later authoritative absence as decisive during temporal dataset resolution instead of falling back to older content-bearing observations.
+- Record source coverage conservatively: deletion/absence is inferred only when enumeration proves the relevant scope complete.
+- Preserve source-definition revision evidence for historical source/role/tag interpretation instead of applying current source configuration retroactively.
+- Route query/status readers, adapter contexts, dataset consumers, and repository-backed semantic indexes through repository-native interfaces.
+- Consolidate SQLite persistence into one canonical implementation while retaining supported additive schema upgrades.
+- Expose repository, dataset, query, and status semantics through the public API while isolating compatibility projections and historical import helpers.
 
 ### Deprecated
 
+- Deprecate legacy `sync(cfg)` in favor of canonical `Engine` orchestration.
+
 ### Removed
 
-### Fixed
-- prevent temporal dataset selection from resurrecting files that have a later authoritative absence observation
-- restore `sqlite_metadata.py` as valid importable source while preserving the schema-v2 absence migration and repository metadata behavior
-- close in-flight repository operations before failing an Engine import run so lifecycle enforcement cannot leave impossible running-operation state
+- Remove storage placement and mirror-mode concepts from stable semantic content references and top-level APIs.
+- Remove the unused transient acquisition path and isolate historical import/projection helpers under explicit compatibility code.
 
-### Security
+### Fixed
+
+- Preserve frozen source-snapshot observation bindings after subsequent ingestion.
+- Flush CAS directory entries before reporting durable content and reject corrupted reused blobs.
+- Prevent temporal dataset selection from resurrecting artifacts with later authoritative absence evidence.
+- Close in-flight repository operations when an Engine import run fails so lifecycle state cannot remain impossibly `running`.
 
 ## [0.0.9] - 2026-04-07
 
 ### Added
-- add macOS-specific rsync indexing telemetry that can report local temporary-file activity and active TCP connection state during long-running transfers
-- add more flexible `just` developer workflows for linting, formatting, testing, docs, complexity, and coverage via flag-driven recipes instead of parallel command aliases
+
+- Add macOS rsync indexing telemetry for temporary-file activity and active TCP connection state during long-running transfers.
 
 ### Changed
-- change rsync runtime progress to emit periodic indexing heartbeats during `receiving file list` and reduce the file-list stall warning threshold from 300s to 30s
-- change `just fix` to run the fast test subset by default and consolidate several recipe variants into parameterized commands
-- change `canonical_path()` normalization to use `resolve()` plus `normpath()` consistently
 
-### Fixed
-- fix low-visibility rsync indexing behavior by surfacing elapsed-time, idle-time, and optional file-list-count progress while the remote file list is still being built
-- fix path canonicalization edge cases by normalizing resolved artifact paths before indexing
-
-## [0.0.8] - 2026-04-02
-
-### Added
-
-### Changed
-- clarify subprocess-security suppression rationale in sync and rsync transport
-  modules so retained `noqa` directives document why argv construction remains
-  bounded and shell-free
-
-### Deprecated
-
-### Removed
+- Emit periodic indexing heartbeats while rsync is receiving the file list and reduce the file-list stall warning threshold from 300 seconds to 30 seconds.
+- Normalize canonical paths consistently with `resolve()` plus `normpath()`.
 
 ### Fixed
 
-### Security
+- Surface elapsed, idle, and optional file-count progress while rsync is still building a remote file list.
 
 ## [0.0.7] - 2026-04-02
 
-### Added
-
-### Changed
-- change rsync subprocess spawning to avoid `start_new_session=True` so terminal interrupts can propagate to the active transfer process
-
-### Deprecated
-
-### Removed
-
 ### Fixed
-- fix `bvp sync` Ctrl-C interruption behavior by allowing SIGINT delivery to child rsync processes instead of isolating them in a separate session
-- add regression coverage that asserts rsync process launch arguments do not enable `start_new_session`
 
-### Security
+- Allow terminal SIGINT to reach child rsync processes so `bvp sync` can be interrupted normally with Ctrl-C.
 
 ## [0.0.6] - 2026-04-02
 
 ### Added
-- add compact shard-level runtime progress for `pdb_mmcif` path syncs so normal output reports one continuously updating overall shard status line instead of per-shard transport chatter
 
-### Changed
-- change `run_rsync_phase` orchestration structure by extracting per-source rsync execution helpers, keeping behavior stable while reducing inline branching complexity
-
-### Deprecated
-
-### Removed
+- Add compact shard-level runtime progress for `pdb_mmcif` path synchronization.
 
 ### Fixed
-- fix normal `pdb_mmcif` runtime output flooding by suppressing per-shard transport progress in non-debug mode while retaining detailed per-shard diagnostics in debug logging mode
 
-### Security
+- Suppress per-shard transport chatter in normal `pdb_mmcif` output while retaining detailed debug diagnostics.
 
 ## [0.0.5] - 2026-04-02
 
 ### Added
-- add rsync transfer-progress enrichment with handled-file fractions, transferred-file counts, cumulative bytes, throughput, and idle-since-last-output timing in runtime progress output
-- add mirror-state subtree file and directory counts plus manifest integrity count payloads so downstream integrity scans can report percentage completion
-- add an rsync prefilter for `pdb_mmcif` bucket paths that discovers existing remote `mmCIF` buckets via one `--list-only` request and skips non-existent shards before transfer
+
+- Add rsync transfer progress with handled-file fractions, transferred-file counts, cumulative bytes, throughput, and idle timing.
+- Add mirror-state file/directory counts and manifest integrity counts for percentage-based downstream scans.
+- Add `pdb_mmcif` remote-bucket discovery so nonexistent shards are skipped before transfer.
 
 ### Changed
-- change `pdb_mmcif` runtime command profile to disable `--compress` and `--copy-links` while keeping archive/itemize semantics
-- change rsync heartbeat timeout bars to countdown semantics (remaining time) instead of elapsed-fill semantics
 
-### Deprecated
-
-### Removed
+- Disable rsync compression and copy-links for the `pdb_mmcif` runtime profile while preserving archive/itemize semantics.
+- Report rsync heartbeat timeouts as remaining-time countdowns.
 
 ### Fixed
-- fix rsync phase reporting so transfer markers (`xfr#`, `to-check`) take precedence over earlier file-list text when classifying failure phase
-- fix `pdb_mmcif` shard handling so missing remote bucket directories (`code 23` `change_dir` no-such-file) are normalized to skipped shards instead of source-fatal errors
-- fix default PDB rsync roots and source defaults to use `.../data/structures/divided/` consistently, including legacy-config canonicalization from `.../all/`
 
-### Security
+- Prefer transfer markers over earlier file-list text when classifying rsync failure phases.
+- Treat missing remote `pdb_mmcif` bucket directories as skipped shards instead of source-fatal errors.
+- Use the divided-structure PDB rsync root consistently, including legacy configuration canonicalization.
 
 ## [0.0.3] - 2026-04-01
 
 ### Added
-- add first-class rsync port support so callers can target non-default rsync daemon ports without encoding transport details into remote strings
+
+- Add first-class rsync daemon port configuration.
 
 ### Changed
-- add rsync connect preflight diagnostics, retry countdowns, and active-phase heartbeat output so connect stalls remain visible while a sync is running
-- record rsync retry metadata and attempt history in manifests and normalized summaries so callers can explain retry behavior in higher-level status output
 
-### Deprecated
+- Add rsync connection preflight diagnostics, bounded transient-failure retries, retry countdowns, and active-phase heartbeat output.
+- Record rsync retry metadata and attempt history in manifests and normalized summaries.
 
 ### Removed
-- remove obsolete check-command tests that still targeted the retired `efloud.app` and `efloud.cli.root` package layout
+
+- Remove obsolete check-command behavior tied to the retired `efloud.app` and `efloud.cli.root` layout.
 
 ### Fixed
-- fix intermittent rsync daemon connect failures by retrying transient socket and connect errors before marking mirror operations as failed
-- fix path-scoped rsync diagnostics so the displayed target matches the actual remote subtree being synced
-- fix lint violations across sync, locator, query, status, and transport helpers by extracting smaller helper routines and cleaning import/docstring issues
-- fix pytest warning noise by installing `pytest-test-categories`, adding explicit size markers to the unit suite, and aligning pytest category enforcement settings with the current medium-sized test mix
 
-### Security
+- Retry transient rsync socket/connect failures before marking mirror operations failed.
+- Make path-scoped rsync diagnostics display the actual remote subtree being synchronized.
 
 ## [0.0.1] - 2026-04-01
 
-### Added
-
 ### Changed
-- add bounded retries for transient rsync transport failures and persist retry metadata in sync manifests and summaries
-- expose rsync retry counts and request counts through the normalized summary payload so callers can report successful retries distinctly from first-attempt success
 
-### Deprecated
-
-### Removed
+- Add bounded retries for transient rsync transport failures and expose retry/request counts through normalized summaries.
 
 ### Fixed
-- fix intermittent rsync daemon connect timeouts by retrying transient socket and connect failures before marking the mirror operation as failed
 
-### Security
+- Avoid treating intermittent rsync daemon connection timeouts as immediate mirror-operation failures.
 
 ## [0.0.0] - 2026-02-23
 
 ### Added
 
-### Changed
-
-### Deprecated
-
-### Removed
-
-### Fixed
-
-### Security
+- Initial release.

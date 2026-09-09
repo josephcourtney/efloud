@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, NotRequired, Required, TypedDict
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from efloud.compat.indexing import IndexRegistry
     from efloud.derived import DerivedTask
-    from efloud.indexing import DerivedIndexRegistry, IndexRegistry
+    from efloud.indexing import DerivedIndexRegistry
     from efloud.json_types import JsonObject
     from efloud.policy import SyncPolicy
     from efloud.registry import SourceDefinition

@@ -241,4 +241,21 @@ def test_runtime_operational_layout_does_not_affect_plan_identity(tmp_path: Path
 def test_source_definition_remains_declarative_data_only() -> None:
     field_names = {item.name for item in fields(HttpSource)}
     assert not field_names & {"client", "session", "adapter", "transport", "repository"}
-\n\ndef test_dry_run_records_selection_reasons_without_mutation(tmp_path: Path) -> None:\n    adapter = RecordingHttpAdapter()\n    sources = (_source("a"), _source("b"))\n    request = SyncRequest(source_ids=("a",), dry_run=True)\n    with Repository(tmp_path) as repository:\n        engine = Engine(repository, sources, adapters=AdapterRegistry((adapter,)))\n        plan = engine.plan(request)\n        decisions = {decision.source_id: decision for decision in plan.decisions}\n        assert decisions["a"].selected is True\n        assert decisions["a"].reason == "source selected for acquisition"\n        assert decisions["b"].selected is False\n        assert decisions["b"].reason == "source not requested"\n        result = asyncio.run(engine.sync(request))\n        assert {operation.status for operation in result.execution.operations} == {"not-executed"}\n        assert adapter.calls == []\n        assert repository.artifact_keys() == ()\n
+
+
+def test_dry_run_records_selection_reasons_without_mutation(tmp_path: Path) -> None:
+    adapter = RecordingHttpAdapter()
+    sources = (_source("a"), _source("b"))
+    request = SyncRequest(source_ids=("a",), dry_run=True)
+    with Repository(tmp_path) as repository:
+        engine = Engine(repository, sources, adapters=AdapterRegistry((adapter,)))
+        plan = engine.plan(request)
+        decisions = {decision.source_id: decision for decision in plan.decisions}
+        assert decisions["a"].selected is True
+        assert decisions["a"].reason == "source selected for acquisition"
+        assert decisions["b"].selected is False
+        assert decisions["b"].reason == "source not requested"
+        result = asyncio.run(engine.sync(request))
+        assert {operation.status for operation in result.execution.operations} == {"not-executed"}
+        assert adapter.calls == []
+        assert repository.artifact_keys() == ()

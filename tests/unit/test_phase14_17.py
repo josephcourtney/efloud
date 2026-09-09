@@ -549,4 +549,76 @@ def test_cleanup_removes_unreferenced_metadata_without_blob(tmp_path: Path) -> N
     candidates = maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False)
     assert candidates[0].reason == "unreferenced-missing-content"
     assert maintenance.fsck().ok
-\n\ndef test_cleanup_grace_period_boundary_is_inclusive(tmp_path: Path) -> None:\n    with Repository(tmp_path) as repository:\n        content = repository.store_bytes_content(b"unused")\n        blob = repository.blobs.path_for(content.content_id)\n    os.utime(blob, (100.0, 100.0))\n    maintenance = RepositoryMaintenance(tmp_path)\n    assert maintenance.cleanup(now=109.999, grace_period=10.0) == ()\n    candidates = maintenance.cleanup(now=110.0, grace_period=10.0)\n    assert len(candidates) == 1\n    assert candidates[0].content_id == content.content_id\n\n\ndef test_cleanup_fails_closed_on_semantic_corruption(tmp_path: Path) -> None:\n    with Repository(tmp_path) as repository:\n        _record(repository)\n        unused = repository.store_bytes_content(b"unused")\n        unused_blob = repository.blobs.path_for(unused.content_id)\n    os.utime(unused_blob, (1.0, 1.0))\n    with closing(sqlite3.connect(tmp_path / "metadata.sqlite")) as connection, connection:\n        connection.execute("UPDATE tree_entries SET relative_path = 'tampered.txt'")\n    maintenance = RepositoryMaintenance(tmp_path)\n    with pytest.raises(ValueError, match="tree-identity"):\n        maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)\n    assert unused_blob.is_file()\n\n\ndef test_cleanup_fails_closed_on_reachable_corrupt_content(tmp_path: Path) -> None:\n    with Repository(tmp_path) as repository:\n        observation, _ = _record(repository)\n        unused = repository.store_bytes_content(b"unused")\n        unused_blob = repository.blobs.path_for(unused.content_id)\n        referenced_blob = repository.blobs.path_for(observation.content_id)\n    os.utime(unused_blob, (1.0, 1.0))\n    referenced_blob.write_bytes(b"corrupt")\n    maintenance = RepositoryMaintenance(tmp_path)\n    with pytest.raises(ValueError, match="corrupt-blob"):\n        maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)\n    assert unused_blob.is_file()\n\n\ndef test_cleanup_preserves_provenance_history(tmp_path: Path) -> None:\n    with Repository(tmp_path) as repository:\n        source, _ = _record(repository)\n        run = repository.start_run(started_at=10.0)\n        operation = repository.start_operation(\n            run_id=run,\n            kind="derive",\n            subject="derived",\n            started_at=10.0,\n        )\n        derived = repository.record_derived_bytes(\n            "derived:item",\n            b"derived",\n            derivation_key=None,\n            run_id=run,\n            operation_id=operation,\n            inputs=(source,),\n            observed_at=10.0,\n        )\n        repository.finish_operation(operation, status="succeeded", finished_at=10.0)\n        repository.finish_run(run, status="succeeded", finished_at=10.0)\n        source_content = source.content_id\n        derived_content = derived.content_id\n    maintenance = RepositoryMaintenance(tmp_path)\n    assert maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False) == ()\n    with ReadOnlyRepository(tmp_path) as repository:\n        assert repository.verify_content(source_content)\n        assert repository.verify_content(derived_content)\n        edges = repository.provenance_inputs(derived.observation_id)\n        assert len(edges) == 1\n        assert edges[0].input_observation_id == source.observation_id\n
+
+
+def test_cleanup_grace_period_boundary_is_inclusive(tmp_path: Path) -> None:
+    with Repository(tmp_path) as repository:
+        content = repository.store_bytes_content(b"unused")
+        blob = repository.blobs.path_for(content.content_id)
+    os.utime(blob, (100.0, 100.0))
+    maintenance = RepositoryMaintenance(tmp_path)
+    assert maintenance.cleanup(now=109.999, grace_period=10.0) == ()
+    candidates = maintenance.cleanup(now=110.0, grace_period=10.0)
+    assert len(candidates) == 1
+    assert candidates[0].content_id == content.content_id
+
+
+def test_cleanup_fails_closed_on_semantic_corruption(tmp_path: Path) -> None:
+    with Repository(tmp_path) as repository:
+        _record(repository)
+        unused = repository.store_bytes_content(b"unused")
+        unused_blob = repository.blobs.path_for(unused.content_id)
+    os.utime(unused_blob, (1.0, 1.0))
+    with closing(sqlite3.connect(tmp_path / "metadata.sqlite")) as connection, connection:
+        connection.execute("UPDATE tree_entries SET relative_path = 'tampered.txt'")
+    maintenance = RepositoryMaintenance(tmp_path)
+    with pytest.raises(ValueError, match="tree-identity"):
+        maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)
+    assert unused_blob.is_file()
+
+
+def test_cleanup_fails_closed_on_reachable_corrupt_content(tmp_path: Path) -> None:
+    with Repository(tmp_path) as repository:
+        observation, _ = _record(repository)
+        unused = repository.store_bytes_content(b"unused")
+        unused_blob = repository.blobs.path_for(unused.content_id)
+        referenced_blob = repository.blobs.path_for(observation.content_id)
+    os.utime(unused_blob, (1.0, 1.0))
+    referenced_blob.write_bytes(b"corrupt")
+    maintenance = RepositoryMaintenance(tmp_path)
+    with pytest.raises(ValueError, match="corrupt-blob"):
+        maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)
+    assert unused_blob.is_file()
+
+
+def test_cleanup_preserves_provenance_history(tmp_path: Path) -> None:
+    with Repository(tmp_path) as repository:
+        source, _ = _record(repository)
+        run = repository.start_run(started_at=10.0)
+        operation = repository.start_operation(
+            run_id=run,
+            kind="derive",
+            subject="derived",
+            started_at=10.0,
+        )
+        derived = repository.record_derived_bytes(
+            "derived:item",
+            b"derived",
+            derivation_key=None,
+            run_id=run,
+            operation_id=operation,
+            inputs=(source,),
+            observed_at=10.0,
+        )
+        repository.finish_operation(operation, status="succeeded", finished_at=10.0)
+        repository.finish_run(run, status="succeeded", finished_at=10.0)
+        source_content = source.content_id
+        derived_content = derived.content_id
+    maintenance = RepositoryMaintenance(tmp_path)
+    assert maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False) == ()
+    with ReadOnlyRepository(tmp_path) as repository:
+        assert repository.verify_content(source_content)
+        assert repository.verify_content(derived_content)
+        edges = repository.provenance_inputs(derived.observation_id)
+        assert len(edges) == 1
+        assert edges[0].input_observation_id == source.observation_id

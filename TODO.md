@@ -2,25 +2,7 @@
 
 Purpose: ephemeral, execution-level tasks for the next development work. Completed items are removed rather than retained as history.
 
-## 1. Migrate canonical execution and extensions
-
-The clean public facade in `docs/api.md` is implemented. Move canonical internals onto those contracts without reintroducing alpha names at the package root.
-
-- [ ] Key adapter registration/dispatch by namespaced adapter identity/capability instead of the closed `SourceKind` enum.
-- [ ] Narrow adapter execution context to source configuration, planned intent/evidence, and required read capabilities; remove full `EngineConfig` and low-level writer exposure.
-- [ ] Migrate planner/executor/reconciliation to the new source and request models without manifest, mirror, alias, or historical-schema inputs.
-- [ ] Replace legacy `DerivedTask`/`RepositoryDerivedTask` shapes with one canonical exact-input/declared-output derived-task contract.
-- [ ] Replace `FanoutEnumerator`/`RestBaseFanoutTask` compatibility shape with a canonical collection-source inventory/fetch contract.
-- [ ] Remove manifest-shaped methods from refresh/policy contracts; policies consume typed source/repository evidence only.
-- [ ] Keep deterministic derived-index behavior while removing TTL/cache compatibility from canonical indexing.
-- [ ] Layer any retained CLI inspection/query grammar on typed repository reads instead of making the parser a repository API dependency.
-- [ ] Split the broad internal `RepositoryView` dependency into narrow read capabilities for adapters, datasets, validation, queries, and maintenance.
-- [ ] Move executor-facing run/operation lifecycle, ingest/absence/snapshot, validation-recording, and related mutations behind an explicit internal writer capability rather than the legacy repository class surface.
-- [ ] Ensure storage, planner, executor, and detailed ID/result types are importable only from deliberate advanced/internal modules, not the package root.
-
-Acceptance: canonical acquisition, derivation, validation, queries, datasets, and maintenance import no compatibility, merged-manifest, mirror-state, old source/config, or historical schema code.
-
-## 2. Remove backwards compatibility completely
+## 1. Remove backwards compatibility completely
 
 Use `docs/compatibility-inventory.md` as the deletion inventory. This is removal, not isolation.
 
@@ -41,9 +23,9 @@ Use `docs/compatibility-inventory.md` as the deletion inventory. This is removal
 
 Acceptance: the installed package contains no maintained backwards-compatibility implementation and unsupported old repository schemas fail clearly rather than upgrading or partially loading.
 
-## 3. Re-verify durability on the reduced mutation surface
+## 2. Re-verify durability on the reduced mutation surface
 
-Depends on TODO 1-2.
+Depends on TODO 1.
 
 - [ ] Enumerate every remaining authoritative mutation path and verify writer/maintenance coordination covers repository creation/opening, acquisition, validation staging, metadata commit, dataset freeze, and maintenance.
 - [ ] Review crash boundaries and recovery transitions so recovery cannot invent successful operations or complete snapshots.
@@ -53,9 +35,9 @@ Depends on TODO 1-2.
 
 Acceptance: destructive maintenance cannot race a supported writer, and recovery/cleanup preserve historical correctness through only the new repository API.
 
-## 4. Close dataset and export acceptance through the new API
+## 3. Close dataset and export acceptance through the new API
 
-Depends on TODO 1-3.
+Depends on TODO 1-2.
 
 - [ ] Verify `resolve` versus `freeze` side effects and identities through `repo.datasets`.
 - [ ] Verify freeze → export → reopen/verify elsewhere through public interfaces only.
@@ -68,9 +50,9 @@ Depends on TODO 1-3.
 
 Acceptance: generic domain-neutral handoff is reproducible, detached, and independent of compatibility representations.
 
-## 5. Run final repository gates
+## 4. Run final repository gates
 
-Depends on TODO 1-4.
+Depends on TODO 1-3.
 
 - [ ] Run the non-mutating Python 3.14 `just check` gate.
 - [ ] Run the complete suite on every Python minor version declared by `project.requires-python`.
@@ -82,7 +64,7 @@ Depends on TODO 1-4.
 
 Acceptance: all required checks pass against the committed clean-break implementation.
 
-## 6. Migrate and run external BVP acceptance
+## 5. Migrate and run external BVP acceptance
 
 Depends on the finalized clean API and generic acceptance above.
 

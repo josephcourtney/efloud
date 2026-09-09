@@ -41,7 +41,7 @@ def _source(
     if not isinstance(source, RsyncSource):
         msg = f"Adapter {descriptor.adapter_id!r} cannot acquire {type(source).__name__}."
         raise TypeError(msg)
-    return context.source
+    return source
 
 
 def _updated_paths(results: JsonObject) -> tuple[str, ...]:

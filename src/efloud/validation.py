@@ -215,7 +215,7 @@ class ValidationService:
         descriptor = validator.descriptor
         existing = self.repository.validation(target.content.content_id, descriptor.validator_id, descriptor.version)
         if existing is not None:
-            return ValidationCheck(existing, descriptor.required, required=True)
+            return ValidationCheck(existing, required=descriptor.required, reused=True)
         try:
             with self.repository.open_content(target.content.content_id) as stream:
                 outcome = validator.validate(target, stream)
@@ -230,7 +230,7 @@ class ValidationService:
             outcome.details,
         )
         self.repository.record_validation(result)
-        return ValidationCheck(result, descriptor.required, required=False)
+        return ValidationCheck(result, required=descriptor.required, reused=False)
 
     def validate_content(
         self,

@@ -7,8 +7,12 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from efloud.compat.indexing import (
+    IndexDefinition,
+    IndexRegistry,
+    JsonTtlIndex,
+)
 from efloud.health import build_mirror_health_summary
-from efloud.indexing import IndexDefinition, IndexRegistry, JsonTtlIndex
 from efloud.models import EngineConfig, SyncResult
 from efloud.query import index_payload, query_target, root_payload, store_payload
 from efloud.registry import SourceDefinition, SourceKind

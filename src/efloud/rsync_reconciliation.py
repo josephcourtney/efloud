@@ -147,7 +147,7 @@ def _incomplete_result(
         observations=(),
         ingested_file_count=0,
         reused_content_count=0,
-        absense_count=0,
+        absence_count=0,
         error=error,
     )
 
@@ -377,7 +377,12 @@ def reconcile_rsync_inventory(
             observed_at=observed_at,
             error=error,
         )
-    source_inventory = rsync_source_inventory(source_id=normalized_source, inventory=inventory, observed_at=observed_at)
+    source_inventory = rsync_source_inventory(
+        inventory,
+        source_id=normalized_source,
+        observed_at=observed_at,
+        upstream_root=upstream_root,
+    )
     reconciliation = reconcile_inventory(
         source_inventory, _previous_items(repository, normalized_source, inventory.scope)
     )

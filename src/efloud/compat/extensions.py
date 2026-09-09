@@ -11,8 +11,10 @@ import anyio
 from efloud.collections import CollectionInventory, CollectionItem
 from efloud.derivation import DerivedOutput, DerivedResult, DerivedTaskSpec
 from efloud.derived import RepositoryDerivedTask
+from efloud.fanout import FanoutEnumeration
 from efloud.json_types import copy_json_mapping, json_mapping_or_none
 from efloud.models import EngineConfig
+from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_compat import repository_manifest
 
 if TYPE_CHECKING:
@@ -20,7 +22,7 @@ if TYPE_CHECKING:
 
     from efloud.collections import CollectionContext
     from efloud.derivation import DerivedContext
-    from efloud.fanout import FanoutEnumeration, FanoutItem
+    from efloud.fanout import FanoutItem
     from efloud.json_types import JsonObject
     from efloud.models import NormalizedManifest
     from efloud.registry import SourceDefinition
@@ -54,10 +56,11 @@ def _manifest(
     workspace: Path,
     sources: tuple[SourceDefinition, ...],
 ) -> NormalizedManifest:
-    return repository_manifest(
-        repository,
-        cfg=EngineConfig(root=workspace, sources=list(sources)),
-    )
+    with ReadOnlyRepository(repository.root) as view:
+        return repository_manifest(
+            view,
+            cfg=EngineConfig(root=workspace, sources=list(sources)),
+        )
 
 
 def _task_parameters(task: LegacyTask) -> JsonObject:
@@ -164,8 +167,6 @@ class LegacyEnumeratorAdapter:
             manifest=_manifest(context.repository, context.workspace, self.sources),
             sources=self.sources,
         )
-        from efloud.fanout import FanoutEnumeration  # ruff: ignore[import-outside-top-level] - compatibility type is intentionally lazy.
-
         enumeration = raw if isinstance(raw, FanoutEnumeration) else FanoutEnumeration(tuple(raw))
         return CollectionInventory(
             items=tuple(_collection_item(item) for item in enumeration.items),

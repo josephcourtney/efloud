@@ -8,9 +8,9 @@ import pytest
 
 import efloud
 from efloud import DatasetManifest, DatasetSpec, Engine, HttpSource, Repository, SyncRequest
+from efloud.adapters import HttpAcquisition
 from efloud.errors import RepositoryOpenError
 from efloud.http_adapter import HttpSourceAdapter
-from efloud.adapters import HttpAcquisition
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 

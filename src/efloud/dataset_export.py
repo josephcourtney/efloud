@@ -42,6 +42,7 @@ def safe_export_path(value: str) -> str:
     path = PurePosixPath(value)
     if (
         not value
+        or value == "."
         or path.is_absolute()
         or path.as_posix() != value
         or any(part in {".", ".."} or part.endswith((".", " ")) for part in path.parts)
@@ -233,7 +234,12 @@ class DetachedDatasetManifest:
     def verify(self, root: Path) -> bool:
         """Verify a detached export using only its manifest and local bytes."""
         self.validate()
-        resolved_root = root.resolve(strict=True)
+        try:
+            resolved_root = root.resolve(strict=True)
+        except OSError:
+            return False
+        if not resolved_root.is_dir():
+            return False
         for member in self.members:
             path = root / member.path
             try:

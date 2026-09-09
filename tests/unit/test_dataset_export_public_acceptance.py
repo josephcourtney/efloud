@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -28,7 +29,7 @@ from efloud.errors import DatasetConstraintError, DatasetError, ExportError
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    pass
 
 pytestmark = [pytest.mark.component, pytest.mark.acceptance, pytest.mark.regression, pytest.mark.db, pytest.mark.medium]
 
@@ -272,6 +273,7 @@ def test_missing_and_corrupt_content_fail_verification_without_repository_mutati
         manifest = dataset.export(export, strategy="copy")
 
     metadata_before = (root / "metadata.sqlite").read_bytes()
+    assert DatasetManifest.from_bytes(manifest.to_bytes()).verify(tmp_path / "missing-export") is False
     exported_member = export / json.loads(manifest.to_bytes())["members"][0]["path"]
     exported_member.write_bytes(b"corrupt export")
     assert manifest.verify(export) is False
@@ -308,8 +310,10 @@ def test_public_export_rejects_unsafe_collision_and_destination_race(
         _sync_http(repository, adapter, _http_source())
         dataset = repository.datasets.freeze(DatasetSpec.latest("source:example"))
 
-        with pytest.raises(DatasetError, match="Unsafe logical export path"):
+        with pytest.raises(ExportError, match="Unsafe logical export path"):
             dataset.export(tmp_path / "escape", paths={"source:example": "../escape"}, strategy="copy")
+        with pytest.raises(ExportError, match="Unsafe logical export path"):
+            dataset.export(tmp_path / "dot", paths={"source:example": "."}, strategy="copy")
         with pytest.raises(ExportError, match="collision"):
             dataset.export(
                 tmp_path / "collision",
@@ -393,6 +397,26 @@ def test_linux_reflink_path_invokes_ficlone_without_copy_fallback(
     assert destination.read_bytes() == b"reflink payload"
 
 
+def test_linux_native_reflink_public_export_on_required_cow_filesystem() -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("Linux-specific native reflink acceptance")
+    configured = os.environ.get("EFLOUD_NATIVE_COW_TEST_ROOT")
+    if configured is None:
+        pytest.skip("dedicated reflink-capable filesystem was not requested")
+    workspace = Path(configured) / f"efloud-acceptance-{os.getpid()}"
+    shutil.rmtree(workspace, ignore_errors=True)
+    workspace.mkdir()
+    try:
+        adapter = SequencedHttpAdapter((b"native reflink payload",))
+        with Repository.create(workspace / "repository") as repository:
+            _sync_http(repository, adapter, _http_source())
+            dataset = repository.datasets.freeze(DatasetSpec.latest("source:example"))
+            manifest = dataset.export(workspace / "export", strategy="reflink")
+            assert manifest.verify(workspace / "export")
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
 def test_generic_standard_library_consumer_validates_manifest_and_bytes(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     destination = tmp_path / "export"
@@ -402,7 +426,7 @@ def test_generic_standard_library_consumer_validates_manifest_and_bytes(tmp_path
         dataset = repository.datasets.freeze(DatasetSpec.latest_source_snapshot("example"))
         manifest = dataset.export(destination, paths={"source:example": "catalog/example.bin"}, strategy="copy")
 
-    script = r'''
+    script = r"""
 import hashlib
 import json
 import sys
@@ -457,7 +481,7 @@ for member in manifest["members"]:
         assert revision["revision_id"] == stable("source-definition", revision_payload)
 assert manifest["resolution"]["snapshots"][0]["complete"] is True
 print(manifest["dataset_id"])
-'''
+"""
     completed = subprocess.run(
         [sys.executable, "-I", "-S", "-c", script, str(destination)],
         capture_output=True,

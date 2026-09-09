@@ -300,13 +300,15 @@ class Dataset:
         paths: Mapping[str, str] | None = None,
         strategy: ExportStrategy = "auto",
     ) -> ExportPlan:
-        manifest = self.manifest(paths=paths)
         try:
+            manifest = self.manifest(paths=paths)
             return DatasetMaterializer(self._dataset.repository).plan(
                 manifest._manifest,
                 _path_for(destination),
                 strategy=strategy,
             )
+        except DatasetError as exc:
+            raise ExportError(str(exc)) from exc
         except (FileNotFoundError, FileExistsError, OSError, TypeError, ValueError) as exc:
             raise ExportError(str(exc)) from exc
 
@@ -318,14 +320,16 @@ class Dataset:
         strategy: ExportStrategy = "auto",
         dry_run: bool = False,
     ) -> DatasetManifest:
-        manifest = self.manifest(paths=paths)
         try:
+            manifest = self.manifest(paths=paths)
             DatasetMaterializer(self._dataset.repository).export(
                 manifest._manifest,
                 _path_for(destination),
                 strategy=strategy,
                 dry_run=dry_run,
             )
+        except DatasetError as exc:
+            raise ExportError(str(exc)) from exc
         except (FileNotFoundError, FileExistsError, OSError, TypeError, ValueError) as exc:
             raise ExportError(str(exc)) from exc
         return manifest

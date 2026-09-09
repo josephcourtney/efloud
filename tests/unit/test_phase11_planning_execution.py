@@ -34,7 +34,7 @@ class RecordingHttpAdapter:
     max_active: int = 0
     descriptor: AdapterDescriptor = field(
         default_factory=lambda: AdapterDescriptor(
-            adapter_id="test:http",
+            adapter_id="efloud:http",
             version="7",
             capabilities=AdapterCapabilities(inventory=False, fetch=True),
         )
@@ -93,12 +93,11 @@ class DependentTask:
         return DerivedResult()
 
 
-def _source(source_id: str, *, adapter_id: str = "test:http") -> HttpSource:
+def _source(source_id: str) -> HttpSource:
     return HttpSource(
         id=source_id,
         description=source_id.upper(),
         url=f"https://example.test/{source_id}.txt",
-        adapter_id=adapter_id,
     )
 
 
@@ -124,7 +123,7 @@ def test_planning_is_deterministic_and_performs_no_acquisition_or_authoritative_
             "inventory": False,
             "fetch": True,
         }
-        assert first.operation("source:a").parameters["adapter_id"] == "test:http"
+        assert first.operation("source:a").parameters["adapter_id"] == "efloud:http"
 
 
 def test_repository_snapshot_changes_deterministic_plan_identity(tmp_path: Path) -> None:
@@ -208,7 +207,7 @@ def test_failed_dependency_blocks_derived_operation_and_persists_adapter_produce
         persisted = repository.metadata.operations_for_run(result.repository_run_id)
         source_operation = next(operation for operation in persisted if operation.subject == "a")
         derived_operation = next(operation for operation in persisted if operation.subject == "dependent")
-        assert source_operation.producer.producer_id == "test:http"
+        assert source_operation.producer.producer_id == "efloud:http"
         assert source_operation.producer.version == "7"
         assert derived_operation.status == "cancelled"
         assert derived_operation.details["failed_dependencies"] == ["source:a"]

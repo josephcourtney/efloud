@@ -97,23 +97,20 @@ def test_wheel_installs_and_public_api_runs(tmp_path: Path) -> None:
     )
     assert version_result.stdout.strip() == efloud.__version__
 
+    script = (
+        "from efloud import DatasetSpec, Engine, HttpSource, Repository, SyncRequest\n"
+        "source = HttpSource(id='example', url='https://example.test/data.json')\n"
+        "spec = DatasetSpec.latest('source:example')\n"
+        "assert source.adapter_id == 'efloud:http'\n"
+        "with Repository.create('repository') as repo:\n"
+        "    engine = Engine(repo, [source])\n"
+        "    plan = engine.plan(SyncRequest(dry_run=True))\n"
+        "    assert plan.request.dry_run\n"
+        "assert spec is not None\n"
+        "print('ok')\n"
+    )
     api_result = _run(
-        [
-            str(venv_python),
-            "-c",
-            (
-                "from efloud import DatasetSpec, Engine, HttpSource, Repository, SyncRequest; "
-                "source = HttpSource(id='example', url='https://example.test/data.json'); "
-                "spec = DatasetSpec.latest('source:example'); "
-                "assert source.adapter_id == 'efloud:http'; "
-                "with Repository.create('repository') as repo: "
-                " engine = Engine(repo, [source]); "
-                " plan = engine.plan(SyncRequest(dry_run=True)); "
-                " assert plan.request.dry_run; "
-                "assert spec is not None; "
-                "print('ok')"
-            ),
-        ],
+        [str(venv_python), "-c", script],
         cwd=tmp_path,
     )
     assert api_result.stdout.strip() == "ok"

@@ -10,8 +10,8 @@ from efloud.repository_models import ArtifactAbsence, ArtifactObservation
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
+    from efloud.repository_capabilities import DatasetRepository as RepositoryView
     from efloud.repository_models import SourceSnapshot
-    from efloud.repository_view import RepositoryView
 
 
 def snapshot_observations(repository: RepositoryView, snapshot: SourceSnapshot) -> tuple[ArtifactObservation, ...]:

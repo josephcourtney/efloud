@@ -29,3 +29,5 @@ This audit enumerates the authoritative mutation surface that remains after the 
 ## Accepted conservative behavior
 
 `record_tree_snapshot()` can leave an unreferenced tree if the process fails after tree recording but before snapshot publication. Tree-entry content remains conservatively reachable. This leaks metadata/storage rather than inventing history or deleting referenced content, so it is safe; future tree garbage collection may reclaim it only with an independently proven reachability rule.
+
+Explicit `reflink` export remains strict: it may raise `OSError` when the host filesystem does not support native CoW. The integration test skips only that strategy on unsupported filesystems rather than silently treating `reflink` as `copy`; exercising a supported native Linux CoW filesystem remains part of the dataset/export acceptance milestone.

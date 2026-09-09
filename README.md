@@ -6,10 +6,10 @@ It acquires data from heterogeneous upstream sources, stores immutable content b
 digest, records observations and provenance, validates content, and freezes exact
 repository state into reproducible datasets for downstream analysis.
 
-The project is pre-1.0. ADR-0010 has selected a clean-break public API and complete
-removal of alpha backwards compatibility. The target contract is documented in
-[`docs/api.md`](docs/api.md); `STATUS.md` records how much of that cutover is
-implemented today.
+The project is pre-1.0. ADR-0010 selected a clean-break public API and complete
+removal of alpha backwards compatibility. The clean public facade described below
+is implemented; canonical internals are still being migrated to that boundary
+before the compatibility implementation is deleted.
 
 ## Core model
 
@@ -24,71 +24,17 @@ successful acquisition records an observation and points to a content-addressed
 object. Repeated observations of unchanged bytes preserve acquisition history
 without duplicating content.
 
-The repository also records:
-
-- immutable source-definition revisions;
-- runs and operations with explicit lifecycle state;
-- normalized source inventories and source/tree snapshots;
-- content validation evidence;
-- provenance for fetched and derived artifacts;
-- immutable dataset membership and detached manifests;
-- safe materialization/export and maintenance evidence.
+The repository also records immutable source-definition revisions, runs and
+operations, source/tree snapshots, validation evidence, provenance, immutable
+dataset membership, detached manifests, and maintenance evidence.
 
 The default local repository uses SQLite metadata and a filesystem
 content-addressed store. Those are implementation defaults, not public semantic
 requirements.
 
-## What Efloud is for
+## Public API
 
-Typical uses include:
-
-- acquiring reference datasets while retaining historical observations;
-- combining HTTP, REST/collection, and `rsync` sources behind one repository
-  model;
-- inspecting exactly what was observed, when, and from which source revision;
-- validating downloaded content before advancing source state;
-- reusing identical content and deterministic derived outputs without losing
-  provenance;
-- freezing exact observations into reproducible datasets;
-- exporting a detached consumer handoff that does not require Efloud SQLite
-  internals;
-- operating offline after acquisition.
-
-Efloud is not a desktop sync application, workflow scheduler, distributed compute
-framework, or domain-specific scientific database.
-
-## Architecture
-
-The canonical path is:
-
-```text
-Sources
-  -> adapters
-  -> planner / reconciler / executor
-  -> Repository
-       -> MetadataStore
-       -> BlobStore
-```
-
-The repository is authoritative. Filesystem views, caches, manifests, CLI status
-payloads, and exported trees are derived or operational state.
-
-Important invariants include:
-
-- content is immutable and identified from the bytes Efloud stores;
-- logical artifact identity is independent of filesystem/storage layout;
-- absence requires successful complete source evidence;
-- repeated unchanged observations preserve provenance without duplicate bytes;
-- validation is immutable evidence and never silently changes content;
-- datasets resolve to exact observations;
-- exported/materialized trees cannot mutate authoritative content;
-- recovery never invents successful operations or complete snapshots.
-
-See [`DESIGN.md`](DESIGN.md) for the normative architecture.
-
-## Target public API
-
-The clean-break API intentionally exposes a much smaller ordinary surface:
+Ordinary callers use a deliberately small package-root surface:
 
 ```text
 Repository
@@ -100,68 +46,156 @@ SyncResult
 DatasetSpec
 Dataset
 DatasetManifest
-EfloudError
+EfloudError and category exceptions
 ```
 
-The current alpha implementation has not completed this cutover yet; the snippets
-below describe the target interface rather than promising that every name is
-currently available.
+Planner/executor records, storage implementations, repository IDs, validator and
+adapter registry details, `RepositoryView`, `ReadOnlyRepository`, `SourceKind`,
+`SourceDefinition`, `EngineConfig`, and dataset selector/materializer classes are
+advanced or transitional submodule details rather than package-root concepts.
 
-### Repository and acquisition
+### Create a repository and acquire data
 
 ```python
+from efloud import Engine, HttpSource, Repository
+
+source = HttpSource(
+    id="example-json",
+    url="https://example.test/data.json",
+)
+
 with Repository.create("repository") as repo:
-    engine = Engine(
-        repo,
-        sources=[
-            HttpSource(
-                id="example-json",
-                url="https://example.test/data.json",
-            )
-        ],
-    )
-    result = await engine.sync()
+    result = await Engine(repo, [source]).sync()
+    if not result.ok:
+        print(result.diagnostics)
 ```
 
-`Engine` owns planning/acquisition. `Repository` owns durable semantic state.
-Storage configuration is separate from per-run `SyncRequest` intent.
+`Repository.create()` creates a new writable repository. Acquisition requires a
+writable repository; `Engine` owns planning and execution while `Repository` owns
+durable semantic state.
 
-### Read-only access
+Per-run intent is passed separately:
 
 ```python
-with Repository.open("repository", mode="r") as repo:
-    state = repo.artifacts.latest("source:example-json")
+from efloud import SyncRequest
+
+request = SyncRequest(
+    source_ids=("example-json",),
+    include_derived=True,
+    max_concurrency=4,
+)
+result = await engine.sync(request)
 ```
 
-One public repository type supports explicit read-only or writable modes. The
-broad current `RepositoryView` and separate `ReadOnlyRepository` class are
-transitional implementation shapes, not the target API.
-
-### Reproducible datasets
+### Read without mutation authority
 
 ```python
-with Repository.open("repository", mode="r") as repo:
-    dataset = repo.datasets.resolve(spec)
+from efloud import Repository
 
+with Repository.open("repository", mode="r") as repo:
+    observation = repo.artifacts.latest("source:example-json")
+    if observation is not None:
+        with repo.artifacts.open("source:example-json") as stream:
+            data = stream.read()
+```
+
+There is one public repository type. `mode="r"` opens without mutation authority;
+`mode="rw"` obtains the writer coordination required by the backend.
+
+Repository reads are grouped by semantic namespace:
+
+```text
+repo.artifacts
+repo.sources
+repo.runs
+repo.datasets
+repo.provenance
+repo.maintenance
+```
+
+### Resolve and freeze reproducible datasets
+
+`DatasetSpec` is immutable selection intent. Public temporal selectors require
+timezone-aware `datetime` values.
+
+```python
+from datetime import UTC, datetime
+
+from efloud import DatasetSpec, Repository
+
+spec = DatasetSpec.latest_before(
+    "source:example-json",
+    datetime(2026, 9, 9, tzinfo=UTC),
+)
+
+with Repository.open("repository", mode="r") as repo:
+    dataset = repo.datasets.resolve(spec)  # exact, but not persisted
+    assert dataset.verify()
+```
+
+Persist exact membership with `freeze`:
+
+```python
 with Repository.open("repository", mode="rw") as repo:
-    frozen = repo.datasets.freeze(spec)
-    manifest = frozen.export("export")
+    dataset = repo.datasets.freeze(spec)
+    print(dataset.id)
 ```
 
-`DatasetSpec` represents selection intent; `Dataset` represents exact immutable
-membership; `DatasetManifest` is the detached portable representation. `resolve`
-is non-persistent, while `freeze` records membership.
+Selections can be composed with `include()` and constrained with `require()`.
+Source/snapshot, role/tag/prefix, exact-observation, latest, latest-before, and
+latest-all selection are available without exposing the underlying selector
+classes at the package root.
+
+### Export a detached dataset
+
+```python
+with Repository.open("repository", mode="rw") as repo:
+    dataset = repo.datasets.freeze(spec)
+    manifest = dataset.export("export", strategy="copy")
+
+assert manifest.verify("export")
+```
+
+`DatasetManifest` is the detached portable representation. It contains exact
+observation/content membership and source/snapshot evidence, not local CAS paths.
+It can be serialized and verified without opening Efloud SQLite:
+
+```python
+from efloud import DatasetManifest
+
+serialized = manifest.to_bytes()
+reopened = DatasetManifest.from_bytes(serialized)
+assert reopened.verify("export")
+```
+
+Export planning, dry-run, and explicit `auto`, `reflink`, `copy`, and `symlink`
+strategies remain available through dataset methods. Publication validates paths,
+stages and verifies content, never overwrites an existing destination, and uses
+atomic publication where supported.
+
+### Inspect repository maintenance state
+
+```python
+with Repository.open("repository", mode="r") as repo:
+    report = repo.maintenance.audit()
+    assert report.ok
+```
+
+Destructive cleanup and recovery remain advanced maintenance operations while the
+canonical mutation surface is being reduced. Their safety semantics remain
+reachability-based and writer-coordinated.
 
 ## Source extensibility
 
-The target source model is open rather than based on a permanent closed
-`SourceKind` enum. Built-in protocol-specific source types provide strong typing,
-while a third-party source can identify a namespaced registered adapter without a
-core Efloud change.
+Built-in source classes have namespaced adapter identities and protocol-specific
+fields, so HTTP configuration cannot accidentally carry rsync-only options. The
+public `Source` protocol is open rather than a closed `SourceKind` hierarchy.
 
-Adapters emit normalized inventory/acquisition evidence and do not mutate
-repository metadata directly. This preserves one repository/reconciliation model
-across HTTP, REST, rsync, collections, and future protocols.
+The current facade bridges built-in sources onto the existing executor. The next
+implementation milestone replaces the executor's remaining `SourceKind`/
+`EngineConfig` dispatch with namespaced adapter dispatch and narrow execution
+contexts, at which point third-party source implementations can participate
+without a core enum change.
 
 ## Derived artifacts and validation
 
@@ -173,55 +207,31 @@ Validation is layered: storage integrity, source integrity expectations, generic
 encoding/container validation, and domain validation supplied by consumers.
 Evidence is reusable by content and validator identity/version.
 
-## Detached exports
-
-Dataset exports carry exact membership, observation/content identity, source and
-snapshot evidence, constraints, and canonical export paths. Export publication
-validates the full layout, stages and verifies content, never overwrites an
-existing destination, and publishes atomically where supported.
-
-A detached consumer can verify exported bytes without reading Efloud SQLite.
-
-## Maintenance and recovery
-
-Writable local repositories use exclusive writer coordination; read-only access
-has no mutation authority. Audit is non-repairing. Cleanup is reachability-based,
-defaults to dry-run behavior, and preserves all protected historical references.
-Recovery marks abandoned lifecycle state failed rather than inventing completion;
-a new Engine run performs retries through normal reconciliation.
-
-The coordination/storage mechanisms may change for future remote or distributed
-repositories without changing ordinary repository semantics.
-
 ## Backwards compatibility
 
-The next API deliberately provides **no alpha backwards compatibility**.
+The clean API deliberately provides **no package-root aliases for the alpha API**.
+Old implementation modules still exist temporarily because canonical execution has
+not yet completed its migration. The implementation plan removes them rather than
+supporting them indefinitely, including deprecated `sync(cfg)`, compatibility
+`EngineConfig`, merged sync manifests and mirror projections, historical importers,
+old query/status presentation facades, source-alias/adoption helpers, TTL-cache
+compatibility, import aliases, and schema-v1/v2 in-place upgrades.
 
-The implementation plan removes:
-
-- deprecated `sync(cfg)` and the compatibility-oriented `EngineConfig` shape;
-- merged sync manifests and mirror-state projections;
-- historical import/recording compatibility modules;
-- old path-resolution, query/status/health/summary facades;
-- source-alias/adoption migration helpers;
-- TTL-cache compatibility and old import aliases;
-- schema-v1/v2 in-place repository upgrades.
-
-Old repository roots are not a supported runtime input after the cutover. They may
-be recreated/reacquired or handled by a one-off external converter if one is ever
-needed. Downstream packages such as BVP must migrate to the new repository/dataset
-boundary rather than preserving Efloud compatibility code.
+Old repository roots are not part of the post-cutover support contract. They may be
+recreated/reacquired or handled by an external one-off converter if required.
+Downstream packages such as BVP migrate to the clean repository/dataset boundary
+instead of keeping compatibility representations alive.
 
 See [`docs/compatibility-inventory.md`](docs/compatibility-inventory.md) for the
 finite removal inventory.
 
 ## Future extensions
 
-The target API is designed so currently proposed advanced features remain additive
-or internal:
+The public boundary keeps currently proposed advanced features additive or
+internal:
 
 - new protocols add source/adapter types without changing repository semantics;
-- plugin discovery can populate the existing adapter/validator registries;
+- plugin discovery can populate adapter/validator registries;
 - alternate blob or metadata stores remain behind `Repository`;
 - recursive Merkle trees can change tree representation without changing dataset
   workflows;
@@ -242,17 +252,15 @@ uv run just check
 ```
 
 The repository quality gate covers syntax, Ruff format/lint, static typing, import
-architecture, tests, and coverage across the supported Python range.
+architecture, tests, packaging, and coverage across the supported Python range.
 
 ## Project status
 
-The repository-centered architecture is substantially implemented, including
-canonical acquisition/persistence, validation/provenance, snapshots, immutable
-datasets, detached exports, writer coordination, audit/cleanup, and recovery.
-
-The active work is now the clean API cutover described in ADR-0010, migration of
-canonical internals to that boundary, complete deletion of compatibility and old
-schema support, and then final durability/export/CI/BVP acceptance.
+The clean package-root API and public repository/source/result/dataset facade are
+implemented. The next work is to migrate planner/executor/adapters/derived work and
+other canonical internals onto those contracts, delete backwards compatibility and
+historical schema support, and then repeat durability/export/CI/BVP acceptance on
+the reduced implementation.
 
 See [`STATUS.md`](STATUS.md), [`PLAN.md`](PLAN.md), and [`TODO.md`](TODO.md) for the
 current handoff and implementation sequence.

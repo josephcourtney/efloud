@@ -216,10 +216,7 @@ def test_schema_v1_is_rejected_without_migration(tmp_path: Path) -> None:
     connection = sqlite3.connect(db)
     try:
         assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 1
-        names = {
-            row[0]
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        }
+        names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         assert names == {"sentinel"}
     finally:
         connection.close()

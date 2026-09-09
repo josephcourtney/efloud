@@ -3,8 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 from collections import UserDict
-from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -29,6 +28,9 @@ from efloud.locator import (
     split_locator,
     star_locator_to_pointer,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit]
 

@@ -7,13 +7,12 @@ import pytest
 
 from efloud.datasets import DatasetDefinition, ExactObservation, Latest
 from efloud.repository import Repository
-from efloud.repository_models import SourceId
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from efloud.json_types import JsonObject
-    from efloud.repository_models import SourceDefinitionRevisionId
+    from efloud.repository_models import SourceDefinitionRevisionId, SourceId
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 

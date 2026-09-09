@@ -40,14 +40,10 @@ MANIFEST_FILENAME = "dataset-manifest.json"
 def safe_export_path(value: str) -> str:
     """Reject platform-dependent and escaping paths instead of normalizing them."""
     path = PurePosixPath(value)
-    if (
-        not value
-        or value == "."
-        or path.is_absolute()
-        or path.as_posix() != value
-        or any(part in {".", ".."} or part.endswith((".", " ")) for part in path.parts)
-        or any(char in "\\:\x00" or ord(char) < _CONTROL_CHARACTER_LIMIT for char in value)
-    ):
+    unsafe_shape = not value or value == "." or path.is_absolute() or path.as_posix() != value
+    unsafe_component = any(part in {".", ".."} or part.endswith((".", " ")) for part in path.parts)
+    unsafe_character = any(char in "\\:\x00" or ord(char) < _CONTROL_CHARACTER_LIMIT for char in value)
+    if unsafe_shape or unsafe_component or unsafe_character:
         msg = f"Unsafe logical export path: {value!r}"
         raise ValueError(msg)
     return value

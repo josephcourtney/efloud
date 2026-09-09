@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import json
 import os
 import shutil
@@ -11,7 +10,6 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -27,9 +25,6 @@ from efloud.adapters import (
 )
 from efloud.errors import DatasetConstraintError, DatasetError, ExportError
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
-
-if TYPE_CHECKING:
-    pass
 
 pytestmark = [pytest.mark.component, pytest.mark.acceptance, pytest.mark.regression, pytest.mark.db, pytest.mark.medium]
 

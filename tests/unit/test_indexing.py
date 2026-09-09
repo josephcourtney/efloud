@@ -1,117 +1,82 @@
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.compat.indexing import IndexDefinition, IndexRegistry, JsonTtlIndex, load_index, write_index
+from efloud.indexing import DerivedIndexDefinition, DerivedIndexRegistry
+from efloud.repository import Repository
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = [pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.medium]
 
 
-@pytest.mark.small
-def test_json_ttl_index_round_trip_and_expiry(monkeypatch):
-    index = JsonTtlIndex(fetched_at=100.0, ttl_seconds=10, payload={"ok": True})
+def test_derived_index_reuses_matching_derivation(tmp_path: Path) -> None:
+    builds: list[int] = []
 
-    monkeypatch.setattr("efloud.compat.indexing.time.time", lambda: 105.0)
-    assert index.expires_at == pytest.approx(110.0)
-    assert index.is_expired() is False
-    assert index.to_dict() == {"fetched_at": 100.0, "ttl_seconds": 10, "payload": {"ok": True}}
+    def build(*, repository, inputs):
+        del repository, inputs
+        builds.append(len(builds) + 1)
+        return {"build": builds[-1]}
 
-    loaded = JsonTtlIndex.from_dict({"fetched_at": 100, "ttl_seconds": 10, "payload": {"ok": True}})
-    assert loaded == index
+    registry = DerivedIndexRegistry((DerivedIndexDefinition("alpha", "1", build),))
 
-    monkeypatch.setattr("efloud.compat.indexing.time.time", lambda: 200.0)
-    assert index.is_expired() is True
+    with Repository(tmp_path) as repository:
+        first_run = repository.start_run(started_at=1.0)
+        first = registry.build("alpha", repository=repository, run_id=first_run, observed_at=2.0)
+        repository.finish_run(first_run, status="succeeded", finished_at=3.0)
 
-    with pytest.raises(TypeError, match="Index payload must be an object"):
-        JsonTtlIndex.from_dict({"payload": []})
+        assert first.reused is False
+        assert first.payload == {"build": 1}
+        assert builds == [1]
 
+        second_run = repository.start_run(started_at=4.0)
+        second = registry.build("alpha", repository=repository, run_id=second_run, observed_at=5.0)
+        repository.finish_run(second_run, status="succeeded", finished_at=6.0)
 
-@pytest.mark.medium
-def test_write_and_load_index_round_trip(tmp_path: Path):
-    path = tmp_path / "index.json"
-    index = JsonTtlIndex(fetched_at=1.0, ttl_seconds=2, payload={"value": 1})
-
-    write_index(path, index)
-
-    assert load_index(path, JsonTtlIndex) == index
-    assert load_index(tmp_path / "missing.json", JsonTtlIndex) is None
-
-    path.write_text("{", encoding="utf-8")
-    assert load_index(path, JsonTtlIndex) is None
-
-    path.write_text(json.dumps(["not", "a", "mapping"]), encoding="utf-8")
-    assert load_index(path, JsonTtlIndex) is None
+        assert second.reused is True
+        assert second.payload == {"build": 1}
+        assert second.observation.content_id == first.observation.content_id
+        assert builds == [1]
 
 
-@pytest.mark.medium
-def test_index_registry_build_reuses_fresh_cache_and_reports_status(tmp_path: Path, monkeypatch):
-    built_values: list[Path] = []
+def test_derived_index_parameters_change_derivation_identity(tmp_path: Path) -> None:
+    builds: list[str] = []
 
-    def builder(*, root: Path) -> JsonTtlIndex:
-        built_values.append(root)
-        return JsonTtlIndex(fetched_at=100.0, ttl_seconds=30, payload={"root": root.name})
+    def builder(label: str):
+        def build(*, repository, inputs):
+            del repository, inputs
+            builds.append(label)
+            return {"label": label}
 
-    registry = IndexRegistry([
-        IndexDefinition(
-            index_id="alpha",
-            filename="alpha.json",
-            ttl_seconds=30,
-            build=builder,
-            parser=JsonTtlIndex,
-            description="Alpha index",
-        )
-    ])
+        return build
 
-    monkeypatch.setattr("efloud.compat.indexing.time.time", lambda: 101.0)
-    built = cast("JsonTtlIndex", registry.build("alpha", root=tmp_path))
-    assert built.payload == {"root": tmp_path.name}
-    assert built_values == [tmp_path]
+    first_registry = DerivedIndexRegistry(
+        (DerivedIndexDefinition("alpha", "1", builder("first"), parameters={"mode": "a"}),)
+    )
+    second_registry = DerivedIndexRegistry(
+        (DerivedIndexDefinition("alpha", "1", builder("second"), parameters={"mode": "b"}),)
+    )
 
-    cached = cast("JsonTtlIndex", registry.build("alpha", root=tmp_path))
-    assert cached.payload == {"root": tmp_path.name}
-    assert built_values == [tmp_path]
+    with Repository(tmp_path) as repository:
+        first_run = repository.start_run(started_at=1.0)
+        first = first_registry.build("alpha", repository=repository, run_id=first_run, observed_at=2.0)
+        repository.finish_run(first_run, status="succeeded", finished_at=3.0)
 
-    status = registry.status("alpha", root=tmp_path)
-    assert status.present is True
-    assert status.loaded is True
-    assert status.expired is False
-    assert status.to_dict()["index_id"] == "alpha"
-    assert registry.ids() == ("alpha",)
-    assert registry.path_for("alpha", root=tmp_path) == tmp_path / "alpha.json"
-    assert registry.definition("alpha") is not None
-    assert registry.load("alpha", root=tmp_path) is not None
+        second_run = repository.start_run(started_at=4.0)
+        second = second_registry.build("alpha", repository=repository, run_id=second_run, observed_at=5.0)
+        repository.finish_run(second_run, status="succeeded", finished_at=6.0)
+
+    assert first.reused is False
+    assert second.reused is False
+    assert builds == ["first", "second"]
+    assert first.observation.content_id != second.observation.content_id
 
 
-@pytest.mark.medium
-def test_index_registry_handles_unparseable_and_unknown_indexes(tmp_path: Path):
-    registry = IndexRegistry([
-        IndexDefinition(
-            index_id="alpha",
-            filename="alpha.json",
-            ttl_seconds=30,
-            build=lambda *, root: JsonTtlIndex(fetched_at=0.0, ttl_seconds=0, payload={"root": root.name}),
-            parser=JsonTtlIndex,
-        )
-    ])
-
-    bad_path = tmp_path / "alpha.json"
-    bad_path.write_text("{", encoding="utf-8")
-    status = registry.status("alpha", root=tmp_path)
-    assert status.present is True
-    assert status.loaded is False
-    assert status.error == "Index exists but could not be parsed."
-
-    with pytest.raises(ValueError, match="Unknown index identifier"):
-        registry.path_for("missing", root=tmp_path)
-    with pytest.raises(ValueError, match="Unknown index identifier"):
-        registry.load("missing", root=tmp_path)
-    with pytest.raises(ValueError, match="Unknown index identifier"):
-        registry.build("missing", root=tmp_path)
-    with pytest.raises(ValueError, match="Unknown index identifier"):
-        registry.status("missing", root=tmp_path)
+def test_derived_index_registry_rejects_unknown_identifier(tmp_path: Path) -> None:
+    with Repository(tmp_path) as repository:
+        run = repository.start_run(started_at=1.0)
+        with pytest.raises(ValueError, match="Unknown derived index identifier"):
+            DerivedIndexRegistry().build("missing", repository=repository, run_id=run)

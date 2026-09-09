@@ -4,7 +4,7 @@ File Purpose: Current implementation state and verified handoff evidence.
 
 ## Current Focus
 
-Checkpoint of the Phase 14-17 work at version 0.1.0. Further repairs were stopped at the user's request on 2026-09-09; this records the implemented scope and remaining verification without declaring remote CI or every plan acceptance criterion complete.
+Phase 14-17 completion resumed under the ordered queue in TODO.md. Compatibility dependencies and live external callers have been inventoried before further code changes; see docs/compatibility-inventory.md. Next is the canonical collection/derived extension boundary.
 
 ## Implemented State
 

@@ -8,6 +8,122 @@ Rules:
 - Remove completed items before committing.
 - Prefer concrete references and explicit acceptance criteria.
 
+## Remaining work — execution order
+
+This is the active queue for completing Phases 14-17. Finish the Phase 16
+compatibility boundary before final acceptance of the execution paths, durability,
+and consumer APIs. The checkpoint entries below are preserved as history; their
+checked boxes record individual accomplishments, not complete phase sign-off.
+Outstanding items in that record are scheduled here rather than separate work.
+
+### 1. Inventory and classify compatibility dependencies
+
+Scope: `src/efloud/compat/`, `repository_compat.py`, `repository_state.py`,
+`manifest.py`, `resolve.py`, `state.py`, and their execution/configuration callers.
+
+- [x] inventory compatibility modules, public interfaces, and direct/transitive callers
+- [x] classify each facility as required by canonical execution, a supported external compatibility adapter, obsolete migration code, or a supported schema-upgrade mechanism
+- [x] record the support requirement and intended destination or removal decision for each facility before changing it
+- [x] turn the inventory into a finite caller-migration and removal checklist
+
+Acceptance: every retained compatibility dependency has an explicit purpose and
+owner; every proposed removal has identified callers and support consequences.
+Evidence: `docs/compatibility-inventory.md` records callers, support owners, decisions,
+and the finite migration checklist.
+
+### 2. Remove compatibility manifests from canonical execution
+
+Scope: `collection_adapter.py`, `operation_recording.py`, `derived.py`,
+`fanout.py`, and the corresponding extension contracts and tests.
+
+- [ ] define canonical collection-enumerator inputs using repository reads and explicit semantic inputs instead of `NormalizedManifest`
+- [ ] define canonical derived-task inputs using repository reads and explicit artifact/observation dependencies instead of `NormalizedManifest`
+- [ ] migrate collection acquisition and derived-operation execution to those contracts
+- [ ] move any required legacy manifest interface behind an explicit compatibility adapter
+- [ ] test canonical collection and derived execution with compatibility manifest generation unavailable
+
+Acceptance: normal collection and derived execution no longer constructs or
+consumes compatibility manifests; supported legacy callers enter through adapters.
+
+### 3. Finish Phase 16 API and compatibility cleanup
+
+Depends on steps 1-2.
+
+- [ ] remove historical importers and duplicate implementations whose support/caller inventory permits removal
+- [ ] isolate supported serializers, inspectors, and legacy adapters from canonical implementation dependencies
+- [ ] resolve the inventory decisions for TTL indexes, cache/status helpers, mirror-resolution helpers, and provenance compatibility abstractions
+- [ ] retain and test schema upgrades required by supported existing repositories
+- [ ] finalize stable public APIs and deliberate adapter/validator extension contracts
+- [ ] update documentation and examples to use the canonical model and identify supported compatibility entry points explicitly
+- [ ] extend architecture contracts to prevent canonical execution and extension contracts from regaining compatibility dependencies
+- [ ] verify canonical ingestion, queries, datasets, and exports operate with compatibility support disabled
+
+Acceptance: compatibility is an optional boundary with defined support, not an
+execution representation hidden behind renamed modules. Phase 16 removal criteria
+are assessed explicitly before marking the phase complete.
+
+### 4. Verify Phase 17 durability against the finalized execution paths
+
+Depends on steps 2-3.
+
+- [ ] enumerate authoritative mutation paths and verify writer/maintenance coordination covers each one, including initialization, migration, acquisition, validation staging, and metadata commit
+- [ ] review crash boundaries and recovery transitions without inventing successful operations or complete snapshots
+- [ ] verify cleanup reachability preserves every supported historical reference, including validation-only content and transitive provenance
+- [ ] test dry-run reason codes, grace-period handling, and fail-closed cleanup behavior for invalid metadata
+- [ ] add failure-injection coverage for any gaps found in the finalized paths, including concurrent writers and retry after recovery
+
+Acceptance: destructive maintenance cannot race a supported writer; recovery and
+cleanup preserve historical correctness, with evidence for each mutation boundary.
+
+### 5. Close generic Phase 14/15 dataset and export acceptance
+
+Depends on the finalized consumer APIs and durability review.
+
+- [ ] verify the complete freeze → export → reopen elsewhere → verify workflow through public interfaces
+- [ ] verify frozen membership and detached metadata remain stable after newer ingestion and changed source definitions
+- [ ] verify incomplete snapshots cannot imply absence or satisfy reproducibility requirements, including empty selections
+- [ ] verify missing/corrupt content produces explicit verification failures without acquisition or repository mutation
+- [ ] verify export path safety, collision handling, concurrent destination creation, and isolation from authoritative content
+- [ ] exercise native Linux CoW and atomic no-replace publication branches alongside the macOS paths
+- [ ] verify a generic downstream consumer can interpret and validate the detached export without importing Efloud or reading SQLite
+
+Acceptance: generic handoff behavior is established with domain-neutral fixtures;
+Efloud tests contain no BVP catalog rules or BVP dependency.
+
+### 6. Run complete gates and committed-checkout CI
+
+Depends on steps 1-5; run focused checks during those steps as appropriate.
+
+- [ ] run the non-mutating Python 3.14 `just check` gate
+- [ ] run the complete suite across every supported Python minor version
+- [ ] run the repository-required packaging checks and strengthened architecture contracts
+- [ ] compare coverage with the recorded baseline and resolve any decrease according to repository policy
+- [ ] run remote CI against the committed checkout
+- [ ] record evidence against each Phase 14-17 acceptance criterion, distinguishing implementation completion, local verification, and CI verification
+
+Acceptance: required checks pass on the final implementation and committed
+checkout; phase completion claims identify any remaining external acceptance.
+
+### 7. Run external BVP acceptance in BVP's environment
+
+Depends on the finalized public APIs and generic acceptance above. This is
+downstream integration evidence, not permission to add BVP functionality to Efloud.
+
+- [ ] run BVP's catalog/verification fixture externally using only Efloud public APIs and detached manifests
+- [ ] verify BVP does not require private SQLite details or compatibility mirrors
+- [ ] classify any gap as a generic Efloud capability or BVP-specific interpretation before assigning a fix
+- [ ] keep BVP catalog rules, artifact requirements, domain validation, and naming conventions in BVP
+- [ ] record the external result separately from Efloud's core test and release-gate evidence
+
+Acceptance: BVP can implement its workflow through the public boundary; Efloud's
+generic functionality and core verification do not depend on BVP.
+
+## Preserved checkpoint record — 2026-09-09
+
+The following entries retain the previous checkpoint and its evidence. Use the
+ordered queue above for new work; earlier completion wording is not a substitute
+for the remaining phase acceptance checks.
+
 ## 1. Define the Phase 14 dataset-resolution vocabulary
 
 Files: `src/efloud/datasets.py`, repository/query interfaces, focused dataset tests

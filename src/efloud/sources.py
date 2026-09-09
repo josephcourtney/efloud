@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from efloud.inventory import IntegrityExpectation
 from efloud.registry import RsyncMode, SourceDefinition, SourceKind
+
+if TYPE_CHECKING:
+    from efloud.inventory import IntegrityExpectation
+
+_MIN_RSYNC_PORT = 1
+_MAX_RSYNC_PORT = 65535
 
 
 @runtime_checkable
@@ -42,6 +47,7 @@ class HttpSource:
     adapter_id: str = field(default="efloud:http", init=False)
 
     def __post_init__(self) -> None:
+        """Validate and normalize the declarative source."""
         _require_text(self.id, field="Source id")
         _require_text(self.url, field="Source URL")
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
@@ -58,6 +64,7 @@ class RestSource:
     adapter_id: str = field(default="efloud:rest", init=False)
 
     def __post_init__(self) -> None:
+        """Validate and normalize the declarative source."""
         _require_text(self.id, field="Source id")
         _require_text(self.url, field="Source URL")
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
@@ -77,10 +84,11 @@ class RsyncSource:
     adapter_id: str = field(default="efloud:rsync", init=False)
 
     def __post_init__(self) -> None:
+        """Validate and normalize the declarative source."""
         _require_text(self.id, field="Source id")
         _require_text(self.url, field="Source URL")
-        if self.port is not None and not 1 <= self.port <= 65535:
-            msg = "Rsync port must be between 1 and 65535"
+        if self.port is not None and not _MIN_RSYNC_PORT <= self.port <= _MAX_RSYNC_PORT:
+            msg = f"Rsync port must be between {_MIN_RSYNC_PORT} and {_MAX_RSYNC_PORT}"
             raise ValueError(msg)
         object.__setattr__(self, "paths", tuple(sorted(set(self.paths))))
         object.__setattr__(self, "include", tuple(self.include))
@@ -90,7 +98,7 @@ class RsyncSource:
 
 @dataclass(frozen=True, slots=True)
 class CollectionSource:
-    """Declarative collection source; canonical execution is completed in TODO 2."""
+    """Declarative collection source; canonical execution is completed in TODO 1."""
 
     id: str
     url: str
@@ -100,6 +108,7 @@ class CollectionSource:
     adapter_id: str = field(default="efloud:collection", init=False)
 
     def __post_init__(self) -> None:
+        """Validate and normalize the declarative source."""
         _require_text(self.id, field="Source id")
         _require_text(self.url, field="Source URL")
         object.__setattr__(self, "tags", _normalize_tags(self.tags))

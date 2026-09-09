@@ -52,9 +52,7 @@ class CollectionContext:
 
 
 class CollectionEnumerator(Protocol):
-    async def __call__(
-        self, *, context: CollectionContext
-    ) -> Sequence[CollectionItem] | CollectionInventory: ...
+    async def __call__(self, *, context: CollectionContext) -> Sequence[CollectionItem] | CollectionInventory: ...
 
 
 class BucketStrategy(Protocol):
@@ -85,6 +83,7 @@ class CollectionDefinition:
     request_headers: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
+        """Validate configuration and canonicalize source dependencies."""
         if self.concurrency < 1:
             msg = "CollectionDefinition.concurrency must be at least 1."
             raise ValueError(msg)

@@ -33,7 +33,6 @@ from efloud.maintenance import AuditReport, RepositoryMaintenance
 from efloud.materialization import DatasetMaterializer, ExportPlan, ExportStrategy
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository import Repository as _WritableRepository
-from efloud.sources import Source
 from efloud.writer_coordination import RepositoryBusyError as _InternalRepositoryBusyError
 
 if TYPE_CHECKING:
@@ -46,6 +45,7 @@ if TYPE_CHECKING:
     from efloud.metadata_store import RunRecord, SourceRecord
     from efloud.planning import SyncPlan, SyncRequest
     from efloud.repository_models import ArtifactObservation, ProvenanceEdge, SourceSnapshot
+    from efloud.sources import Source
     from efloud.validation import ValidationRegistry
 
 RepositoryMode = Literal["r", "rw"]

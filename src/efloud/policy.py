@@ -40,8 +40,8 @@ class SyncPolicy(Protocol):
 
 def _ordinary_refresh_decision(snapshot: SourceSnapshot | None) -> RefreshDecision:
     if snapshot is None:
-        return RefreshDecision(False, "no repository snapshot; normal acquisition/cache semantics apply")
-    return RefreshDecision(False, "repository snapshot exists and no forced refresh was requested")
+        return RefreshDecision(refresh=False, reason="no repository snapshot; normal acquisition/cache semantics apply")
+    return RefreshDecision(refresh=False, reason="repository snapshot exists and no forced refresh was requested")
 
 
 class DefaultSyncPolicy:
@@ -53,9 +53,9 @@ class DefaultSyncPolicy:
         snapshot: SourceSnapshot | None,
     ) -> RefreshDecision:
         if request.refresh:
-            return RefreshDecision(True, "refresh requested for the sync", forced=True)
+            return RefreshDecision(refresh=True, reason="refresh requested for the sync", forced=True)
         if source.id in request.refresh_source_ids:
-            return RefreshDecision(True, f"refresh requested for source {source.id!r}", forced=True)
+            return RefreshDecision(refresh=True, reason=f"refresh requested for source {source.id!r}", forced=True)
         return _ordinary_refresh_decision(snapshot)
 
     @staticmethod

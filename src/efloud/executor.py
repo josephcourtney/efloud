@@ -177,7 +177,6 @@ async def _recorded_result(
         context.repository,
         runtime=context.runtime,
         task=task,
-        operation=operation,
         run_id=context.run_id,
         operation_id=operation_id,
     )
@@ -195,7 +194,9 @@ async def _execute_operation(context: _ExecutionContext, operation: PlannedOpera
         context.repository.finish_operation(operation_id, status="failed", details=details)
         return OperationExecutionResult(operation.operation_key, "failed", details=details)
     context.repository.finish_operation(operation_id, status=recorded.status, details=recorded.details)
-    return OperationExecutionResult(operation.operation_key, recorded.status, recorded.observation_ids, recorded.details)
+    return OperationExecutionResult(
+        operation.operation_key, recorded.status, recorded.observation_ids, recorded.details
+    )
 
 
 def _blocked_operation(
@@ -295,9 +296,13 @@ class SyncExecutor:
             return SyncExecutionResult(
                 plan.plan_id,
                 None,
-                tuple(OperationExecutionResult(operation.operation_key, "not-executed") for operation in plan.operations),
+                tuple(
+                    OperationExecutionResult(operation.operation_key, "not-executed") for operation in plan.operations
+                ),
             )
-        selected_source_ids = tuple(sorted({operation.source_id for operation in plan.operations if operation.source_id is not None}))
+        selected_source_ids = tuple(
+            sorted({operation.source_id for operation in plan.operations if operation.source_id is not None})
+        )
         for source_id in selected_source_ids:
             source = _source_by_id(sources, source_id)
             repository.register_source(SourceId(source.id), source_definition(source))
@@ -320,13 +325,17 @@ class SyncExecutor:
         except asyncio.CancelledError:
             for operation in repository.operations_for_run(run_id):
                 if operation.status == "running":
-                    repository.finish_operation(operation.operation_id, status="cancelled", details={"error": "sync execution cancelled"})
+                    repository.finish_operation(
+                        operation.operation_id, status="cancelled", details={"error": "sync execution cancelled"}
+                    )
             repository.finish_run(run_id, status="cancelled")
             raise
         except Exception:
             for operation in repository.operations_for_run(run_id):
                 if operation.status == "running":
-                    repository.finish_operation(operation.operation_id, status="failed", details={"error": "sync executor aborted"})
+                    repository.finish_operation(
+                        operation.operation_id, status="failed", details={"error": "sync executor aborted"}
+                    )
             repository.finish_run(run_id, status="failed")
             raise
         repository.finish_run(run_id, status=_run_status(results))

@@ -2,25 +2,44 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import anyio
 
-from efloud.adapters import AdapterCapabilities, AdapterDescriptor, AdapterExecutionContext, RsyncAcquisition, SourceAdapter
+from efloud.adapters import (
+    AdapterCapabilities,
+    AdapterDescriptor,
+    AdapterExecutionContext,
+    RsyncAcquisition,
+    SourceAdapter,
+)
 from efloud.json_types import JsonObject, json_mapping_or_none
 from efloud.sources import RsyncSource
 from efloud.transport.rsync import RsyncMirror, RsyncMirrorConfig
 from efloud.transport.rsync_inventory import enumerate_rsync
-from efloud.transport.rsync_runtime import prepare_rsync_paths, rsync_command_for_source, rsync_failure_detail, rsync_results_ok, run_rsync_operation
+from efloud.transport.rsync_runtime import (
+    prepare_rsync_paths,
+    rsync_command_for_source,
+    rsync_failure_detail,
+    rsync_results_ok,
+    run_rsync_operation,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _sqlite_url(path: Path) -> str:
     return f"sqlite:///{path.resolve().as_posix()}"
 
 
-def _source(context: AdapterExecutionContext) -> RsyncSource:
-    if not isinstance(context.source, RsyncSource):
-        msg = f"Rsync adapter cannot acquire {type(context.source).__name__}."
+def _source(
+    context: AdapterExecutionContext,
+    descriptor: AdapterDescriptor,
+) -> RsyncSource:
+    source = context.source
+    if not isinstance(source, RsyncSource):
+        msg = f"Adapter {descriptor.adapter_id!r} cannot acquire {type(source).__name__}."
         raise TypeError(msg)
     return context.source
 
@@ -75,7 +94,7 @@ class RsyncSourceAdapter:
     descriptor: AdapterDescriptor
 
     async def acquire(self, context: AdapterExecutionContext) -> RsyncAcquisition:
-        source = _source(context)
+        source = _source(context, self.descriptor)
         runtime = context.runtime
         local_root = runtime.mirrors_root / (source.local_subpath or source.id)
         local_root.mkdir(parents=True, exist_ok=True)
@@ -100,7 +119,14 @@ class RsyncSourceAdapter:
             if runtime.remove_empty_dirs_after_rsync:
                 await mirror.prune_local_empty_dirs()
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return RsyncAcquisition(source.id, "failed", local_root, tuple(requested_scope), observed_at, error=f"{type(exc).__name__}: {exc}")
+            return RsyncAcquisition(
+                source.id,
+                "failed",
+                local_root,
+                tuple(requested_scope),
+                observed_at,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
         if not rsync_results_ok(results):
             return RsyncAcquisition(
@@ -136,7 +162,7 @@ class RsyncSourceAdapter:
 
 
 def rsync_source_adapter() -> SourceAdapter:
-    return RsyncSourceAdapter(AdapterDescriptor("efloud:rsync", "1", AdapterCapabilities(True, True)))
+    return RsyncSourceAdapter(AdapterDescriptor("efloud:rsync", "1", AdapterCapabilities(inventory=True, fetch=True)))
 
 
 __all__ = ["RsyncSourceAdapter", "rsync_source_adapter"]

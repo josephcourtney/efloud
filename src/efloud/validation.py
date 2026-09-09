@@ -25,6 +25,7 @@ class ValidatorDescriptor:
     required: bool = True
 
     def __post_init__(self) -> None:
+        """Validate the stable namespaced validator identity."""
         namespace, separator, name = self.validator_id.partition(":")
         if not namespace or not separator or not name:
             msg = f"Validator identifiers must be namespaced: {self.validator_id!r}"
@@ -99,12 +100,15 @@ class ValidationRegistry:
         return tuple(validator for validator in self._validators.values() if validator.applies_to(target))
 
     def descriptors(self) -> tuple[ValidatorDescriptor, ...]:
-        return tuple(validator.descriptor for validator in sorted(self._validators.values(), key=lambda item: item.descriptor.validator_id))
+        return tuple(
+            validator.descriptor
+            for validator in sorted(self._validators.values(), key=lambda item: item.descriptor.validator_id)
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class StorageIntegrityValidator:
-    descriptor: ValidatorDescriptor = ValidatorDescriptor("efloud:storage-integrity", "1", True)
+    descriptor: ValidatorDescriptor = ValidatorDescriptor("efloud:storage-integrity", "1", required=True)
 
     @staticmethod
     def applies_to(target: ValidationTarget) -> bool:
@@ -118,12 +122,14 @@ class StorageIntegrityValidator:
             digest.update(chunk)
         actual = f"sha256:{digest.hexdigest()}"
         expected = str(target.content.content_id)
-        return ValidationOutcome("passed" if actual == expected else "failed", {"expected_content_id": expected, "actual_content_id": actual})
+        return ValidationOutcome(
+            "passed" if actual == expected else "failed", {"expected_content_id": expected, "actual_content_id": actual}
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class GzipValidator:
-    descriptor: ValidatorDescriptor = ValidatorDescriptor("efloud:gzip", "1", True)
+    descriptor: ValidatorDescriptor = ValidatorDescriptor("efloud:gzip", "1", required=True)
 
     @staticmethod
     def applies_to(target: ValidationTarget) -> bool:
@@ -145,7 +151,7 @@ class GzipValidator:
 
 @dataclass(frozen=True, slots=True)
 class JsonValidator:
-    descriptor: ValidatorDescriptor = ValidatorDescriptor("efloud:json", "1", True)
+    descriptor: ValidatorDescriptor = ValidatorDescriptor("efloud:json", "1", required=True)
 
     @staticmethod
     def applies_to(target: ValidationTarget) -> bool:
@@ -184,7 +190,11 @@ class IntegrityExpectationValidator:
         del stream
         expected = self.expectation.expected_content_id
         passed = expected is not None and expected == target.content.content_id
-        details: JsonObject = {"algorithm": self.expectation.algorithm, "digest": self.expectation.digest, "actual_content_id": str(target.content.content_id)}
+        details: JsonObject = {
+            "algorithm": self.expectation.algorithm,
+            "digest": self.expectation.digest,
+            "actual_content_id": str(target.content.content_id),
+        }
         if expected is not None:
             details["expected_content_id"] = str(expected)
         else:
@@ -199,28 +209,64 @@ class ValidationService:
         self.repository = repository
         self.registry = registry
 
-    def _validate_one(self, target: ValidationTarget, validator: ContentValidator, *, checked_at: float | None) -> ValidationCheck:
+    def _validate_one(
+        self, target: ValidationTarget, validator: ContentValidator, *, checked_at: float | None
+    ) -> ValidationCheck:
         descriptor = validator.descriptor
         existing = self.repository.validation(target.content.content_id, descriptor.validator_id, descriptor.version)
         if existing is not None:
-            return ValidationCheck(existing, descriptor.required, True)
+            return ValidationCheck(existing, descriptor.required, required=True)
         try:
             with self.repository.open_content(target.content.content_id) as stream:
                 outcome = validator.validate(target, stream)
         except Exception as exc:  # ruff: ignore[blind-except] - domain validators are isolated evidence producers.
             outcome = ValidationOutcome("error", {"error": f"{type(exc).__name__}: {exc}"})
-        result = ValidationResult(target.content.content_id, descriptor.validator_id, descriptor.version, time.time() if checked_at is None else checked_at, outcome.status, outcome.details)
+        result = ValidationResult(
+            target.content.content_id,
+            descriptor.validator_id,
+            descriptor.version,
+            time.time() if checked_at is None else checked_at,
+            outcome.status,
+            outcome.details,
+        )
         self.repository.record_validation(result)
-        return ValidationCheck(result, descriptor.required, False)
+        return ValidationCheck(result, descriptor.required, required=False)
 
-    def validate_content(self, content: ContentRef, *, name: str | None = None, expectations: tuple[IntegrityExpectation, ...] = (), checked_at: float | None = None) -> ValidationBatch:
+    def validate_content(
+        self,
+        content: ContentRef,
+        *,
+        name: str | None = None,
+        expectations: tuple[IntegrityExpectation, ...] = (),
+        checked_at: float | None = None,
+    ) -> ValidationBatch:
         target = ValidationTarget(content, name)
-        validators = (*self.registry.applicable(target), *(IntegrityExpectationValidator(expectation) for expectation in expectations))
-        return ValidationBatch(tuple(self._validate_one(target, validator, checked_at=checked_at) for validator in validators))
+        validators = (
+            *self.registry.applicable(target),
+            *(IntegrityExpectationValidator(expectation) for expectation in expectations),
+        )
+        return ValidationBatch(
+            tuple(self._validate_one(target, validator, checked_at=checked_at) for validator in validators)
+        )
 
 
 def builtin_validation_registry() -> ValidationRegistry:
     return ValidationRegistry((StorageIntegrityValidator(), GzipValidator(), JsonValidator()))
 
 
-__all__ = ["ContentValidator", "GzipValidator", "IntegrityExpectationValidator", "JsonValidator", "StorageIntegrityValidator", "ValidationBatch", "ValidationCheck", "ValidationOutcome", "ValidationRegistry", "ValidationService", "ValidationStatus", "ValidationTarget", "ValidatorDescriptor", "builtin_validation_registry"]
+__all__ = [
+    "ContentValidator",
+    "GzipValidator",
+    "IntegrityExpectationValidator",
+    "JsonValidator",
+    "StorageIntegrityValidator",
+    "ValidationBatch",
+    "ValidationCheck",
+    "ValidationOutcome",
+    "ValidationRegistry",
+    "ValidationService",
+    "ValidationStatus",
+    "ValidationTarget",
+    "ValidatorDescriptor",
+    "builtin_validation_registry",
+]

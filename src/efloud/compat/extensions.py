@@ -164,7 +164,7 @@ class LegacyEnumeratorAdapter:
             manifest=_manifest(context.repository, context.workspace, self.sources),
             sources=self.sources,
         )
-        from efloud.fanout import FanoutEnumeration  # noqa: PLC0415 - compatibility type is intentionally lazy.
+        from efloud.fanout import FanoutEnumeration  # ruff: ignore[import-outside-top-level] - compatibility type is intentionally lazy.
 
         enumeration = raw if isinstance(raw, FanoutEnumeration) else FanoutEnumeration(tuple(raw))
         return CollectionInventory(

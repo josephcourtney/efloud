@@ -74,14 +74,29 @@
   extend-exclude = []
 
   [tool.ruff.lint]
+
+    # disable autofix when linting
+    unfixable = [
+      # "F401", # delete unused imports
+      "F841", # remove assignment to unused variable
+    ]
+
+
     extend-ignore = [
       ## example:
       # "PLC1901", # `{expression} != ""` can be simplified to `{expression}` as an empty string is falsey
+      #
     ]
     [tool.ruff.lint.extend-per-file-ignores]
       # The public facade deliberately wraps private transitional implementation
       # objects until TODO 1 migrates those internals onto narrow capabilities.
       "src/efloud/api.py" = ["SLF001"]
+
+      # These two classes intentionally implement wide repository contracts. Splitting them solely to satisfy
+      # a method-count threshold would preserve the same interface while obscuring the cohesive abstraction.
+      "src/efloud/repository.py"      = ["PLR0904"]
+      "src/efloud/sqlite_metadata.py" = ["PLR0904"]
+
 
 # =================================== test ===================================
 [tool.pytest.ini_options]

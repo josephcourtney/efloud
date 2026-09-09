@@ -139,15 +139,13 @@ class RsyncSource:
 
     def definition(self) -> JsonObject:
         payload = _common_definition(self)
-        payload.update(
-            {
-                "url": self.url,
-                "protocol": "rsync",
-                "paths": list(self.paths),
-                "include": list(self.include),
-                "exclude": list(self.exclude),
-            }
-        )
+        payload.update({
+            "url": self.url,
+            "protocol": "rsync",
+            "paths": list(self.paths),
+            "include": list(self.include),
+            "exclude": list(self.exclude),
+        })
         if self.local_subpath is not None:
             payload["local_subpath"] = self.local_subpath
         if self.port is not None:

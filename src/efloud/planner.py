@@ -25,9 +25,7 @@ def _json_strings(values: Sequence[str]) -> JsonArray:
     return items
 
 
-def _collection_by_source(
-    collections: Sequence[CollectionDefinition], source_id: str
-) -> CollectionDefinition | None:
+def _collection_by_source(collections: Sequence[CollectionDefinition], source_id: str) -> CollectionDefinition | None:
     return next((definition for definition in collections if definition.source_id == source_id), None)
 
 
@@ -89,23 +87,27 @@ class SyncPlanner:
         selected_source_ids: set[str],
     ) -> tuple[PlanningDecision, PlannedOperation | None]:
         if source.id not in selected_source_ids:
-            return PlanningDecision(source.id, False, "source not requested"), None
+            return PlanningDecision(
+                source_id=source.id,
+                selected=False,
+                reason="source not requested",
+            ), None
 
         adapter = self.adapters.adapter_for(source)
         if adapter is None:
             return PlanningDecision(
-                source.id,
-                False,
-                f"no adapter registered for {source.adapter_id}",
+                source_id=source.id,
+                selected=False,
+                reason=f"no adapter registered for {source.adapter_id}",
                 adapter_id=source.adapter_id,
             ), None
 
         collection = _collection_by_source(collections, source.id) if isinstance(source, CollectionSource) else None
         if isinstance(source, CollectionSource) and collection is None:
             return PlanningDecision(
-                source.id,
-                False,
-                "collection source has no configured CollectionDefinition",
+                source_id=source.id,
+                selected=False,
+                reason="collection source has no configured CollectionDefinition",
                 adapter_id=adapter.descriptor.adapter_id,
                 adapter_version=adapter.descriptor.version,
             ), None
@@ -134,9 +136,9 @@ class SyncPlanner:
         )
         return (
             PlanningDecision(
-                source.id,
-                True,
-                "source selected for acquisition",
+                source_id=source.id,
+                selected=True,
+                reason="source selected for acquisition",
                 adapter_id=adapter.descriptor.adapter_id,
                 adapter_version=adapter.descriptor.version,
                 refresh=refresh,

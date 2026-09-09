@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from efloud.adapters import CollectionAcquisition, CollectionItemAcquisition
 from efloud.inventory import AbsenceEvidence
 from efloud.reconciliation import PreviousInventoryItem, ReconciliationDecision, reconcile_inventory
 from efloud.repository_models import ArtifactKey, ObservationId, SourceId, TreeEntry, canonical_json_bytes
 
 if TYPE_CHECKING:
+    from efloud.adapters import CollectionAcquisition, CollectionItemAcquisition
     from efloud.inventory import InventoryItem, SourceInventory
     from efloud.json_types import JsonObject
     from efloud.repository_capabilities import RepositoryWriter
     from efloud.repository_models import OperationId, RunId
     from efloud.validation import ValidationService
+
+_HTTP_NOT_FOUND = 404
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +66,9 @@ def _previous_items(repository: RepositoryWriter, source_id: SourceId) -> tuple[
     return tuple(previous)
 
 
-def _entry_metadata(item: InventoryItem, result: CollectionItemAcquisition, decision: ReconciliationDecision) -> JsonObject:
+def _entry_metadata(
+    item: InventoryItem, result: CollectionItemAcquisition, decision: ReconciliationDecision
+) -> JsonObject:
     metadata: JsonObject = dict(item.metadata)
     metadata.update(result.metadata)
     metadata["item_id"] = item.item_id
@@ -92,16 +95,32 @@ def _record_validated_item(
     media_type: str | None,
 ) -> None:
     if result.destination is None or not result.destination.is_file():
-        state.tree_entries.append(TreeEntry(item.source_path or item.item_id, "unresolved", metadata={"item_id": item.item_id, "error": "successful fetch has no materialized file"}))
+        state.tree_entries.append(
+            TreeEntry(
+                item.source_path or item.item_id,
+                "unresolved",
+                metadata={"item_id": item.item_id, "error": "successful fetch has no materialized file"},
+            )
+        )
         state.unresolved_count += 1
         return
     relative_path = item.source_path or item.item_id
     metadata = _entry_metadata(item, result, decision)
     content = repository.store_path_content(result.destination, media_type=media_type)
-    batch = validation.validate_content(content, name=relative_path, expectations=item.expected_integrity, checked_at=observed_at)
+    batch = validation.validate_content(
+        content, name=relative_path, expectations=item.expected_integrity, checked_at=observed_at
+    )
     metadata["validation"] = batch.to_dict()
     if not batch.ok:
-        state.tree_entries.append(TreeEntry(relative_path, "unresolved", content_id=content.content_id, byte_size=result.destination.stat().st_size, metadata={**metadata, "error": "required validation failed"}))
+        state.tree_entries.append(
+            TreeEntry(
+                relative_path,
+                "unresolved",
+                content_id=content.content_id,
+                byte_size=result.destination.stat().st_size,
+                metadata={**metadata, "error": "required validation failed"},
+            )
+        )
         state.unresolved_count += 1
         return
     observation = repository.observe_content(
@@ -119,7 +138,15 @@ def _record_validated_item(
     )
     state.observations.append(observation.observation_id)
     state.content_observations.append(observation.observation_id)
-    state.tree_entries.append(TreeEntry(relative_path, "file", content_id=observation.content_id, byte_size=result.destination.stat().st_size, metadata=metadata))
+    state.tree_entries.append(
+        TreeEntry(
+            relative_path,
+            "file",
+            content_id=observation.content_id,
+            byte_size=result.destination.stat().st_size,
+            metadata=metadata,
+        )
+    )
     state.content_count += 1
 
 
@@ -139,26 +166,54 @@ def _record_item(
 ) -> None:
     relative_path = item.source_path or item.item_id
     if result is None:
-        state.tree_entries.append(TreeEntry(relative_path, "unresolved", metadata={"item_id": item.item_id, "error": "enumerated item has no fetch result"}))
+        state.tree_entries.append(
+            TreeEntry(
+                relative_path,
+                "unresolved",
+                metadata={"item_id": item.item_id, "error": "enumerated item has no fetch result"},
+            )
+        )
         state.unresolved_count += 1
         return
     if result.status == "ok":
-        _record_validated_item(repository, validation, state=state, source_id=source_id, run_id=run_id, operation_id=operation_id, observed_at=inventory.observed_at, item=item, result=result, decision=decision, media_type=media_type)
-        return
-    metadata = _entry_metadata(item, result, decision)
-    if result.status_code == 404:
-        absence = repository.record_absence(
-            decision.artifact_key,
-            evidence=AbsenceEvidence.direct_negative(source_id=source_id, observed_at=inventory.observed_at, source_path=relative_path, locator=item.locator, metadata={"http_status": 404, "collection": True}),
+        _record_validated_item(
+            repository,
+            validation,
+            state=state,
+            source_id=source_id,
             run_id=run_id,
             operation_id=operation_id,
-            metadata={**metadata, "collection": True, "http_status": 404},
+            observed_at=inventory.observed_at,
+            item=item,
+            result=result,
+            decision=decision,
+            media_type=media_type,
+        )
+        return
+    metadata = _entry_metadata(item, result, decision)
+    if result.status_code == _HTTP_NOT_FOUND:
+        absence = repository.record_absence(
+            decision.artifact_key,
+            evidence=AbsenceEvidence.direct_negative(
+                source_id=source_id,
+                observed_at=inventory.observed_at,
+                source_path=relative_path,
+                locator=item.locator,
+                metadata={"http_status": _HTTP_NOT_FOUND, "collection": True},
+            ),
+            run_id=run_id,
+            operation_id=operation_id,
+            metadata={**metadata, "collection": True, "http_status": _HTTP_NOT_FOUND},
         )
         state.observations.append(absence.observation_id)
         state.tree_entries.append(TreeEntry(relative_path, "absent", metadata=metadata))
         state.absence_count += 1
         return
-    state.tree_entries.append(TreeEntry(relative_path, "unresolved", metadata={**metadata, "error": result.error or "item acquisition failed"}))
+    state.tree_entries.append(
+        TreeEntry(
+            relative_path, "unresolved", metadata={**metadata, "error": result.error or "item acquisition failed"}
+        )
+    )
     state.unresolved_count += 1
 
 
@@ -176,10 +231,19 @@ def _record_membership_absences(
             continue
         absence = repository.record_absence(
             decision.artifact_key,
-            evidence=AbsenceEvidence.from_inventory(inventory, source_path=decision.previous.source_path, metadata={"collection": True, "item_id": decision.item_id}),
+            evidence=AbsenceEvidence.from_inventory(
+                inventory,
+                source_path=decision.previous.source_path,
+                metadata={"collection": True, "item_id": decision.item_id},
+            ),
             run_id=run_id,
             operation_id=operation_id,
-            metadata={"collection": True, "item_id": decision.item_id, "reason": "removed-from-complete-enumeration", "reconciliation_state": decision.state},
+            metadata={
+                "collection": True,
+                "item_id": decision.item_id,
+                "reason": "removed-from-complete-enumeration",
+                "reconciliation_state": decision.state,
+            },
         )
         state.observations.append(absence.observation_id)
         state.absence_count += 1
@@ -253,7 +317,14 @@ def record_collection_acquisition(
             decision=decisions[item.item_id],
             media_type=acquisition.media_type,
         )
-    _record_membership_absences(repository, state=state, inventory=inventory, run_id=run_id, operation_id=operation_id, decisions=reconciliation.decisions)
+    _record_membership_absences(
+        repository,
+        state=state,
+        inventory=inventory,
+        run_id=run_id,
+        operation_id=operation_id,
+        decisions=reconciliation.decisions,
+    )
     counts: JsonObject = dict(reconciliation.counts().items())
     snapshot = repository.record_tree_snapshot(
         source_id=source_id,
@@ -276,7 +347,14 @@ def record_collection_acquisition(
         inputs=(*acquisition.input_observation_ids, *state.content_observations),
     )
     observations = (*state.observations, execution.observation_id)
-    return CollectionRecordingResult(observations, str(snapshot.snapshot_id), execution.observation_id, state.content_count, state.absence_count, state.unresolved_count)
+    return CollectionRecordingResult(
+        observations,
+        str(snapshot.snapshot_id),
+        execution.observation_id,
+        state.content_count,
+        state.absence_count,
+        state.unresolved_count,
+    )
 
 
 __all__ = ["CollectionRecordingResult", "record_collection_acquisition"]

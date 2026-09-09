@@ -70,10 +70,14 @@ def legacy_runtime(config: EngineConfig) -> EngineRuntime:
 
 def legacy_request(config: EngineConfig) -> SyncRequest:
     """Translate per-run alpha flags into the canonical request object."""
-    sources = tuple(source for source in legacy_sources(config) if not (config.skip_rsync and isinstance(source, RsyncSource)))
+    sources = tuple(
+        source for source in legacy_sources(config) if not (config.skip_rsync and isinstance(source, RsyncSource))
+    )
     refresh_ids: set[str] = set()
     if config.refresh_http:
-        refresh_ids.update(source.id for source in sources if isinstance(source, HttpSource | RestSource | CollectionSource))
+        refresh_ids.update(
+            source.id for source in sources if isinstance(source, HttpSource | RestSource | CollectionSource)
+        )
     if config.refresh_rsync:
         refresh_ids.update(source.id for source in sources if isinstance(source, RsyncSource))
     return SyncRequest(

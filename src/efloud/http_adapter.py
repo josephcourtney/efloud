@@ -3,17 +3,30 @@ from __future__ import annotations
 import contextlib
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
 
-from efloud.adapters import AdapterCapabilities, AdapterDescriptor, AdapterExecutionContext, HttpAcquisition, SourceAdapter
+from efloud.adapters import (
+    AdapterCapabilities,
+    AdapterDescriptor,
+    AdapterExecutionContext,
+    HttpAcquisition,
+    SourceAdapter,
+)
 from efloud.sources import HttpSource, RestSource
 from efloud.transport.http import HttpCache, HttpCacheConfig
-from efloud.transport.http_utils import HttpFetchResult, cache_group_name, dest_for_http_source, fetch_json_to_file, fetch_to_file
+from efloud.transport.http_utils import (
+    HttpFetchResult,
+    cache_group_name,
+    dest_for_http_source,
+    fetch_json_to_file,
+    fetch_to_file,
+)
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from efloud.json_types import JsonObject
 
 
@@ -21,10 +34,17 @@ def _sqlite_url(path: Path) -> str:
     return f"sqlite:///{path.resolve().as_posix()}"
 
 
-def _source(context: AdapterExecutionContext) -> HttpSource | RestSource:
+def _source(
+    context: AdapterExecutionContext,
+    descriptor: AdapterDescriptor,
+) -> HttpSource | RestSource:
     source = context.source
-    if not isinstance(source, HttpSource | RestSource) or source.adapter_id != context.operation.producer.producer_id:
-        msg = f"Adapter {context.operation.producer.producer_id!r} cannot acquire {type(source).__name__}."
+    if (
+        not isinstance(source, HttpSource | RestSource)
+        or source.adapter_id != descriptor.adapter_id
+        or context.operation.producer != descriptor.producer
+    ):
+        msg = f"Adapter {descriptor.adapter_id!r} cannot acquire {type(source).__name__}."
         raise TypeError(msg)
     return source
 
@@ -69,8 +89,11 @@ async def _fetch_http_result(
 class HttpSourceAdapter:
     descriptor: AdapterDescriptor
 
-    async def acquire(self, context: AdapterExecutionContext) -> HttpAcquisition:
-        source = _source(context)
+    async def acquire(
+        self,
+        context: AdapterExecutionContext,
+    ) -> HttpAcquisition:
+        source = _source(context, self.descriptor)
         destination = dest_for_http_source(
             context.runtime.http_root,
             url=source.url,
@@ -116,8 +139,8 @@ class HttpSourceAdapter:
 
 def http_source_adapters() -> tuple[SourceAdapter, ...]:
     return (
-        HttpSourceAdapter(AdapterDescriptor("efloud:http", "1", AdapterCapabilities(False, True))),
-        HttpSourceAdapter(AdapterDescriptor("efloud:rest", "1", AdapterCapabilities(False, True))),
+        HttpSourceAdapter(AdapterDescriptor("efloud:http", "1", AdapterCapabilities(inventory=False, fetch=True))),
+        HttpSourceAdapter(AdapterDescriptor("efloud:rest", "1", AdapterCapabilities(inventory=False, fetch=True))),
     )
 
 

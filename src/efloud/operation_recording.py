@@ -80,8 +80,19 @@ def _record_http(
     )
     validation_payload = validation_batch.to_dict()
     if not validation_batch.ok:
-        return RecordedOperation("failed", details={"error": "required validation failed", "content_id": str(content.content_id), "validation": validation_payload})
-    metadata: JsonObject = {"adapter_id": source.adapter_id, "adapter_execution": True, "validation": validation_payload}
+        return RecordedOperation(
+            "failed",
+            details={
+                "error": "required validation failed",
+                "content_id": str(content.content_id),
+                "validation": validation_payload,
+            },
+        )
+    metadata: JsonObject = {
+        "adapter_id": source.adapter_id,
+        "adapter_execution": True,
+        "validation": validation_payload,
+    }
     if acquisition.status_code is not None:
         metadata["status_code"] = acquisition.status_code
     if acquisition.checksum is not None:
@@ -109,8 +120,18 @@ def _record_http(
         evidence["last_modified"] = acquisition.last_modified
     if acquisition.checksum is not None:
         evidence["checksum"] = acquisition.checksum
-    snapshot = repository.record_source_snapshot(source_id=source.id, run_id=run_id, complete=True, observed_at=acquisition.observed_at, evidence=evidence)
-    return RecordedOperation("succeeded", (observation.observation_id,), {"observation_id": str(observation.observation_id), "snapshot_id": str(snapshot.snapshot_id), "validation": validation_payload})
+    snapshot = repository.record_source_snapshot(
+        source_id=source.id, run_id=run_id, complete=True, observed_at=acquisition.observed_at, evidence=evidence
+    )
+    return RecordedOperation(
+        "succeeded",
+        (observation.observation_id,),
+        {
+            "observation_id": str(observation.observation_id),
+            "snapshot_id": str(snapshot.snapshot_id),
+            "validation": validation_payload,
+        },
+    )
 
 
 def _safe_local_path(root: Path, relative_path: str) -> Path | None:
@@ -157,8 +178,14 @@ def _record_incomplete_rsync(
             materialization_kind="rsync-mirror",
         )
         observations.append(observation.observation_id)
-        entries.append(TreeEntry(relative_path, "file", content_id=observation.content_id, byte_size=path.stat().st_size))
-    inventory_error = acquisition.inventory.error if acquisition.inventory is not None and acquisition.inventory.error is not None else acquisition.error or "rsync inventory unavailable"
+        entries.append(
+            TreeEntry(relative_path, "file", content_id=observation.content_id, byte_size=path.stat().st_size)
+        )
+    inventory_error = (
+        acquisition.inventory.error
+        if acquisition.inventory is not None and acquisition.inventory.error is not None
+        else acquisition.error or "rsync inventory unavailable"
+    )
     snapshot = repository.record_tree_snapshot(
         source_id=source.id,
         run_id=run_id,
@@ -166,9 +193,26 @@ def _record_incomplete_rsync(
         complete=False,
         scope=acquisition.scope,
         observed_at=acquisition.observed_at,
-        evidence={"adapter_id": source.adapter_id, "adapter_execution": True, "reconciliation_complete": False, "enumeration_complete": False, "inventory_error": inventory_error, "changed_entry_count": len(acquisition.updated_paths), "ingested_file_count": len(observations)},
+        evidence={
+            "adapter_id": source.adapter_id,
+            "adapter_execution": True,
+            "reconciliation_complete": False,
+            "enumeration_complete": False,
+            "inventory_error": inventory_error,
+            "changed_entry_count": len(acquisition.updated_paths),
+            "ingested_file_count": len(observations),
+        },
     )
-    return RecordedOperation("succeeded", tuple(observations), {"snapshot_id": str(snapshot.snapshot_id), "reconciliation_complete": False, "ingested_file_count": len(observations), "inventory_error": inventory_error})
+    return RecordedOperation(
+        "succeeded",
+        tuple(observations),
+        {
+            "snapshot_id": str(snapshot.snapshot_id),
+            "reconciliation_complete": False,
+            "ingested_file_count": len(observations),
+            "inventory_error": inventory_error,
+        },
+    )
 
 
 def _record_rsync(
@@ -182,7 +226,9 @@ def _record_rsync(
     if acquisition.status == "failed":
         return RecordedOperation("failed", details={"error": acquisition.error or "rsync acquisition failed"})
     if acquisition.inventory is None or not acquisition.inventory.complete:
-        return _record_incomplete_rsync(repository, source=source, run_id=run_id, operation_id=operation_id, acquisition=acquisition)
+        return _record_incomplete_rsync(
+            repository, source=source, run_id=run_id, operation_id=operation_id, acquisition=acquisition
+        )
     result = reconcile_rsync_inventory(
         repository,
         source_id=source.id,
@@ -193,7 +239,13 @@ def _record_rsync(
         observed_at=acquisition.observed_at,
         upstream_root=source.url,
     )
-    details: JsonObject = {"snapshot_id": result.snapshot_id, "reconciliation_complete": result.complete, "ingested_file_count": result.ingested_file_count, "reused_content_count": result.reused_content_count, "absence_count": result.absence_count}
+    details: JsonObject = {
+        "snapshot_id": result.snapshot_id,
+        "reconciliation_complete": result.complete,
+        "ingested_file_count": result.ingested_file_count,
+        "reused_content_count": result.reused_content_count,
+        "absence_count": result.absence_count,
+    }
     if result.error is not None:
         details["error"] = result.error
     return RecordedOperation("succeeded" if result.complete else "failed", result.observations, details)
@@ -208,10 +260,20 @@ def _record_collection(
     acquisition: CollectionAcquisition,
 ) -> RecordedOperation:
     if acquisition.inventory is None:
-        return RecordedOperation("failed", details={"error": acquisition.error or "collection acquisition produced no inventory"})
-    recorded = record_collection_acquisition(repository, validation, acquisition=acquisition, run_id=run_id, operation_id=operation_id)
+        return RecordedOperation(
+            "failed", details={"error": acquisition.error or "collection acquisition produced no inventory"}
+        )
+    recorded = record_collection_acquisition(
+        repository, validation, acquisition=acquisition, run_id=run_id, operation_id=operation_id
+    )
     failed = acquisition.status == "failed" or recorded.unresolved_count > 0
-    details: JsonObject = {"snapshot_id": recorded.snapshot_id, "execution_observation_id": str(recorded.execution_observation_id), "content_count": recorded.content_count, "absence_count": recorded.absence_count, "unresolved_count": recorded.unresolved_count}
+    details: JsonObject = {
+        "snapshot_id": recorded.snapshot_id,
+        "execution_observation_id": str(recorded.execution_observation_id),
+        "content_count": recorded.content_count,
+        "absence_count": recorded.absence_count,
+        "unresolved_count": recorded.unresolved_count,
+    }
     if acquisition.error is not None:
         details["error"] = acquisition.error
     return RecordedOperation("failed" if failed else "succeeded", recorded.observations, details)
@@ -229,14 +291,31 @@ def record_source_acquisition(
 ) -> RecordedOperation:
     """Translate one typed adapter result into validated repository state."""
     if acquisition.source_id != source.id:
-        return RecordedOperation("failed", details={"error": f"Adapter returned source {acquisition.source_id!r} for {source.id!r}."})
+        return RecordedOperation(
+            "failed", details={"error": f"Adapter returned source {acquisition.source_id!r} for {source.id!r}."}
+        )
     if isinstance(acquisition, HttpAcquisition) and isinstance(source, HttpSource | RestSource):
-        return _record_http(repository, validation, source=source, operation=operation, run_id=run_id, operation_id=operation_id, acquisition=acquisition)
+        return _record_http(
+            repository,
+            validation,
+            source=source,
+            operation=operation,
+            run_id=run_id,
+            operation_id=operation_id,
+            acquisition=acquisition,
+        )
     if isinstance(acquisition, RsyncAcquisition) and isinstance(source, RsyncSource):
-        return _record_rsync(repository, source=source, run_id=run_id, operation_id=operation_id, acquisition=acquisition)
+        return _record_rsync(
+            repository, source=source, run_id=run_id, operation_id=operation_id, acquisition=acquisition
+        )
     if isinstance(acquisition, CollectionAcquisition):
-        return _record_collection(repository, validation, run_id=run_id, operation_id=operation_id, acquisition=acquisition)
-    return RecordedOperation("failed", details={"error": f"Adapter result {type(acquisition).__name__} is incompatible with {type(source).__name__}."})
+        return _record_collection(
+            repository, validation, run_id=run_id, operation_id=operation_id, acquisition=acquisition
+        )
+    return RecordedOperation(
+        "failed",
+        details={"error": f"Adapter result {type(acquisition).__name__} is incompatible with {type(source).__name__}."},
+    )
 
 
 async def run_derived_operation(
@@ -244,7 +323,6 @@ async def run_derived_operation(
     *,
     runtime: EngineRuntime,
     task: DerivedTask,
-    operation: PlannedOperation,
     run_id: RunId,
     operation_id: OperationId,
 ) -> RecordedOperation:
@@ -263,9 +341,15 @@ async def run_derived_operation(
         return RecordedOperation("failed", details={"error": "Derived output names must be nonempty and unique."})
     undeclared = sorted(set(names) - set(declared))
     if undeclared:
-        return RecordedOperation("failed", details={"error": f"Derived task returned undeclared outputs: {undeclared!r}"})
+        return RecordedOperation(
+            "failed", details={"error": f"Derived task returned undeclared outputs: {undeclared!r}"}
+        )
     output_keys = tuple(f"derived:{task.name}:{name}" for name in declared)
-    derivation_key = derivation_key_for(task.spec, outputs=output_keys, inputs=input_observations) if task.spec.deterministic else None
+    derivation_key = (
+        derivation_key_for(task.spec, outputs=output_keys, inputs=input_observations)
+        if task.spec.deterministic
+        else None
+    )
     observations: list[ObservationId] = []
     for output in result.outputs if result.ok else ():
         output_observation = repository.record_derived_path(
@@ -288,11 +372,22 @@ async def run_derived_operation(
         operation_id=operation_id,
         observed_at=time.time(),
         media_type="application/json",
-        metadata={"derived_task": task.name, "task_spec": task.spec.to_dict(), "derivation_key": str(derivation_key) if derivation_key is not None else None},
+        metadata={
+            "derived_task": task.name,
+            "task_spec": task.spec.to_dict(),
+            "derivation_key": str(derivation_key) if derivation_key is not None else None,
+        },
         inputs=(*input_ids, *observations),
     )
     observations.append(execution.observation_id)
-    return RecordedOperation("succeeded" if result.ok else "failed", tuple(observations), {"execution_observation_id": str(execution.observation_id), "derivation_key": str(derivation_key) if derivation_key is not None else None})
+    return RecordedOperation(
+        "succeeded" if result.ok else "failed",
+        tuple(observations),
+        {
+            "execution_observation_id": str(execution.observation_id),
+            "derivation_key": str(derivation_key) if derivation_key is not None else None,
+        },
+    )
 
 
 __all__ = ["RecordedOperation", "RecordedStatus", "record_source_acquisition", "run_derived_operation"]

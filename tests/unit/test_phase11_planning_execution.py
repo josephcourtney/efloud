@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field, fields
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -21,6 +21,9 @@ from efloud.repository import Repository
 from efloud.repository_models import SourceId
 from efloud.runtime import EngineRuntime
 from efloud.sources import HttpSource, RsyncSource
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 

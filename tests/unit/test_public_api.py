@@ -147,9 +147,9 @@ else:
             [sys.executable, "-c", script, str(root)],
             capture_output=True,
             text=True,
+            check=True,
         )
 
         print("stdout:", result.stdout)
         print("stderr:", result.stderr)
-        assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "busy"

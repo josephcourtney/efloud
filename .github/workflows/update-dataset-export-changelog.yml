@@ -25,7 +25,7 @@ jobs:
 
           path = Path("CHANGELOG.md")
           text = path.read_text()
-          marker = "## [Unreleased]\n\n### Changed\n\n"
+          marker = "### Changed\n\n"
           addition = (
               "- Close dataset/export acceptance through the clean public API: verify resolve-versus-freeze semantics, "
               "frozen historical evidence, incomplete-snapshot behavior, detached handoff, missing/corrupt content, "

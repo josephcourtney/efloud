@@ -14,8 +14,8 @@ from efloud.repository_status import RepositoryStatusService
 
 if TYPE_CHECKING:
     from efloud.metadata_store import DatasetMemberRecord
+    from efloud.repository_capabilities import QueryRepository
     from efloud.repository_models import SourceSnapshot
-    from efloud.repository_view import RepositoryView
 
 TextLocatorHandler = Callable[[str, str, str], tuple[JsonValue | None, str | None]]
 QueryHandler = Callable[[str, str | None], JsonObject]
@@ -32,20 +32,20 @@ def _member_payload(member: DatasetMemberRecord) -> JsonObject:
     return payload
 
 
-def _snapshot_payload(repository: RepositoryView, snapshot: SourceSnapshot) -> JsonObject:
+def _snapshot_payload(repository: QueryRepository, snapshot: SourceSnapshot) -> JsonObject:
     payload = snapshot.to_dict()
     if snapshot.tree_id is not None:
         payload["entries"] = [entry.identity_payload() for entry in repository.tree_entries(snapshot.tree_id)]
     return payload
 
 
-def _validation_payload(repository: RepositoryView, content_id: ContentId) -> JsonArray:
+def _validation_payload(repository: QueryRepository, content_id: ContentId) -> JsonArray:
     payload: JsonArray = []
     payload.extend(result.to_dict() for result in repository.validations_for(content_id))
     return payload
 
 
-def _payload_bytes(repository: RepositoryView, observation: ArtifactObservation) -> bytes:
+def _payload_bytes(repository: QueryRepository, observation: ArtifactObservation) -> bytes:
     with repository.open_content(observation.content_id) as stream:
         data = stream.read()
     name = observation.source_path or observation.upstream_locator or ""
@@ -166,7 +166,7 @@ def _failed_locator(locator: str, errors: list[str]) -> JsonObject:
 
 
 def _resolve_locator(
-    repository: RepositoryView,
+    repository: QueryRepository,
     observation: ArtifactObservation,
     locator: str,
 ) -> JsonObject:
@@ -184,7 +184,7 @@ def _require_no_locator(locator: str | None, target_kind: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class RepositoryQueryService:
-    repository: RepositoryView
+    repository: QueryRepository
 
     def query(self, raw: str) -> JsonObject:
         target, locator = split_locator(raw.strip())
@@ -326,7 +326,7 @@ class RepositoryQueryService:
         }
 
 
-def repository_query(raw: str, *, repository: RepositoryView) -> JsonObject:
+def repository_query(raw: str, *, repository: QueryRepository) -> JsonObject:
     return RepositoryQueryService(repository).query(raw)
 
 

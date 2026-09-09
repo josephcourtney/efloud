@@ -4,19 +4,33 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-09
+
 ### Added
 
 - Add the clean pre-1.0 public facade with explicit `Repository.create`/`Repository.open` modes, `Engine`, typed HTTP/REST/rsync/collection sources, one ordinary `SyncResult`, compositional `DatasetSpec`, `Dataset`, detached `DatasetManifest`, and public error categories.
 - Add timezone-aware public temporal dataset selection, `limit=None` for unbounded snapshot history, and dataset-level export/verification convenience.
+- Add stable namespaced adapter registration/dispatch and separate `EngineRuntime` runtime/storage configuration.
+- Add narrow repository capability contracts for adapters, execution, validation, datasets, queries, maintenance, and extension contexts.
+- Add canonical exact-input/declared-output derived-task contracts and typed collection inventory/acquisition contracts.
+- Add architecture contracts preventing canonical execution modules from depending on alpha config, manifest, registry, and extension contracts.
 
 ### Changed
 
 - Reduce the package-root API from the transitional implementation surface to ordinary repository, acquisition, source, dataset, request/result, version, and error concepts.
-- Make README and installed-wheel examples use the clean public API exclusively; internal alpha source/config and repository-view machinery remains transitional until the planned compatibility deletion.
+- Make README and installed-wheel examples use the clean public API exclusively.
+- Migrate canonical planner, executor, adapters, policy, validation, queries, datasets, and maintenance from `EngineConfig`, `SourceDefinition`/`SourceKind`, merged manifests, and broad `RepositoryView` contexts to typed sources, `SyncRequest`, `EngineRuntime`, and narrow repository capabilities.
+- Dispatch source acquisition by stable namespaced adapter identity and capability metadata instead of the closed `SourceKind` enum.
+- Make canonical derived work record exact inputs, declared outputs, namespaced producer identity/version, and deterministic derivation evidence.
+- Separate collection enumeration/inventory from typed item acquisition and reconcile collection state through generic inventory and absence semantics.
+- Make canonical derived-index validity derivation-key based; retain TTL-backed index behavior only in compatibility code.
+- Route deprecated `sync(EngineConfig)` through an explicit compatibility converter that constructs typed sources, `EngineRuntime`, and `SyncRequest` before delegating to the canonical engine.
+- Keep legacy alpha configuration, manifest/state projection, derived/fanout, registry, and TTL-index types only in compatibility or transitional modules pending deletion.
 
 ### Removed
 
 - Remove package-root exposure of `EngineConfig`, `SourceDefinition`, `SourceKind`, `ReadOnlyRepository`, `RepositoryView`, low-level storage/registry/validator/planner/executor records, and selector/materializer implementation classes. Their implementation modules are not yet deleted.
+- Remove canonical execution dependencies on `SourceKind` dispatch, manifest-shaped policy inputs, broad extension `RepositoryView` contexts, and the alpha fanout execution contract.
 
 ## [0.2.0] - 2026-09-09
 

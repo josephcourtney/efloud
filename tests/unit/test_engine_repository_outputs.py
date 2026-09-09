@@ -12,7 +12,9 @@ from efloud.engine import Engine
 from efloud.http_adapter import HttpSourceAdapter
 from efloud.models import EngineConfig
 from efloud.registry import SourceDefinition, SourceKind
+from efloud.repository import Repository
 from efloud.rsync_adapter import RsyncSourceAdapter
+from efloud.sources import RestSource, RsyncSource
 from efloud.transport.rsync_inventory import RsyncInventory, RsyncInventoryEntry
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
@@ -20,20 +22,25 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_engine_manifest_property_and_canonical_file_are_repository_derived(
+def test_compat_manifest_projection_is_repository_derived(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     materialized = tmp_path / "http" / "data.json"
     materialized.parent.mkdir(parents=True)
     materialized.write_text('{"value":1}', encoding="utf-8")
-    source = SourceDefinition(
+    legacy_source = SourceDefinition(
         "http",
         "HTTP",
         "https://example.test/data.json",
         SourceKind.REST,
     )
-    config = EngineConfig(root=tmp_path, sources=[source])
+    config = EngineConfig(root=tmp_path, sources=[legacy_source])
+    source = RestSource(
+        id=legacy_source.id,
+        description=legacy_source.description,
+        url=legacy_source.url,
+    )
 
     async def fake_acquire(self, context):
         del self, context
@@ -49,9 +56,9 @@ def test_engine_manifest_property_and_canonical_file_are_repository_derived(
         )
 
     monkeypatch.setattr(HttpSourceAdapter, "acquire", fake_acquire)
-    with Engine.from_config(config) as engine:
-        result = asyncio.run(engine.sync())
-        outputs = project_execution(engine.repository, config=engine.config, result=result)
+    with Repository(tmp_path) as repository:
+        result = asyncio.run(Engine(repository, (source,)).sync())
+        outputs = project_execution(repository, config=config, result=result)
         assert outputs.repository_manifest is not None
         assert outputs.manifest is outputs.repository_manifest
         assert outputs.legacy_manifest is outputs.sync_result.manifest
@@ -65,7 +72,7 @@ def test_engine_manifest_property_and_canonical_file_are_repository_derived(
         assert result.plan.operation("source:http").producer.producer_id == "efloud:rest"
 
 
-def test_engine_publishes_repository_mirror_state_after_complete_rsync_reconciliation(
+def test_compat_projection_publishes_mirror_state_after_complete_rsync_reconciliation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -73,14 +80,20 @@ def test_engine_publishes_repository_mirror_state_after_complete_rsync_reconcili
     materialized = mirror_root / "aa" / "entry.txt"
     materialized.parent.mkdir(parents=True)
     materialized.write_bytes(b"version one")
-    source = SourceDefinition(
+    legacy_source = SourceDefinition(
         "mirror",
         "Mirror",
         "rsync://example.test/module",
         SourceKind.RSYNC,
         local_subpath="mirror",
     )
-    config = EngineConfig(root=tmp_path, sources=[source])
+    config = EngineConfig(root=tmp_path, sources=[legacy_source])
+    source = RsyncSource(
+        id=legacy_source.id,
+        description=legacy_source.description,
+        url=legacy_source.url,
+        local_subpath="mirror",
+    )
 
     async def fake_acquire(self, context):
         del self, context
@@ -106,16 +119,16 @@ def test_engine_publishes_repository_mirror_state_after_complete_rsync_reconcili
         )
 
     monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
-    with Engine.from_config(config) as engine:
-        result = asyncio.run(engine.sync())
-        outputs = project_execution(engine.repository, config=engine.config, result=result)
+    with Repository(tmp_path) as repository:
+        result = asyncio.run(Engine(repository, (source,)).sync())
+        outputs = project_execution(repository, config=config, result=result)
         assert outputs.repository_mirror_state is not None
         assert outputs.repository_mirror_state_path is not None
         assert outputs.repository_mirror_state_path.is_file()
         assert outputs.repository_mirror_state.sources[0].source_id == "mirror"
 
 
-def test_engine_does_not_replace_mirror_state_from_partial_only_history(
+def test_compat_projection_does_not_replace_mirror_state_from_partial_only_history(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -125,14 +138,20 @@ def test_engine_does_not_replace_mirror_state_from_partial_only_history(
     materialized.write_bytes(b"version one")
     state_path = tmp_path / "mirror-state.json"
     state_path.write_text('{"legacy":true}', encoding="utf-8")
-    source = SourceDefinition(
+    legacy_source = SourceDefinition(
         "mirror",
         "Mirror",
         "rsync://example.test/module",
         SourceKind.RSYNC,
         local_subpath="mirror",
     )
-    config = EngineConfig(root=tmp_path, sources=[source])
+    config = EngineConfig(root=tmp_path, sources=[legacy_source])
+    source = RsyncSource(
+        id=legacy_source.id,
+        description=legacy_source.description,
+        url=legacy_source.url,
+        local_subpath="mirror",
+    )
 
     async def fake_acquire(self, context):
         del self, context
@@ -158,9 +177,9 @@ def test_engine_does_not_replace_mirror_state_from_partial_only_history(
         )
 
     monkeypatch.setattr(RsyncSourceAdapter, "acquire", fake_acquire)
-    with Engine.from_config(config) as engine:
-        result = asyncio.run(engine.sync())
-        outputs = project_execution(engine.repository, config=engine.config, result=result)
+    with Repository(tmp_path) as repository:
+        result = asyncio.run(Engine(repository, (source,)).sync())
+        outputs = project_execution(repository, config=config, result=result)
         assert outputs.repository_mirror_state is None
         assert outputs.repository_mirror_state_path is None
         assert state_path.read_text(encoding="utf-8") == '{"legacy":true}'

@@ -2,19 +2,7 @@
 
 Purpose: ephemeral, execution-level tasks for the next development work. Completed items are removed rather than retained as history.
 
-## 1. Re-verify durability on the reduced mutation surface
-
-- [ ] Enumerate every remaining authoritative mutation path and verify writer/maintenance coordination covers repository creation/opening, acquisition, validation staging, metadata commit, dataset freeze, and maintenance.
-- [ ] Review crash boundaries and recovery transitions so recovery cannot invent successful operations or complete snapshots.
-- [ ] Verify cleanup reachability preserves all current historical references, including validation-only content and transitive provenance.
-- [ ] Test dry-run reason codes, grace-period handling, and fail-closed cleanup for invalid metadata.
-- [ ] Add failure-injection coverage for any gaps found, including concurrent writers and retry after recovery.
-
-Acceptance: destructive maintenance cannot race a supported writer, and recovery/cleanup preserve historical correctness through only the new repository API.
-
-## 2. Close dataset and export acceptance through the new API
-
-Depends on TODO 1.
+## 1. Close dataset and export acceptance through the new API
 
 - [ ] Verify `resolve` versus `freeze` side effects and identities through `repo.datasets`.
 - [ ] Verify freeze → export → reopen/verify elsewhere through public interfaces only.
@@ -27,9 +15,9 @@ Depends on TODO 1.
 
 Acceptance: generic domain-neutral handoff is reproducible, detached, and independent of compatibility representations.
 
-## 3. Run final repository gates
+## 2. Run final repository gates
 
-Depends on TODO 1-2.
+Depends on TODO 1.
 
 - [ ] Run the non-mutating Python 3.14 `just check` gate.
 - [ ] Run the complete suite on every Python minor version declared by `project.requires-python`.
@@ -41,7 +29,7 @@ Depends on TODO 1-2.
 
 Acceptance: all required checks pass against the committed clean-break implementation.
 
-## 4. Migrate and run external BVP acceptance
+## 3. Migrate and run external BVP acceptance
 
 Depends on the finalized clean API and generic acceptance above.
 

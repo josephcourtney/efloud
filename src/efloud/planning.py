@@ -7,38 +7,31 @@ from efloud.repository_models import ProducerRef, stable_id
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
-    from efloud.models import EngineConfig
     from efloud.policy import RefreshDecision
 
 
-type PlannedOperationKind = Literal["source", "derived", "housekeeping"]
+type PlannedOperationKind = Literal["source", "derived"]
 
 
 @dataclass(frozen=True, slots=True)
 class SyncRequest:
-    """Caller intent consumed by deterministic planning."""
+    """Per-run caller intent consumed by deterministic planning."""
 
     source_ids: tuple[str, ...] | None = None
     include_derived: bool = True
     dry_run: bool = False
     max_concurrency: int = 4
+    refresh: bool = False
+    refresh_source_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """Canonicalize target order and reject invalid concurrency."""
+        """Canonicalize identifiers and reject invalid concurrency."""
         if self.max_concurrency < 1:
             msg = "SyncRequest.max_concurrency must be at least 1."
             raise ValueError(msg)
         if self.source_ids is not None:
             object.__setattr__(self, "source_ids", tuple(sorted(set(self.source_ids))))
-
-    @classmethod
-    def from_config(cls, cfg: EngineConfig) -> SyncRequest:
-        return cls(
-            source_ids=None,
-            include_derived=not cfg.skip_derived,
-            dry_run=cfg.dry_run,
-            max_concurrency=max(1, cfg.http_concurrency),
-        )
+        object.__setattr__(self, "refresh_source_ids", tuple(sorted(set(self.refresh_source_ids))))
 
     def to_dict(self) -> JsonObject:
         return {
@@ -46,6 +39,8 @@ class SyncRequest:
             "include_derived": self.include_derived,
             "dry_run": self.dry_run,
             "max_concurrency": self.max_concurrency,
+            "refresh": self.refresh,
+            "refresh_source_ids": list(self.refresh_source_ids),
         }
 
 

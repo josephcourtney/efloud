@@ -3,54 +3,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from efloud.derived import RepositoryDerivedTask
-from efloud.fanout import RestBaseFanoutTask
 from efloud.planning import PlannedOperation, PlanningDecision, SyncPlan, SyncRequest, make_sync_plan
 from efloud.policy import DefaultSyncPolicy
-from efloud.registry import SourceKind
-from efloud.repository_models import ProducerRef
+from efloud.sources import CollectionSource
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Sequence
 
     from efloud.adapters import AdapterRegistry
+    from efloud.collections import CollectionDefinition
+    from efloud.derivation import DerivedTask
     from efloud.json_types import JsonArray, JsonObject
-    from efloud.models import EngineConfig
-    from efloud.registry import SourceDefinition
-    from efloud.repository import Repository
-
-_HOUSEKEEPING_PRODUCER = ProducerRef("efloud:housekeeping", "1")
-_DELETE_HTTP_CACHES_KEY = "housekeeping:delete-http-caches"
-_PRUNE_ORPHAN_MIRRORS_KEY = "housekeeping:prune-orphan-mirrors"
+    from efloud.policy import SyncPolicy
+    from efloud.repository_capabilities import SourceReader
+    from efloud.sources import Source
 
 
-def _json_strings(values: Iterable[str]) -> JsonArray:
+def _json_strings(values: Sequence[str]) -> JsonArray:
     items: JsonArray = []
     items.extend(values)
     return items
 
 
-def _task_version(task: object) -> str:
-    if isinstance(task, RepositoryDerivedTask):
-        return task.repository_version
-    return "1"
+def _collection_by_source(
+    collections: Sequence[CollectionDefinition], source_id: str
+) -> CollectionDefinition | None:
+    return next((definition for definition in collections if definition.source_id == source_id), None)
 
 
-def _task_input_source_ids(task: object) -> tuple[str, ...]:
-    if isinstance(task, RepositoryDerivedTask):
-        return tuple(sorted(set(task.repository_input_source_ids)))
-    return ()
-
-
-def _collection_task(config: EngineConfig, source_id: str) -> RestBaseFanoutTask | None:
-    return next(
-        (task for task in config.derived_tasks if isinstance(task, RestBaseFanoutTask) and task.source_id == source_id),
-        None,
-    )
-
-
-def _selected_source_ids(config: EngineConfig, request: SyncRequest) -> set[str]:
-    configured = {source.id for source in config.sources}
+def _selected_source_ids(sources: Sequence[Source], request: SyncRequest) -> set[str]:
+    configured = {source.id for source in sources}
     if request.source_ids is None:
         return configured
     unknown = set(request.source_ids) - configured
@@ -65,78 +47,31 @@ def _planned_dependency_keys(input_source_ids: tuple[str, ...], selected_source_
 
 
 def _source_operation_parameters(
-    source: SourceDefinition,
+    source: Source,
     *,
     snapshot_id: str | None,
     capabilities: JsonObject,
+    input_source_ids: tuple[str, ...],
 ) -> JsonObject:
     payload: JsonObject = {
-        "source_kind": source.kind.value,
-        "url": source.url,
+        "adapter_id": source.adapter_id,
+        "source_definition": source.definition(),
         "adapter_capabilities": capabilities,
+        "input_source_ids": _json_strings(input_source_ids),
     }
-    if source.expected_integrity:
-        expectations: JsonArray = []
-        expectations.extend(expectation.to_dict() for expectation in source.expected_integrity)
-        payload["expected_integrity"] = expectations
     if snapshot_id is not None:
         payload["current_snapshot_id"] = snapshot_id
     return payload
 
 
-def _cache_dependency(config: EngineConfig, source: SourceDefinition) -> tuple[str, ...]:
-    if config.delete_http_caches and source.kind in {SourceKind.HTTP, SourceKind.REST, SourceKind.REST_BASE}:
-        return (_DELETE_HTTP_CACHES_KEY,)
-    return ()
-
-
-def _housekeeping_before_sources(config: EngineConfig) -> tuple[PlannedOperation, ...]:
-    if not config.delete_http_caches:
-        return ()
-    return (
-        PlannedOperation(
-            operation_key=_DELETE_HTTP_CACHES_KEY,
-            kind="housekeeping",
-            subject="delete-http-caches",
-            producer=_HOUSEKEEPING_PRODUCER,
-            parameters={"action": "delete-http-caches"},
-        ),
-    )
-
-
-def _housekeeping_after_sources(
-    config: EngineConfig,
-    source_operations: tuple[PlannedOperation, ...],
-) -> tuple[PlannedOperation, ...]:
-    if not config.prune_orphan_mirrors:
-        return ()
-    rsync_dependencies = tuple(
-        sorted(
-            operation.operation_key
-            for operation in source_operations
-            if operation.source_id is not None
-            and next(
-                (source.kind is SourceKind.RSYNC for source in config.sources if source.id == operation.source_id),
-                False,
-            )
-        )
-    )
-    expected_subpaths = sorted(
-        source.local_subpath or source.id for source in config.sources if source.kind is SourceKind.RSYNC
-    )
-    return (
-        PlannedOperation(
-            operation_key=_PRUNE_ORPHAN_MIRRORS_KEY,
-            kind="housekeeping",
-            subject="prune-orphan-mirrors",
-            producer=_HOUSEKEEPING_PRODUCER,
-            dependencies=rsync_dependencies,
-            parameters={
-                "action": "prune-orphan-mirrors",
-                "expected_subpaths": _json_strings(expected_subpaths),
-            },
-        ),
-    )
+def _validate_task(task: DerivedTask) -> None:
+    declared = task.output_names
+    if len(set(declared)) != len(declared) or any(not name for name in declared):
+        msg = f"Derived task {task.name!r} must declare unique nonempty output names."
+        raise ValueError(msg)
+    if task.spec.task_id != f"efloud:derived:{task.name}" and not task.spec.task_id:
+        msg = f"Derived task {task.name!r} has an invalid task identity."
+        raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,50 +81,40 @@ class SyncPlanner:
     def _source_plan(
         self,
         *,
-        source: SourceDefinition,
-        config: EngineConfig,
-        repository: Repository,
+        source: Source,
+        repository: SourceReader,
+        request: SyncRequest,
+        policy: SyncPolicy,
+        collections: Sequence[CollectionDefinition],
         selected_source_ids: set[str],
     ) -> tuple[PlanningDecision, PlannedOperation | None]:
         if source.id not in selected_source_ids:
-            return PlanningDecision(
-                source_id=source.id,
-                selected=False,
-                reason="source not requested",
-            ), None
-        if source.kind is SourceKind.RSYNC and config.skip_rsync:
-            return PlanningDecision(
-                source_id=source.id,
-                selected=False,
-                reason="rsync disabled by configuration",
-            ), None
+            return PlanningDecision(source.id, False, "source not requested"), None
 
         adapter = self.adapters.adapter_for(source)
         if adapter is None:
             return PlanningDecision(
-                source_id=source.id,
-                selected=False,
-                reason=f"no adapter registered for {source.kind.value}",
+                source.id,
+                False,
+                f"no adapter registered for {source.adapter_id}",
+                adapter_id=source.adapter_id,
             ), None
-        collection_task = _collection_task(config, source.id) if source.kind is SourceKind.REST_BASE else None
-        if source.kind is SourceKind.REST_BASE and collection_task is None:
+
+        collection = _collection_by_source(collections, source.id) if isinstance(source, CollectionSource) else None
+        if isinstance(source, CollectionSource) and collection is None:
             return PlanningDecision(
-                source_id=source.id,
-                selected=False,
-                reason="collection source has no configured RestBaseFanoutTask",
+                source.id,
+                False,
+                "collection source has no configured CollectionDefinition",
                 adapter_id=adapter.descriptor.adapter_id,
                 adapter_version=adapter.descriptor.version,
             ), None
 
         snapshot = repository.latest_source_snapshot(source.id)
-        policy = config.sync_policy or DefaultSyncPolicy()
-        refresh = policy.refresh_decision(source, config, snapshot=snapshot)
-        scope = policy.source_scope(source, config)
-        input_source_ids = _task_input_source_ids(collection_task) if collection_task is not None else ()
-        dependencies = (
-            *_cache_dependency(config, source),
-            *_planned_dependency_keys(input_source_ids, selected_source_ids),
-        )
+        refresh = policy.refresh_decision(source, request, snapshot=snapshot)
+        scope = policy.source_scope(source, request)
+        input_source_ids = collection.input_source_ids if collection is not None else ()
+        dependencies = _planned_dependency_keys(input_source_ids, selected_source_ids)
         snapshot_id = str(snapshot.snapshot_id) if snapshot is not None else None
         operation = PlannedOperation(
             operation_key=f"source:{source.id}",
@@ -204,13 +129,14 @@ class SyncPlanner:
                 source,
                 snapshot_id=snapshot_id,
                 capabilities=adapter.descriptor.capabilities.to_dict(),
+                input_source_ids=input_source_ids,
             ),
         )
         return (
             PlanningDecision(
-                source_id=source.id,
-                selected=True,
-                reason="source selected for acquisition",
+                source.id,
+                True,
+                "source selected for acquisition",
                 adapter_id=adapter.descriptor.adapter_id,
                 adapter_version=adapter.descriptor.version,
                 refresh=refresh,
@@ -222,18 +148,17 @@ class SyncPlanner:
     @staticmethod
     def _derived_operations(
         *,
-        config: EngineConfig,
-        repository: Repository,
+        derived_tasks: Sequence[DerivedTask],
+        repository: SourceReader,
         request: SyncRequest,
         selected_source_ids: set[str],
     ) -> tuple[PlannedOperation, ...]:
-        if not request.include_derived or config.skip_derived:
+        if not request.include_derived:
             return ()
         operations: list[PlannedOperation] = []
-        for task in sorted(config.derived_tasks, key=lambda candidate: candidate.name):
-            if isinstance(task, RestBaseFanoutTask):
-                continue
-            input_source_ids = _task_input_source_ids(task)
+        for task in sorted(derived_tasks, key=lambda candidate: candidate.name):
+            _validate_task(task)
+            input_source_ids = tuple(sorted(set(task.input_source_ids)))
             input_snapshot_ids = [
                 str(snapshot.snapshot_id)
                 for source_id in input_source_ids
@@ -243,15 +168,15 @@ class SyncPlanner:
             parameters: JsonObject = {
                 "input_source_ids": _json_strings(input_source_ids),
                 "input_snapshot_ids": _json_strings(input_snapshot_ids),
+                "declared_outputs": _json_strings(task.output_names),
+                "task_spec": task.spec.to_dict(),
             }
-            if isinstance(task, RepositoryDerivedTask):
-                parameters["task_parameters"] = task.repository_parameters()
             operations.append(
                 PlannedOperation(
                     operation_key=f"derived:{task.name}",
                     kind="derived",
                     subject=task.name,
-                    producer=ProducerRef(f"efloud:derived:{task.name}", _task_version(task)),
+                    producer=task.spec.producer,
                     dependencies=_planned_dependency_keys(input_source_ids, selected_source_ids),
                     parameters=parameters,
                 )
@@ -261,30 +186,35 @@ class SyncPlanner:
     def plan(
         self,
         *,
-        config: EngineConfig,
-        repository: Repository,
+        sources: Sequence[Source],
+        repository: SourceReader,
         request: SyncRequest | None = None,
+        policy: SyncPolicy | None = None,
+        derived_tasks: Sequence[DerivedTask] = (),
+        collections: Sequence[CollectionDefinition] = (),
     ) -> SyncPlan:
-        """Build a deterministic plan without acquisition or repository mutation."""
-        resolved_request = request or SyncRequest.from_config(config)
-        selected_source_ids = _selected_source_ids(config, resolved_request)
+        """Build a deterministic plan from source intent and repository evidence."""
+        resolved_request = request or SyncRequest()
+        resolved_policy = policy or DefaultSyncPolicy()
+        selected_source_ids = _selected_source_ids(sources, resolved_request)
         decisions: list[PlanningDecision] = []
         source_operations: list[PlannedOperation] = []
-        for source in sorted(config.sources, key=lambda item: item.id):
+        for source in sorted(sources, key=lambda item: item.id):
             decision, operation = self._source_plan(
                 source=source,
-                config=config,
                 repository=repository,
+                request=resolved_request,
+                policy=resolved_policy,
+                collections=collections,
                 selected_source_ids=selected_source_ids,
             )
             decisions.append(decision)
             if operation is not None:
                 source_operations.append(operation)
-        operations = [*_housekeeping_before_sources(config), *source_operations]
-        operations.extend(_housekeeping_after_sources(config, tuple(source_operations)))
+        operations = [*source_operations]
         operations.extend(
             self._derived_operations(
-                config=config,
+                derived_tasks=derived_tasks,
                 repository=repository,
                 request=resolved_request,
                 selected_source_ids=selected_source_ids,

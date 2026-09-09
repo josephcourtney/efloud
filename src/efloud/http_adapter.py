@@ -8,22 +8,10 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from efloud.adapters import (
-    AdapterCapabilities,
-    AdapterDescriptor,
-    AdapterExecutionContext,
-    HttpAcquisition,
-    SourceAdapter,
-)
-from efloud.registry import SourceDefinition, SourceKind
+from efloud.adapters import AdapterCapabilities, AdapterDescriptor, AdapterExecutionContext, HttpAcquisition, SourceAdapter
+from efloud.sources import HttpSource, RestSource
 from efloud.transport.http import HttpCache, HttpCacheConfig
-from efloud.transport.http_utils import (
-    HttpFetchResult,
-    cache_group_name,
-    dest_for_http_source,
-    fetch_json_to_file,
-    fetch_to_file,
-)
+from efloud.transport.http_utils import HttpFetchResult, cache_group_name, dest_for_http_source, fetch_json_to_file, fetch_to_file
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
@@ -33,28 +21,27 @@ def _sqlite_url(path: Path) -> str:
     return f"sqlite:///{path.resolve().as_posix()}"
 
 
-def _require_supported_source(descriptor: AdapterDescriptor, source: SourceDefinition) -> None:
-    if source.kind not in descriptor.source_kinds:
-        msg = f"Adapter {descriptor.adapter_id!r} does not support source kind {source.kind.value!r}."
-        raise ValueError(msg)
-
-
-def _http_cache(context: AdapterExecutionContext) -> HttpCache:
-    cfg = context.config
+def _source(context: AdapterExecutionContext) -> HttpSource | RestSource:
     source = context.source
-    cache_root = Path(cfg.root) / cfg.cache_dir / cfg.http_cache_dir
-    rate_root = Path(cfg.root) / cfg.rate_limits_dir
-    cache_root.mkdir(parents=True, exist_ok=True)
-    rate_root.mkdir(parents=True, exist_ok=True)
+    if not isinstance(source, HttpSource | RestSource) or source.adapter_id != context.operation.producer.producer_id:
+        msg = f"Adapter {context.operation.producer.producer_id!r} cannot acquire {type(source).__name__}."
+        raise TypeError(msg)
+    return source
+
+
+def _http_cache(context: AdapterExecutionContext, source: HttpSource | RestSource) -> HttpCache:
+    runtime = context.runtime
+    runtime.http_cache_root.mkdir(parents=True, exist_ok=True)
+    runtime.rate_limits_root.mkdir(parents=True, exist_ok=True)
     group = cache_group_name(source.url, source.cache_name)
     return HttpCache(
         HttpCacheConfig(
             name=group,
             ttl_seconds=300,
             timeout=60.0,
-            cache_db_path=str(cache_root / f"{group}.db"),
+            cache_db_path=str(runtime.http_cache_root / f"{group}.db"),
             enable_cache=True,
-            rate_limit_storage=_sqlite_url(rate_root / "rate_limits.sqlite"),
+            rate_limit_storage=_sqlite_url(runtime.rate_limits_root / "rate_limits.sqlite"),
             rate_limit_scope=None,
             raise_on_rate_limit=False,
             retries=5,
@@ -67,12 +54,12 @@ def _http_cache(context: AdapterExecutionContext) -> HttpCache:
 
 async def _fetch_http_result(
     cache: HttpCache,
-    source: SourceDefinition,
+    source: HttpSource | RestSource,
     destination: Path,
     *,
     refresh: bool,
 ) -> tuple[HttpFetchResult, str | None]:
-    if source.kind is SourceKind.REST:
+    if isinstance(source, RestSource):
         _, result = await fetch_json_to_file(cache, source.url, destination, refresh=refresh)
         return result, "application/json"
     return await fetch_to_file(cache, source.url, destination, refresh=refresh), None
@@ -83,17 +70,15 @@ class HttpSourceAdapter:
     descriptor: AdapterDescriptor
 
     async def acquire(self, context: AdapterExecutionContext) -> HttpAcquisition:
-        source = context.source
-        _require_supported_source(self.descriptor, source)
-        cfg = context.config
+        source = _source(context)
         destination = dest_for_http_source(
-            Path(cfg.root) / cfg.http_dir,
+            context.runtime.http_root,
             url=source.url,
-            description=source.description,
-            kind=source.kind.value,
+            description=source.description or source.id,
+            kind="REST" if isinstance(source, RestSource) else "HTTP",
             cache_name=source.cache_name,
         )
-        cache = _http_cache(context)
+        cache = _http_cache(context, source)
         refresh = context.operation.refresh.refresh if context.operation.refresh is not None else False
         try:
             result, media_type = await _fetch_http_result(cache, source, destination, refresh=refresh)
@@ -103,7 +88,7 @@ class HttpSourceAdapter:
                 status="failed",
                 destination=destination,
                 observed_at=time.time(),
-                media_type="application/json" if source.kind is SourceKind.REST else None,
+                media_type="application/json" if isinstance(source, RestSource) else None,
                 expected_integrity=source.expected_integrity,
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -111,9 +96,7 @@ class HttpSourceAdapter:
             with contextlib.suppress(OSError, RuntimeError):
                 await cache.aclose()
 
-        request_headers: JsonObject = {}
-        for key, value in result.request_headers.items():
-            request_headers[str(key)] = str(value)
+        request_headers: JsonObject = {str(key): str(value) for key, value in result.request_headers.items()}
         headers = result.headers or {}
         return HttpAcquisition(
             source_id=source.id,
@@ -132,24 +115,9 @@ class HttpSourceAdapter:
 
 
 def http_source_adapters() -> tuple[SourceAdapter, ...]:
-    """Built-in HTTP and REST adapters."""
     return (
-        HttpSourceAdapter(
-            AdapterDescriptor(
-                adapter_id="efloud:http",
-                version="1",
-                source_kinds=(SourceKind.HTTP,),
-                capabilities=AdapterCapabilities(inventory=False, fetch=True),
-            )
-        ),
-        HttpSourceAdapter(
-            AdapterDescriptor(
-                adapter_id="efloud:rest",
-                version="1",
-                source_kinds=(SourceKind.REST,),
-                capabilities=AdapterCapabilities(inventory=False, fetch=True),
-            )
-        ),
+        HttpSourceAdapter(AdapterDescriptor("efloud:http", "1", AdapterCapabilities(False, True))),
+        HttpSourceAdapter(AdapterDescriptor("efloud:rest", "1", AdapterCapabilities(False, True))),
     )
 
 

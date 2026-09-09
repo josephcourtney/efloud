@@ -6,34 +6,23 @@ from pathlib import Path
 
 import anyio
 
-from efloud.adapters import (
-    AdapterCapabilities,
-    AdapterDescriptor,
-    AdapterExecutionContext,
-    RsyncAcquisition,
-    SourceAdapter,
-)
+from efloud.adapters import AdapterCapabilities, AdapterDescriptor, AdapterExecutionContext, RsyncAcquisition, SourceAdapter
 from efloud.json_types import JsonObject, json_mapping_or_none
-from efloud.registry import SourceDefinition, SourceKind
+from efloud.sources import RsyncSource
 from efloud.transport.rsync import RsyncMirror, RsyncMirrorConfig
 from efloud.transport.rsync_inventory import enumerate_rsync
-from efloud.transport.rsync_runtime import (
-    prepare_rsync_paths,
-    rsync_command_for_source,
-    rsync_failure_detail,
-    rsync_results_ok,
-    run_rsync_operation,
-)
+from efloud.transport.rsync_runtime import prepare_rsync_paths, rsync_command_for_source, rsync_failure_detail, rsync_results_ok, run_rsync_operation
 
 
 def _sqlite_url(path: Path) -> str:
     return f"sqlite:///{path.resolve().as_posix()}"
 
 
-def _require_supported_source(descriptor: AdapterDescriptor, source: SourceDefinition) -> None:
-    if source.kind not in descriptor.source_kinds:
-        msg = f"Adapter {descriptor.adapter_id!r} does not support source kind {source.kind.value!r}."
-        raise ValueError(msg)
+def _source(context: AdapterExecutionContext) -> RsyncSource:
+    if not isinstance(context.source, RsyncSource):
+        msg = f"Rsync adapter cannot acquire {type(context.source).__name__}."
+        raise TypeError(msg)
+    return context.source
 
 
 def _updated_paths(results: JsonObject) -> tuple[str, ...]:
@@ -57,24 +46,24 @@ def _updated_paths(results: JsonObject) -> tuple[str, ...]:
     return tuple(sorted(updated))
 
 
-def _rsync_mirror(context: AdapterExecutionContext, local_root: Path) -> RsyncMirror:
-    source = context.source
-    cfg = context.config
+def _rsync_mirror(context: AdapterExecutionContext, source: RsyncSource, local_root: Path) -> RsyncMirror:
+    runtime = context.runtime
+    runtime.rate_limits_root.mkdir(parents=True, exist_ok=True)
     return RsyncMirror(
         RsyncMirrorConfig(
-            name=source.description,
+            name=source.description or source.id,
             remote=source.url,
             local=local_root,
             meta_path=local_root / ".mirror_meta.json",
             delete=False,
             timeout_seconds=1200.0,
             port=source.port,
-            include=source.include or (),
+            include=source.include,
             exclude=source.exclude or ('"**/.DS_Store"',),
-            rate_limit_storage=_sqlite_url(Path(cfg.root) / cfg.rate_limits_dir / "mirror_rate_limits.sqlite"),
+            rate_limit_storage=_sqlite_url(runtime.rate_limits_root / "mirror_rate_limits.sqlite"),
             rate_limit_scope=None,
             raise_on_rate_limit=False,
-            progress=cfg.runtime_progress and source.id != "pdb_mmcif",
+            progress=runtime.runtime_progress and source.id != "pdb_mmcif",
             dry_run=False,
             cmd=rsync_command_for_source(source),
         )
@@ -86,18 +75,17 @@ class RsyncSourceAdapter:
     descriptor: AdapterDescriptor
 
     async def acquire(self, context: AdapterExecutionContext) -> RsyncAcquisition:
-        source = context.source
-        _require_supported_source(self.descriptor, source)
-        cfg = context.config
-        local_root = Path(cfg.root) / cfg.mirrors_dir / (source.local_subpath or source.id)
+        source = _source(context)
+        runtime = context.runtime
+        local_root = runtime.mirrors_root / (source.local_subpath or source.id)
         local_root.mkdir(parents=True, exist_ok=True)
         requested_scope = context.operation.scope
         rsync_paths, synthetic = await prepare_rsync_paths(
             source=source,
             rsync_paths=requested_scope or None,
-            runtime_progress=cfg.runtime_progress,
+            runtime_progress=runtime.runtime_progress,
         )
-        mirror = _rsync_mirror(context, local_root)
+        mirror = _rsync_mirror(context, source, local_root)
         force = context.operation.refresh.refresh if context.operation.refresh is not None else False
         observed_at = time.time()
         try:
@@ -107,27 +95,20 @@ class RsyncSourceAdapter:
                 rsync_paths=rsync_paths,
                 force=force,
                 synthetic_results=synthetic,
-                runtime_progress=cfg.runtime_progress,
+                runtime_progress=runtime.runtime_progress,
             )
-            if cfg.remove_empty_dirs_after_rsync:
+            if runtime.remove_empty_dirs_after_rsync:
                 await mirror.prune_local_empty_dirs()
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return RsyncAcquisition(
-                source_id=source.id,
-                status="failed",
-                local_root=local_root,
-                scope=tuple(requested_scope),
-                observed_at=observed_at,
-                error=f"{type(exc).__name__}: {exc}",
-            )
+            return RsyncAcquisition(source.id, "failed", local_root, tuple(requested_scope), observed_at, error=f"{type(exc).__name__}: {exc}")
 
         if not rsync_results_ok(results):
             return RsyncAcquisition(
-                source_id=source.id,
-                status="failed",
-                local_root=local_root,
-                scope=tuple(requested_scope),
-                observed_at=observed_at,
+                source.id,
+                "failed",
+                local_root,
+                tuple(requested_scope),
+                observed_at,
                 updated_paths=_updated_paths(results),
                 transport_results=results,
                 error=rsync_failure_detail(results) or "rsync acquisition failed",
@@ -138,16 +119,16 @@ class RsyncSourceAdapter:
             remote=source.url,
             local=local_root,
             port=source.port,
-            include=source.include or (),
-            exclude=source.exclude or (),
+            include=source.include,
+            exclude=source.exclude,
         )
         inventory = await anyio.to_thread.run_sync(lambda: enumerate_rsync(inventory_cfg, scope=tuple(requested_scope)))
         return RsyncAcquisition(
-            source_id=source.id,
-            status="succeeded",
-            local_root=local_root,
-            scope=tuple(requested_scope),
-            observed_at=observed_at,
+            source.id,
+            "succeeded",
+            local_root,
+            tuple(requested_scope),
+            observed_at,
             inventory=inventory,
             updated_paths=_updated_paths(results),
             transport_results=results,
@@ -155,15 +136,7 @@ class RsyncSourceAdapter:
 
 
 def rsync_source_adapter() -> SourceAdapter:
-    """Built-in rsync adapter."""
-    return RsyncSourceAdapter(
-        AdapterDescriptor(
-            adapter_id="efloud:rsync",
-            version="1",
-            source_kinds=(SourceKind.RSYNC,),
-            capabilities=AdapterCapabilities(inventory=True, fetch=True),
-        )
-    )
+    return RsyncSourceAdapter(AdapterDescriptor("efloud:rsync", "1", AdapterCapabilities(True, True)))
 
 
 __all__ = ["RsyncSourceAdapter", "rsync_source_adapter"]

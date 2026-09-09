@@ -1,36 +1,33 @@
 # STATUS.md
 
-File Purpose: Current implementation state and verified handoff evidence.
+Purpose: compact handoff record of the current project state, active focus, verified evidence, and immediate gaps.
 
-## Current Focus
+## Current focus
 
-Phase 14-17 completion resumed under the ordered queue in TODO.md. Compatibility dependencies and live external callers have been inventoried before further code changes; see docs/compatibility-inventory.md. Canonical collection and derived execution now use repository-native extension contexts; compatibility outputs require explicit projection. Configuration and remaining historical importer isolation are next.
+Complete the Phase 16 compatibility boundary before final Phase 14-17 acceptance. `docs/compatibility-inventory.md` now identifies compatibility facilities, callers, support requirements, and removal decisions. Canonical collection and derived execution use repository-native contexts; compatibility outputs are explicit projections.
 
-## Implemented State
+## Recently completed
 
-- Snapshot-backed datasets support exact/latest-complete source snapshots, exact observations, historical source/role/tag filters, artifact-key prefixes, and inclusive observation-time bounds.
-- New snapshots bind exact observation IDs. Dataset constraints cover complete snapshots, same-run membership, maximum observation skew, and existing validator/version evidence, with structured failures.
-- Detached manifest v1 supports deterministic export, read-only exact import into another repository, and content verification independent of SQLite. A standard-library-only consumer fixture exercises the detached handoff.
-- Materialization consumes RepositoryView, validates paths/collisions, supports copy, native CoW, and private-content symlink exports, and atomically publishes without replacing existing destinations. Dry-run planning does not write.
-- Query/status readers, adapter contexts, and index read contracts use RepositoryView. Deprecated sync(cfg) delegates to Engine. Engine projection output is isolated under compatibility; historical import helpers are under efloud.compat.
-- The public API uses RsyncMode/rsync_mode/rsync_paths and semantic ContentRef fields. SQLite has one implementation with supported historical migrations and a compatibility import alias.
-- Local writer leases cover repository initialization through close. Maintenance audits references/content, reports reachability, cleans unreferenced content with explicit grace periods, and repairs abandoned run/operation statuses.
-- Recovery does not replay unknown transport side effects or promote partial snapshots. Retry acquisition through a fresh canonical Engine run. Historical retention/pruning remains deferred.
+- Immutable datasets support snapshot-backed selection, historical source metadata, coherence constraints, and deterministic detached manifests.
+- Detached exports can be verified without reading Efloud SQLite internals; materialization validates paths and publishes atomically without replacing an existing destination.
+- Query/status readers and adapter contexts use repository-facing read interfaces; deprecated `sync(cfg)` delegates to `Engine`.
+- Local writer leases, repository audit/reachability, orphan cleanup with grace periods, and abandoned-operation recovery are implemented.
+- Historical import/projection helpers are isolated under explicit compatibility code; duplicate sync orchestration was removed.
 
-## Verified Locally
+## Verified locally
 
-- Complete suite: **186 passed** on each of Python **3.12.12, 3.13.9, and 3.14.0**.
-- Ruff lint and formatting checks, ty, and git diff whitespace checks passed.
-- Import architecture: **7 contracts kept, 0 broken** after correcting the TOML namespace that previously loaded zero contracts.
-- Comparable pytest coverage: lines **85.02% → 86.16%**; branches **60.44% → 62.80%**. No pre-existing coverage.xml was present; the baseline was generated before implementation.
-- Failure-injection coverage includes blob-before-metadata failure, metadata-before-snapshot failure, abrupt process exit, recovery/retry, concurrent processes, and an export destination appearing during publication.
-- Three pre-existing missing-size-marker warnings remain in test_absence_evidence.py. The baseline collection-completeness assertion was corrected to match unresolved acquisition semantics.
+- Complete suite: 186 passed on Python 3.12.12, 3.13.9, and 3.14.0.
+- Ruff lint/format, ty, whitespace checks, and all 7 import-architecture contracts passed.
+- Comparable coverage: lines 86.16%, branches 62.80%; both exceed the pre-change baseline.
+- Failure-injection coverage includes interrupted metadata/snapshot writes, retry/recovery, concurrent processes, and export publication races.
 
-## Remaining Verification and Boundaries
+## Remaining gaps
 
-- The aggregate Python 3.14 just check recipe and remote CI have **not** been run for this checkpoint. Individual required checks and the complete interpreter matrix above passed.
-- Generic detached catalog/verification behavior is tested; an actual external BVP acceptance fixture has **not** been run.
-- Native CoW and atomic publication were exercised on macOS. The Linux-specific native branches have not been exercised here; writer coordination is local POSIX, not distributed.
-- Historical compatibility importers, projection serializers, TTL indexes, and manifest-based fanout extension seams remain explicit compatibility facilities. They are not asserted to have been fully removed.
+- Phase 16 still has explicit compatibility facilities to assess/remove or retain deliberately, including historical importers, serializers, TTL/cache helpers, mirror-resolution helpers, and provenance adapters.
+- The aggregate Python 3.14 `just check` gate and remote CI have not yet been run against the final committed state.
+- Linux-native CoW and atomic no-replace publication branches still need Linux execution evidence.
+- External BVP acceptance has not been run; Efloud's generic detached-consumer fixture already passes.
 
-See TODO.md for completed items and outstanding verification, docs/api.md for the public/compatibility boundary, and ADR-0009 for durability and handoff decisions.
+## Resume point
+
+Start with TODO 1 and `docs/compatibility-inventory.md`. Keep compatibility optional and explicit, preserve supported schema upgrades, and do not move BVP-specific semantics into Efloud.

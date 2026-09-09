@@ -1,4 +1,4 @@
-"""Canonical extensions operate without manifest projections or write handles."""
+"""Canonical extensions operate on exact inputs and narrow repository reads."""
 
 from __future__ import annotations
 
@@ -8,13 +8,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import efloud.repository_compat as compatibility
 from efloud.collections import CollectionContext, CollectionDefinition, CollectionInventory
-from efloud.compat.extensions import LegacyEnumeratorAdapter, LegacyTaskAdapter
 from efloud.derivation import DerivedContext, DerivedOutput, DerivedResult, DerivedTaskSpec
 from efloud.engine import Engine
-from efloud.fanout import FanoutEnumeration
-from efloud.planning import SyncRequest
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository import Repository
 from efloud.sources import CollectionSource
@@ -69,15 +65,10 @@ def _seed(repository: Repository) -> str:
     return str(observation.observation_id)
 
 
-def test_extensions_execute_without_compatibility_manifests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def unavailable(*args, **kwargs):
-        del args, kwargs
-        pytest.fail("Canonical execution requested a compatibility manifest")
-
-    monkeypatch.setattr(compatibility, "repository_manifest", unavailable)
-
+def test_extensions_receive_narrow_repository_contexts(tmp_path: Path) -> None:
     async def enumerate_empty(*, context: CollectionContext) -> CollectionInventory:
         assert isinstance(context.repository, ReadOnlyRepository)
+        assert not hasattr(context.repository, "ingest_bytes")
         assert len(context.inputs) == 1
         await asyncio.sleep(0)
         return CollectionInventory((), complete=True)
@@ -112,39 +103,6 @@ def test_extensions_execute_without_compatibility_manifests(tmp_path: Path, monk
         snapshot = repository.latest_source_snapshot(source.id)
         assert snapshot is not None
         assert snapshot.complete
-        assert not (tmp_path / "log" / "sync-manifest.json").exists()
-
-
-class OldTask:
-    name = "old"
-
-    @staticmethod
-    async def run(*, sync_root, manifest, sources):
-        assert manifest["root"] == str(sync_root)
-        assert sources == ()
-        await asyncio.sleep(0)
-        return {"ok": True, "value": 7}
-
-
-def test_legacy_extensions_require_explicit_adapters(tmp_path: Path) -> None:
-    async def old_enumerator(*, sync_root, manifest, sources):
-        assert manifest["root"] == str(sync_root)
-        assert sources == ()
-        await asyncio.sleep(0)
-        return FanoutEnumeration(())
-
-    with Repository(tmp_path) as repository:
-        adapter = LegacyTaskAdapter(OldTask())
-        engine = Engine(repository, (), derived_tasks=(adapter,))
-        assert asyncio.run(engine.sync(SyncRequest(source_ids=()))).ok
-        with ReadOnlyRepository(tmp_path) as view:
-            source = CollectionSource("legacy", "https://example.test/")
-            result = asyncio.run(
-                LegacyEnumeratorAdapter(old_enumerator)(
-                    context=CollectionContext(view, tmp_path, source, ()),
-                )
-            )
-            assert result == CollectionInventory(())
 
 
 @pytest.mark.parametrize("mode", ["failed", "duplicate", "empty-name", "invalid-result", "raised"])
@@ -180,63 +138,3 @@ def test_derived_failures_never_publish_outputs(tmp_path: Path, mode: str) -> No
         run = repository.run(result.repository_run_id)
         assert run is not None
         assert run.status == "failed"
-
-
-@pytest.mark.parametrize("payload", [{"ok": False}, {"err": 2}, {"err": True}, {"dest": "missing"}, {"ok": True}])
-def test_legacy_task_status_translation(tmp_path: Path, payload) -> None:
-    class Task:
-        name = "legacy"
-        repository_version = "3"
-        repository_input_source_ids = ("input",)
-
-        @staticmethod
-        def repository_parameters():
-            return {"fixture": True}
-
-        @staticmethod
-        async def run(**kwargs):
-            del kwargs
-            await asyncio.sleep(0)
-            return payload
-
-    adapter = LegacyTaskAdapter(Task())
-    assert adapter.repository_version == "3"
-    assert adapter.repository_input_source_ids == ("input",)
-    assert adapter.repository_parameters() == {"fixture": True}
-    with Repository(tmp_path), ReadOnlyRepository(tmp_path) as view:
-        result = asyncio.run(adapter.run(context=DerivedContext(view, tmp_path, ())))
-        assert result.ok == (payload.get("ok") is not False and payload.get("err") != 2)
-
-
-def test_legacy_task_explicit_output_and_invalid_json(tmp_path: Path) -> None:
-    output = tmp_path / "output.txt"
-    output.write_text("data", encoding="utf-8")
-
-    class FileTask:
-        name = "file"
-
-        @staticmethod
-        async def run(**kwargs):
-            del kwargs
-            await asyncio.sleep(0)
-            return {"dest": str(output)}
-
-    class InvalidTask:
-        name = "invalid"
-
-        @staticmethod
-        async def run(**kwargs):
-            del kwargs
-            await asyncio.sleep(0)
-            return {"bad": output}
-
-    with Repository(tmp_path), ReadOnlyRepository(tmp_path) as view:
-        context = DerivedContext(view, tmp_path, ())
-        adapter = LegacyTaskAdapter(FileTask())
-        assert adapter.repository_version == "1"
-        assert adapter.repository_input_source_ids == ()
-        assert adapter.repository_parameters() == {}
-        result = asyncio.run(adapter.run(context=context))
-        assert result.outputs == (DerivedOutput("output", output),)
-        with pytest.raises(TypeError, match="non-JSON"):
-            asyncio.run(LegacyTaskAdapter(InvalidTask()).run(context=context))

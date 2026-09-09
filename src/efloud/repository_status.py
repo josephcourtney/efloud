@@ -8,8 +8,8 @@ from efloud.repository_models import RunId, SourceId
 if TYPE_CHECKING:
     from efloud.json_types import JsonArray, JsonObject
     from efloud.metadata_store import OperationRecord, RunRecord, SourceRecord
+    from efloud.repository_capabilities import QueryRepository
     from efloud.repository_models import SourceSnapshot
-    from efloud.repository_view import RepositoryView
 
 
 def _compatibility_status(status: str) -> str:
@@ -66,7 +66,7 @@ def _snapshot_payload(snapshot: SourceSnapshot | None) -> JsonObject | None:
 
 @dataclass(frozen=True, slots=True)
 class RepositoryStatusService:
-    repository: RepositoryView
+    repository: QueryRepository
 
     def root_payload(self, *, run_limit: int = 20) -> JsonObject:
         return {

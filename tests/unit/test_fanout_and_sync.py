@@ -12,6 +12,7 @@ import pytest
 from efloud.derived import ExtensionContext
 from efloud.engine import Engine
 from efloud.models import EngineConfig
+from efloud.planning import SyncRequest
 from efloud.registry import SourceDefinition, SourceKind
 from efloud.repository import Repository
 from efloud.sync import sync
@@ -149,21 +150,27 @@ async def test_materialize_fanout_and_rest_base_task(tmp_path: Path, monkeypatch
 @pytest.mark.medium
 async def test_sync_orchestration_delegates_to_engine(tmp_path: Path, monkeypatch):
     cfg = EngineConfig(root=tmp_path, sources=[])
-    with Engine.from_config(cfg) as engine:
-        expected = await engine.sync()
+    with Repository(tmp_path) as repository:
+        expected = await Engine(repository, ()).sync(SyncRequest(source_ids=()))
     calls = []
 
     async def fake_sync(self, request=None):
         await asyncio.sleep(0)
-        calls.append((self.config, request))
+        calls.append((self.sources, self.runtime.root, request))
         return expected
 
     monkeypatch.setattr(Engine, "sync", fake_sync)
-    with pytest.warns(DeprecationWarning, match="Engine"):
+    with pytest.warns(DeprecationWarning, match="Repository.*Engine.*SyncRequest"):
         result = await sync(cfg)
     assert result.ok == expected.ok
     assert result.root == expected.root
-    assert calls == [(cfg, None)]
+    assert calls == [
+        (
+            (),
+            tmp_path,
+            SyncRequest(source_ids=(), max_concurrency=cfg.http_concurrency),
+        )
+    ]
     with Repository(tmp_path):
         pass
 

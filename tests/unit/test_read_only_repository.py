@@ -86,7 +86,7 @@ def test_read_only_repository_does_not_initialize_missing_store(tmp_path: Path) 
     assert not root.exists()
 
 
-def test_read_only_repository_refuses_schema_migration(tmp_path: Path) -> None:
+def test_read_only_repository_rejects_historical_schema_without_mutation(tmp_path: Path) -> None:
     _create_dataset(tmp_path)
     metadata = tmp_path / "metadata.sqlite"
     with closing(sqlite3.connect(metadata)) as connection:
@@ -94,7 +94,10 @@ def test_read_only_repository_refuses_schema_migration(tmp_path: Path) -> None:
         connection.commit()
     before = _tree_state(tmp_path)
 
-    with pytest.raises(RuntimeError, match="requires the current metadata schema"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"Unsupported efloud metadata schema version: 2; expected 3",
+    ):
         ReadOnlyRepository(tmp_path)
 
     with closing(sqlite3.connect(metadata)) as connection:

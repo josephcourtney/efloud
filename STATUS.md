@@ -4,13 +4,16 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Migrate canonical planner/executor/adapters/derived work onto the clean public source/repository/result contracts, then delete all alpha compatibility and historical schema support. `docs/compatibility-inventory.md` is a deletion inventory, not a support matrix.
+Delete all remaining alpha compatibility and historical schema support now that canonical execution uses the clean typed source/repository/request contracts. `docs/compatibility-inventory.md` is a deletion inventory, not a support matrix.
 
 ## Recently completed
 
 - The clean package-root API is implemented: one explicit `Repository` type with `create`/`open` and read/write modes, `Engine`, typed built-in sources, `SyncRequest`/`SyncResult`, `DatasetSpec`/`Dataset`/`DatasetManifest`, and public error categories.
-- Ordinary repository reads are grouped under artifact/source/run/dataset/provenance/maintenance facades; low-level repository writer, `RepositoryView`, `ReadOnlyRepository`, selector/materializer, storage, registry, and executor records are no longer package-root exports.
-- Public temporal selection uses timezone-aware `datetime`; unbounded snapshot history uses `limit=None`; dataset resolve/freeze/export and detached manifest verification are exposed through the new facade.
+- Canonical planner, executor, adapters, policy, validation, queries, datasets, and maintenance now operate on typed `Source`, `SyncRequest`, `EngineRuntime`, and narrow repository capabilities rather than `EngineConfig`, `SourceDefinition`/`SourceKind`, merged manifests, or broad `RepositoryView` contexts.
+- Adapter dispatch is keyed by stable namespaced adapter identity; canonical derived tasks use exact inputs and declared outputs; collection execution separates inventory/enumeration from typed item acquisition and generic reconciliation.
+- Canonical derived-index validity is derivation-key based; TTL-backed indexing is compatibility-only.
+- Import contracts prevent canonical execution modules from depending back on alpha config/manifest/task modules.
+- Public temporal selection uses timezone-aware `datetime`; unbounded snapshot history uses `limit=None`; dataset resolve/freeze/export and detached manifest verification remain exposed through the clean facade.
 - README and installed-wheel packaging examples use only the clean API, with an end-to-end regression covering acquire → freeze → export → detached verify → read-only reopen.
 
 ## Pre-cutover baseline
@@ -22,10 +25,9 @@ Migrate canonical planner/executor/adapters/derived work onto the clean public s
 
 ## Remaining gaps
 
-- Canonical internals still bridge clean sources onto `SourceDefinition`/`SourceKind` and the legacy `EngineConfig`; adapter dispatch/context and writer/read capabilities must migrate under TODO 1.
-- Compatibility/projection/presentation modules, adoption/aliases, TTL caches, and historical schema migrations remain until TODO 2 deletion.
-- Full durability, detached export, Linux publication, final quality gates, remote CI, and BVP acceptance must be repeated after internal migration and compatibility deletion.
+- `src/efloud/compat/`, deprecated `sync(cfg)`, compatibility manifest/state/query/status projection code, adoption/aliases, TTL caches, alpha derived/fanout contracts, and historical schema migrations remain until TODO 1 deletion.
+- Durability, detached export, Linux publication, final quality gates, remote CI, and BVP acceptance must be re-verified on the reduced post-compatibility mutation surface.
 
 ## Resume point
 
-Start with TODO 1: replace the temporary source/config bridge and broad internal repository capabilities with the clean canonical contracts, then execute the finite compatibility deletion in TODO 2.
+Start with TODO 1: execute `docs/compatibility-inventory.md` as a finite deletion plan, then re-run durability and detached-export acceptance against the compatibility-free runtime.

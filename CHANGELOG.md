@@ -4,6 +4,20 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+
+- Add the clean pre-1.0 public facade with explicit `Repository.create`/`Repository.open` modes, `Engine`, typed HTTP/REST/rsync/collection sources, one ordinary `SyncResult`, compositional `DatasetSpec`, `Dataset`, detached `DatasetManifest`, and public error categories.
+- Add timezone-aware public temporal dataset selection, `limit=None` for unbounded snapshot history, and dataset-level export/verification convenience.
+
+### Changed
+
+- Reduce the package-root API from the transitional implementation surface to ordinary repository, acquisition, source, dataset, request/result, version, and error concepts.
+- Make README and installed-wheel examples use the clean public API exclusively; internal alpha source/config and repository-view machinery remains transitional until the planned compatibility deletion.
+
+### Removed
+
+- Remove package-root exposure of `EngineConfig`, `SourceDefinition`, `SourceKind`, `ReadOnlyRepository`, `RepositoryView`, low-level storage/registry/validator/planner/executor records, and selector/materializer implementation classes. Their implementation modules are not yet deleted.
+
 ## [0.2.0] - 2026-09-09
 
 ### Added
@@ -111,34 +125,4 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Added
 
-- Add first-class rsync daemon port configuration.
-
-### Changed
-
-- Add rsync connection preflight diagnostics, bounded transient-failure retries, retry countdowns, and active-phase heartbeat output.
-- Record rsync retry metadata and attempt history in manifests and normalized summaries.
-
-### Removed
-
-- Remove obsolete check-command behavior tied to the retired `efloud.app` and `efloud.cli.root` layout.
-
-### Fixed
-
-- Retry transient rsync socket/connect failures before marking mirror operations failed.
-- Make path-scoped rsync diagnostics display the actual remote subtree being synchronized.
-
-## [0.0.1] - 2026-04-01
-
-### Changed
-
-- Add bounded retries for transient rsync transport failures and expose retry/request counts through normalized summaries.
-
-### Fixed
-
-- Avoid treating intermittent rsync daemon connection timeouts as immediate mirror-operation failures.
-
-## [0.0.0] - 2026-02-23
-
-### Added
-
-- Initial release.
+- Add a consolidated package version derived from installed metadata.

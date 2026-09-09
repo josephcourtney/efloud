@@ -1,22 +1,13 @@
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
-from efloud.json_types import JsonObject, json_object_or_none
-from efloud.metadata_envelopes import (
-    dataset_specifications_payload,
-    source_definition_history_payload,
-)
+from efloud.schema import CURRENT_SCHEMA_VERSION
 
 if TYPE_CHECKING:
     import sqlite3
 
-CURRENT_SCHEMA_VERSION = 3
-_V2_SCHEMA_VERSION = 2
-_SUPPORTED_HISTORICAL_VERSIONS = frozenset({1, _V2_SCHEMA_VERSION})
-
-V2_BASELINE_SCHEMA = """
+CURRENT_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sources (
     source_id TEXT PRIMARY KEY,
     definition_json TEXT NOT NULL
@@ -157,75 +148,36 @@ CREATE INDEX IF NOT EXISTS dataset_members_observation
 """
 
 
-def _load_object(raw: str) -> JsonObject:
-    decoded = json.loads(raw)
-    value = json_object_or_none(decoded)
-    if value is None:
-        msg = "Expected a JSON object in repository metadata during migration."
-        raise ValueError(msg)
-    return dict(value)
+def _application_tables(connection: sqlite3.Connection) -> tuple[str, ...]:
+    rows = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).fetchall()
+    return tuple(str(row[0]) for row in rows)
 
 
-def _dump(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def _set_version(connection: sqlite3.Connection, version: int) -> None:
-    connection.execute(f"PRAGMA user_version = {version}")
-
-
-def _install_v2_schema(connection: sqlite3.Connection) -> None:
-    connection.executescript(V2_BASELINE_SCHEMA)
-    _set_version(connection, _V2_SCHEMA_VERSION)
-
-
-def _migrate_1_to_2(connection: sqlite3.Connection) -> None:
-    _install_v2_schema(connection)
-
-
-def _migrate_2_to_3(connection: sqlite3.Connection) -> None:
-    source_rows = connection.execute("SELECT source_id, definition_json FROM sources").fetchall()
-    for source_id, raw_definition in source_rows:
-        definition = _load_object(raw_definition)
-        envelope = source_definition_history_payload(str(source_id), definition)
-        connection.execute(
-            "UPDATE sources SET definition_json = ? WHERE source_id = ?",
-            (_dump(envelope), source_id),
-        )
-
-    dataset_rows = connection.execute("SELECT dataset_id, definition_json FROM datasets").fetchall()
-    for dataset_id, raw_definition in dataset_rows:
-        definition = _load_object(raw_definition)
-        envelope = dataset_specifications_payload(definition)
-        connection.execute(
-            "UPDATE datasets SET definition_json = ? WHERE dataset_id = ?",
-            (_dump(envelope), dataset_id),
-        )
-
-    _set_version(connection, 3)
-
-
-def initialize_or_migrate(connection: sqlite3.Connection) -> None:
-    """Create or upgrade metadata through each supported schema version in order."""
+def initialize_schema(connection: sqlite3.Connection) -> None:
+    """Create the current schema, or reject any non-current repository."""
     current = int(connection.execute("PRAGMA user_version").fetchone()[0])
-    supported = {0, *_SUPPORTED_HISTORICAL_VERSIONS, CURRENT_SCHEMA_VERSION}
-    if current not in supported:
-        msg = f"Unsupported efloud metadata schema version: {current}"
+    if current == CURRENT_SCHEMA_VERSION:
+        return
+    if current != 0:
+        msg = (
+            f"Unsupported efloud metadata schema version: {current}; "
+            f"expected {CURRENT_SCHEMA_VERSION}. Historical schemas are not migrated in place."
+        )
+        raise RuntimeError(msg)
+
+    existing_tables = _application_tables(connection)
+    if existing_tables:
+        msg = (
+            "Unsupported unversioned efloud metadata database; clean repositories must be initialized "
+            f"at schema version {CURRENT_SCHEMA_VERSION}."
+        )
         raise RuntimeError(msg)
 
     with connection:
-        if current == 0:
-            _install_v2_schema(connection)
-            current = _V2_SCHEMA_VERSION
-        if current == 1:
-            _migrate_1_to_2(connection)
-            current = _V2_SCHEMA_VERSION
-        if current == _V2_SCHEMA_VERSION:
-            _migrate_2_to_3(connection)
+        connection.executescript(CURRENT_SCHEMA_SQL)
+        connection.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
 
 
-__all__ = [
-    "CURRENT_SCHEMA_VERSION",
-    "V2_BASELINE_SCHEMA",
-    "initialize_or_migrate",
-]
+__all__ = ["CURRENT_SCHEMA_SQL", "initialize_schema"]

@@ -2,23 +2,25 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from efloud.adapters import AdapterExecutionContext, AdapterRegistry
-from efloud.fs import delete_http_cache_files, prune_orphan_mirrors
+from efloud.derivation import source_inputs
 from efloud.operation_recording import RecordedOperation, record_source_acquisition, run_derived_operation
-from efloud.registry import SourceDefinition, SourceKind
+from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
+from efloud.sources import CollectionSource, source_definition
 from efloud.validation import ValidationRegistry, ValidationService, builtin_validation_registry
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
+    from efloud.derivation import DerivedTask
     from efloud.json_types import JsonArray, JsonObject
-    from efloud.models import EngineConfig
     from efloud.planning import PlannedOperation, SyncPlan
-    from efloud.repository import Repository
+    from efloud.repository_capabilities import RepositoryWriter
+    from efloud.runtime import EngineRuntime
+    from efloud.sources import Source
 
 
 type ExecutionStatus = Literal["not-executed", "succeeded", "failed", "cancelled", "blocked"]
@@ -40,12 +42,10 @@ class SyncExecutionResult:
 
     @property
     def observations(self) -> tuple[ObservationId, ...]:
-        """Observation identifiers produced by all executed operations."""
         return tuple(observation for operation in self.operations for observation in operation.observation_ids)
 
     @property
     def blocked_source_ids(self) -> tuple[str, ...]:
-        """Source identifiers whose planned operations were blocked or not executed."""
         return tuple(
             sorted(
                 operation.operation_key.removeprefix("source:")
@@ -56,14 +56,15 @@ class SyncExecutionResult:
 
     @property
     def ok(self) -> bool:
-        """Whether every operation succeeded or was intentionally not executed."""
         return all(operation.status in {"succeeded", "not-executed"} for operation in self.operations)
 
 
 @dataclass(frozen=True, slots=True)
 class _ExecutionContext:
-    config: EngineConfig
-    repository: Repository
+    sources: tuple[Source, ...]
+    derived_tasks: tuple[DerivedTask, ...]
+    runtime: EngineRuntime
+    repository: RepositoryWriter
     adapters: AdapterRegistry
     validation: ValidationService
     plan: SyncPlan
@@ -76,52 +77,31 @@ def _json_strings(values: Iterable[str]) -> JsonArray:
     return items
 
 
-def _source_definition_payload(source: SourceDefinition) -> JsonObject:
-    payload: JsonObject = {
-        "description": source.description,
-        "url": source.url,
-        "kind": source.kind.value,
-        "tags": list(source.tags),
-    }
-    if source.cache_name is not None:
-        payload["cache_name"] = source.cache_name
-    if source.local_subpath is not None:
-        payload["local_subpath"] = source.local_subpath
-    if source.rsync_mode is not None:
-        payload["rsync_mode"] = source.rsync_mode.value
-    if source.rsync_paths is not None:
-        payload["rsync_paths"] = list(source.rsync_paths)
-    if source.port is not None:
-        payload["port"] = source.port
-    if source.include is not None:
-        payload["include"] = list(source.include)
-    if source.exclude is not None:
-        payload["exclude"] = list(source.exclude)
-    if source.role is not None:
-        payload["role"] = source.role
-    if source.expected_integrity:
-        expectations: JsonArray = []
-        expectations.extend(item.to_dict() for item in source.expected_integrity)
-        payload["expected_integrity"] = expectations
-    return payload
+def _string_tuple(parameters: JsonObject, key: str) -> tuple[str, ...]:
+    value = parameters.get(key)
+    return tuple(item for item in value if isinstance(item, str)) if isinstance(value, list) else ()
 
 
-def _source_by_id(config: EngineConfig, source_id: str) -> SourceDefinition:
-    source = next((candidate for candidate in config.sources if candidate.id == source_id), None)
+def _source_by_id(sources: Sequence[Source], source_id: str) -> Source:
+    source = next((candidate for candidate in sources if candidate.id == source_id), None)
     if source is None:
         msg = f"Planned source is not configured: {source_id!r}"
         raise KeyError(msg)
     return source
 
 
-def _operation_kind(operation: PlannedOperation, source: SourceDefinition | None) -> str:
-    if operation.kind == "housekeeping":
-        return "housekeeping"
+def _derived_task(tasks: Sequence[DerivedTask], name: str) -> DerivedTask | None:
+    return next((task for task in tasks if task.name == name), None)
+
+
+def _operation_kind(operation: PlannedOperation, source: Source | None) -> str:
     if operation.kind == "derived":
         return "derived"
-    if source is not None and source.kind is SourceKind.REST_BASE:
+    if isinstance(source, CollectionSource):
         return "collection"
-    return source.kind.value.lower() if source is not None else "source"
+    if source is None:
+        return "source"
+    return source.adapter_id.rpartition(":")[2] or "source"
 
 
 def _operation_parameters(plan: SyncPlan, operation: PlannedOperation) -> JsonObject:
@@ -138,7 +118,7 @@ def _operation_parameters(plan: SyncPlan, operation: PlannedOperation) -> JsonOb
 
 
 def _start_operation(context: _ExecutionContext, operation: PlannedOperation) -> OperationId:
-    source = _source_by_id(context.config, operation.source_id) if operation.source_id is not None else None
+    source = _source_by_id(context.sources, operation.source_id) if operation.source_id is not None else None
     return context.repository.start_operation(
         run_id=context.run_id,
         source_id=operation.source_id,
@@ -149,26 +129,6 @@ def _start_operation(context: _ExecutionContext, operation: PlannedOperation) ->
     )
 
 
-def _housekeeping_result(context: _ExecutionContext, operation: PlannedOperation) -> RecordedOperation:
-    action = operation.parameters.get("action")
-    if action == "delete-http-caches":
-        cache_root = Path(context.config.root) / context.config.cache_dir / context.config.http_cache_dir
-        removed = delete_http_cache_files(cache_root)
-        details: JsonObject = {"removed": _json_strings(removed)}
-        return RecordedOperation("succeeded", details=details)
-    if action == "prune-orphan-mirrors":
-        raw_expected = operation.parameters.get("expected_subpaths")
-        expected_subpaths = (
-            tuple(value for value in raw_expected if isinstance(value, str)) if isinstance(raw_expected, list) else ()
-        )
-        mirrors_root = Path(context.config.root) / context.config.mirrors_dir
-        keep_dirs = tuple(mirrors_root / subpath for subpath in expected_subpaths)
-        removed = prune_orphan_mirrors(mirrors_root, keep_dirs)
-        details = {"removed": _json_strings(removed)}
-        return RecordedOperation("succeeded", details=details)
-    return RecordedOperation("failed", details={"error": f"Unknown housekeeping action: {action!r}"})
-
-
 async def _source_result(
     context: _ExecutionContext,
     operation: PlannedOperation,
@@ -176,22 +136,26 @@ async def _source_result(
 ) -> RecordedOperation:
     if operation.source_id is None:
         return RecordedOperation("failed", details={"error": "Source operation has no source_id."})
-    source = _source_by_id(context.config, operation.source_id)
+    source = _source_by_id(context.sources, operation.source_id)
     adapter = context.adapters.adapter_for(source)
     if adapter is None:
-        return RecordedOperation("failed", details={"error": f"No adapter registered for {source.kind.value}."})
-    acquisition = await adapter.acquire(
-        AdapterExecutionContext(
-            config=context.config,
-            repository=context.repository,
-            source=source,
-            operation=operation,
+        return RecordedOperation("failed", details={"error": f"No adapter registered for {source.adapter_id}."})
+    input_source_ids = _string_tuple(operation.parameters, "input_source_ids")
+    with ReadOnlyRepository(context.repository.root) as view:
+        inputs = source_inputs(view, input_source_ids)
+        acquisition = await adapter.acquire(
+            AdapterExecutionContext(
+                runtime=context.runtime,
+                repository=view,
+                source=source,
+                operation=operation,
+                inputs=inputs,
+            )
         )
-    )
     return record_source_acquisition(
         context.repository,
         context.validation,
-        config=context.config,
+        source=source,
         operation=operation,
         run_id=context.run_id,
         operation_id=operation_id,
@@ -204,45 +168,34 @@ async def _recorded_result(
     operation: PlannedOperation,
     operation_id: OperationId,
 ) -> RecordedOperation:
-    if operation.kind == "housekeeping":
-        return _housekeeping_result(context, operation)
     if operation.kind == "source":
         return await _source_result(context, operation, operation_id)
+    task = _derived_task(context.derived_tasks, operation.subject)
+    if task is None:
+        return RecordedOperation("failed", details={"error": f"Unknown derived task: {operation.subject}"})
     return await run_derived_operation(
         context.repository,
-        config=context.config,
+        runtime=context.runtime,
+        task=task,
         operation=operation,
         run_id=context.run_id,
         operation_id=operation_id,
     )
 
 
-async def _execute_operation(
-    context: _ExecutionContext,
-    operation: PlannedOperation,
-) -> OperationExecutionResult:
+async def _execute_operation(context: _ExecutionContext, operation: PlannedOperation) -> OperationExecutionResult:
     operation_id = _start_operation(context, operation)
     try:
         recorded = await _recorded_result(context, operation, operation_id)
     except asyncio.CancelledError:
-        context.repository.finish_operation(
-            operation_id,
-            status="cancelled",
-            details={"error": "operation cancelled"},
-        )
+        context.repository.finish_operation(operation_id, status="cancelled", details={"error": "operation cancelled"})
         raise
     except Exception as exc:  # ruff: ignore[blind-except] - adapter/task extensions are isolated sibling failure domains.
         details: JsonObject = {"error": f"{type(exc).__name__}: {exc}"}
         context.repository.finish_operation(operation_id, status="failed", details=details)
         return OperationExecutionResult(operation.operation_key, "failed", details=details)
-
     context.repository.finish_operation(operation_id, status=recorded.status, details=recorded.details)
-    return OperationExecutionResult(
-        operation_key=operation.operation_key,
-        status=recorded.status,
-        observation_ids=recorded.observation_ids,
-        details=recorded.details,
-    )
+    return OperationExecutionResult(operation.operation_key, recorded.status, recorded.observation_ids, recorded.details)
 
 
 def _blocked_operation(
@@ -282,7 +235,6 @@ async def _execute_operations(context: _ExecutionContext) -> tuple[OperationExec
         if unknown:
             msg = f"Operation {operation.operation_key!r} has unknown dependencies: {sorted(unknown)!r}"
             raise ValueError(msg)
-
     results: dict[str, OperationExecutionResult] = {}
     while pending:
         ready = tuple(
@@ -294,7 +246,6 @@ async def _execute_operations(context: _ExecutionContext) -> tuple[OperationExec
         if not ready:
             msg = f"Sync plan contains a dependency cycle: {sorted(pending)!r}"
             raise ValueError(msg)
-
         executable: list[PlannedOperation] = []
         for operation in ready:
             failed_dependencies = tuple(
@@ -334,66 +285,52 @@ class SyncExecutor:
         self,
         *,
         plan: SyncPlan,
-        config: EngineConfig,
-        repository: Repository,
+        sources: Sequence[Source],
+        runtime: EngineRuntime,
+        derived_tasks: Sequence[DerivedTask],
+        repository: RepositoryWriter,
     ) -> SyncExecutionResult:
         """Execute exactly one typed plan; dry-run performs no authoritative mutation."""
         if plan.request.dry_run:
             return SyncExecutionResult(
-                plan_id=plan.plan_id,
-                run_id=None,
-                operations=tuple(
-                    OperationExecutionResult(operation.operation_key, "not-executed") for operation in plan.operations
-                ),
+                plan.plan_id,
+                None,
+                tuple(OperationExecutionResult(operation.operation_key, "not-executed") for operation in plan.operations),
             )
-
-        selected_source_ids = tuple(
-            sorted({operation.source_id for operation in plan.operations if operation.source_id is not None})
-        )
+        selected_source_ids = tuple(sorted({operation.source_id for operation in plan.operations if operation.source_id is not None}))
         for source_id in selected_source_ids:
-            source = _source_by_id(config, source_id)
-            repository.register_source(SourceId(source.id), _source_definition_payload(source))
+            source = _source_by_id(sources, source_id)
+            repository.register_source(SourceId(source.id), source_definition(source))
         run_id = repository.start_run(
             source_ids=selected_source_ids,
-            metadata={"plan_id": plan.plan_id, "request": plan.request.to_dict(), "planner": "phase11-v1"},
+            metadata={"plan_id": plan.plan_id, "request": plan.request.to_dict(), "planner": "canonical-v1"},
         )
         context = _ExecutionContext(
-            config=config,
-            repository=repository,
-            adapters=self.adapters,
-            validation=ValidationService(repository, self.validators),
-            plan=plan,
-            run_id=run_id,
+            tuple(sources),
+            tuple(derived_tasks),
+            runtime,
+            repository,
+            self.adapters,
+            ValidationService(repository, self.validators),
+            plan,
+            run_id,
         )
         try:
             results = await _execute_operations(context)
         except asyncio.CancelledError:
             for operation in repository.operations_for_run(run_id):
                 if operation.status == "running":
-                    repository.finish_operation(
-                        operation.operation_id,
-                        status="cancelled",
-                        details={"error": "sync execution cancelled"},
-                    )
+                    repository.finish_operation(operation.operation_id, status="cancelled", details={"error": "sync execution cancelled"})
             repository.finish_run(run_id, status="cancelled")
             raise
         except Exception:
             for operation in repository.operations_for_run(run_id):
                 if operation.status == "running":
-                    repository.finish_operation(
-                        operation.operation_id,
-                        status="failed",
-                        details={"error": "sync executor aborted"},
-                    )
+                    repository.finish_operation(operation.operation_id, status="failed", details={"error": "sync executor aborted"})
             repository.finish_run(run_id, status="failed")
             raise
         repository.finish_run(run_id, status=_run_status(results))
         return SyncExecutionResult(plan.plan_id, run_id, results)
 
 
-__all__ = [
-    "ExecutionStatus",
-    "OperationExecutionResult",
-    "SyncExecutionResult",
-    "SyncExecutor",
-]
+__all__ = ["ExecutionStatus", "OperationExecutionResult", "SyncExecutionResult", "SyncExecutor"]

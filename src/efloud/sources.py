@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from efloud.inventory import IntegrityExpectation
@@ -39,7 +39,7 @@ class HttpSource:
     role: str | None = None
     tags: tuple[str, ...] = ()
     expected_integrity: tuple[IntegrityExpectation, ...] = ()
-    adapter_id: str = "efloud:http"
+    adapter_id: str = field(default="efloud:http", init=False)
 
     def __post_init__(self) -> None:
         _require_text(self.id, field="Source id")
@@ -55,7 +55,7 @@ class RestSource:
     role: str | None = None
     tags: tuple[str, ...] = ()
     expected_integrity: tuple[IntegrityExpectation, ...] = ()
-    adapter_id: str = "efloud:rest"
+    adapter_id: str = field(default="efloud:rest", init=False)
 
     def __post_init__(self) -> None:
         _require_text(self.id, field="Source id")
@@ -74,7 +74,7 @@ class RsyncSource:
     exclude: tuple[str, ...] = ()
     role: str | None = None
     tags: tuple[str, ...] = ()
-    adapter_id: str = "efloud:rsync"
+    adapter_id: str = field(default="efloud:rsync", init=False)
 
     def __post_init__(self) -> None:
         _require_text(self.id, field="Source id")
@@ -97,7 +97,7 @@ class CollectionSource:
     description: str = ""
     role: str | None = None
     tags: tuple[str, ...] = ()
-    adapter_id: str = "efloud:collection"
+    adapter_id: str = field(default="efloud:collection", init=False)
 
     def __post_init__(self) -> None:
         _require_text(self.id, field="Source id")

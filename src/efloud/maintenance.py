@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from efloud.dataset_selectors import snapshot_observations
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_models import stable_id
-from efloud.schema_migrations import CURRENT_SCHEMA_VERSION
+from efloud.schema import CURRENT_SCHEMA_VERSION
 from efloud.writer_coordination import WriterLease
 
 if TYPE_CHECKING:

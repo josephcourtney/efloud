@@ -20,7 +20,7 @@ from efloud.repository_models import (
 
 if TYPE_CHECKING:
     from efloud.json_types import JsonObject
-    from efloud.repository_view import RepositoryView
+    from efloud.repository_capabilities import DatasetRepository as RepositoryView
 
 
 class DatasetSelector(Protocol):

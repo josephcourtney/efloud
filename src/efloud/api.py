@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, BinaryIO, Literal, Self
@@ -33,16 +31,20 @@ from efloud.errors import (
 )
 from efloud.maintenance import AuditReport, RepositoryMaintenance
 from efloud.materialization import DatasetMaterializer, ExportPlan, ExportStrategy
-from efloud.planning import SyncPlan, SyncRequest
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository import Repository as _WritableRepository
 from efloud.sources import Source, legacy_source_definition
 from efloud.writer_coordination import RepositoryBusyError as _InternalRepositoryBusyError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from datetime import datetime, timedelta
+    from types import TracebackType
+
     from efloud.adapters import AdapterRegistry
     from efloud.json_types import JsonObject
     from efloud.metadata_store import RunRecord, SourceRecord
+    from efloud.planning import SyncPlan, SyncRequest
     from efloud.repository_models import ArtifactObservation, ProvenanceEdge, SourceSnapshot
     from efloud.validation import ValidationRegistry
 
@@ -63,6 +65,14 @@ def _aware_timestamp(value: datetime | None, *, field_name: str) -> float | None
     return value.timestamp()
 
 
+def _required_timestamp(value: datetime, *, field_name: str) -> float:
+    timestamp = _aware_timestamp(value, field_name=field_name)
+    if timestamp is None:
+        msg = f"{field_name} is required"
+        raise ValueError(msg)
+    return timestamp
+
+
 def _duration_seconds(value: timedelta | None, *, field_name: str) -> float | None:
     if value is None:
         return None
@@ -71,6 +81,22 @@ def _duration_seconds(value: timedelta | None, *, field_name: str) -> float | No
         msg = f"{field_name} must not be negative"
         raise ValueError(msg)
     return seconds
+
+
+def _existing_repository_root(location: RepositoryLocation) -> Path:
+    root = _path_for(location).resolve(strict=True)
+    if not root.is_dir():
+        msg = f"Repository location is not a directory: {root}"
+        raise RepositoryOpenError(msg)
+    return root
+
+
+def _open_repository_view(root: Path, mode: RepositoryMode) -> ReadOnlyRepository | _WritableRepository:
+    if mode == "r":
+        return ReadOnlyRepository(root)
+    with ReadOnlyRepository(root):
+        pass
+    return _WritableRepository(root)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,10 +117,7 @@ class DatasetSpec:
 
     @classmethod
     def latest_before(cls, artifact_key: str, before: datetime, *, role: str | None = None) -> DatasetSpec:
-        timestamp = _aware_timestamp(before, field_name="before")
-        if timestamp is None:
-            raise AssertionError("non-optional datetime produced no timestamp")
-        return cls((DatasetSelection(LatestBefore(artifact_key, timestamp), role),))
+        return cls((DatasetSelection(LatestBefore(artifact_key, _required_timestamp(before, field_name="before")), role),))
 
     @classmethod
     def latest_all(cls, *, before: datetime | None = None) -> DatasetSpec:
@@ -351,7 +374,8 @@ class _ArtifactCollection:
     def open(self, artifact_key: str, *, before: datetime | None = None) -> BinaryIO:
         observation = self.latest(artifact_key, before=before)
         if observation is None:
-            raise DatasetError(f"Unknown artifact: {artifact_key}")
+            msg = f"Unknown artifact: {artifact_key}"
+            raise DatasetError(msg)
         return self._repository._view.open_content(observation.content_id)
 
 
@@ -419,7 +443,8 @@ class Repository:
     def create(cls, location: RepositoryLocation) -> Repository:
         root = _path_for(location).resolve()
         if root.exists():
-            raise RepositoryOpenError(f"Repository location already exists: {root}")
+            msg = f"Repository location already exists: {root}"
+            raise RepositoryOpenError(msg)
         try:
             root.mkdir(parents=True)
             view = _WritableRepository(root)
@@ -432,17 +457,11 @@ class Repository:
     @classmethod
     def open(cls, location: RepositoryLocation, *, mode: RepositoryMode = "r") -> Repository:
         if mode not in {"r", "rw"}:
-            raise RepositoryOpenError(f"Unsupported repository mode: {mode!r}")
+            msg = f"Unsupported repository mode: {mode!r}"
+            raise RepositoryOpenError(msg)
         try:
-            root = _path_for(location).resolve(strict=True)
-            if not root.is_dir():
-                raise RepositoryOpenError(f"Repository location is not a directory: {root}")
-            if mode == "r":
-                view: ReadOnlyRepository | _WritableRepository = ReadOnlyRepository(root)
-            else:
-                with ReadOnlyRepository(root):
-                    pass
-                view = _WritableRepository(root)
+            root = _existing_repository_root(location)
+            view = _open_repository_view(root, mode)
         except _InternalRepositoryBusyError as exc:
             raise RepositoryBusyError(str(exc)) from exc
         except RuntimeError as exc:
@@ -454,14 +473,16 @@ class Repository:
         return cls(root, mode, view)
 
     def __enter__(self) -> Self:
+        """Return this opened repository capability."""
         return self
 
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
-        traceback: object | None,
+        traceback: TracebackType | None,
     ) -> None:
+        """Close the underlying repository stores."""
         self.close()
 
     def close(self) -> None:
@@ -469,7 +490,8 @@ class Repository:
 
     def _require_writer(self) -> _WritableRepository:
         if self.mode != "rw" or not isinstance(self._view, _WritableRepository):
-            raise RepositoryOpenError("Operation requires Repository.open(..., mode='rw')")
+            msg = "Operation requires Repository.open(..., mode='rw')"
+            raise RepositoryOpenError(msg)
         return self._view
 
     @property

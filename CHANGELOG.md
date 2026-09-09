@@ -4,15 +4,27 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+
+- Add a post-compatibility durability audit enumerating the remaining authoritative mutation paths, crash boundaries, coordination requirements, and acceptance evidence.
+
 ### Changed
 
 - Reject historical and non-empty unversioned repository schemas instead of migrating or partially interpreting them; require canonical terminal statuses and producer metadata.
 - Keep transport staging, HTTP cache, and rate-limit state under the explicitly non-authoritative `.efloud-runtime` operational root.
+- Use `limit=None` for unbounded source-snapshot history throughout repository, storage, dataset-selection, constraint, and maintenance internals rather than retaining a negative sentinel below the public facade.
+- Make explicit `reflink` export remain strict when native CoW is unsupported; capability-dependent integration tests skip that strategy instead of silently substituting copy semantics.
 
 ### Removed
 
 - Remove all maintained alpha backwards-compatibility implementation, including `efloud.compat`, deprecated `sync(cfg)`, `EngineConfig`, merged manifests and mirror-state projections, old source/fanout/derived contracts, query/status/health/summary facades, aliases/adoption, path materialization helpers, TTL cache/index compatibility, and historical schema migrations.
 - Remove compatibility-only tests and architecture exceptions; installed-wheel contracts now require the deleted modules to be absent and unimportable.
+
+### Fixed
+
+- Require an active repository writer lease before standalone byte content staging can mutate the content-addressed store.
+- Make destructive cleanup fail closed on SQLite/foreign-key failures, semantic tree/dataset/source/snapshot corruption, and missing or corrupt reachable content while preserving validation-only and provenance history.
+- Reject operation records with missing producer metadata instead of manufacturing a synthetic legacy producer identity.
 
 ## [0.3.0] - 2026-09-09
 

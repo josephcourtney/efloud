@@ -4,7 +4,7 @@ File Purpose: Current implementation state and verified handoff evidence.
 
 ## Current Focus
 
-Phase 14-17 completion resumed under the ordered queue in TODO.md. Compatibility dependencies and live external callers have been inventoried before further code changes; see docs/compatibility-inventory.md. Next is the canonical collection/derived extension boundary.
+Phase 14-17 completion resumed under the ordered queue in TODO.md. Compatibility dependencies and live external callers have been inventoried before further code changes; see docs/compatibility-inventory.md. Canonical collection and derived execution now use repository-native extension contexts; compatibility outputs require explicit projection. Configuration and remaining historical importer isolation are next.
 
 ## Implemented State
 

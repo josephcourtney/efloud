@@ -36,11 +36,11 @@ and the finite migration checklist.
 Scope: `collection_adapter.py`, `operation_recording.py`, `derived.py`,
 `fanout.py`, and the corresponding extension contracts and tests.
 
-- [ ] define canonical collection-enumerator inputs using repository reads and explicit semantic inputs instead of `NormalizedManifest`
-- [ ] define canonical derived-task inputs using repository reads and explicit artifact/observation dependencies instead of `NormalizedManifest`
-- [ ] migrate collection acquisition and derived-operation execution to those contracts
-- [ ] move any required legacy manifest interface behind an explicit compatibility adapter
-- [ ] test canonical collection and derived execution with compatibility manifest generation unavailable
+- [x] define canonical collection-enumerator inputs using repository reads and explicit semantic inputs instead of `NormalizedManifest`
+- [x] define canonical derived-task inputs using repository reads and explicit artifact/observation dependencies instead of `NormalizedManifest`
+- [x] migrate collection acquisition and derived-operation execution to those contracts
+- [x] move any required legacy manifest interface behind an explicit compatibility adapter
+- [x] test canonical collection and derived execution with compatibility manifest generation unavailable
 
 Acceptance: normal collection and derived execution no longer constructs or
 consumes compatibility manifests; supported legacy callers enter through adapters.

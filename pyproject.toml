@@ -1,7 +1,7 @@
 # =================================== project ====================================
 [project]
   name = "efloud"
-  version = "0.1.0"
+  version = "0.2.0"
   description = "Local versioned data ingestion and immutable artifact repositories"
   readme = "README.md"
   authors = [
@@ -13,13 +13,13 @@
   classifiers = []
   requires-python = ">=3.12,<3.15"
   dependencies = [
-    "anyio>=3.0,<4.dev0",
+    "anyio>=4.9,<5", # required by Hishel async SQLite storage
     "click>=8.5.0",
-    "hishel>=1.1.9",
+    "hishel[httpx]>=1.1.9", # installs the async cache transport and SQLite backend
     "httpx>=0.28.1",
     "smartratelimit>=0.3.1",
     "tenacity>=9.1.4",
-  ]
+]
 
   # [project.scripts]
   #   efloud = "efloud.cli:cli"

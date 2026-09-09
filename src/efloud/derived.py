@@ -60,7 +60,8 @@ class DerivedResult:
 
 
 class DerivedTask(Protocol):
-    name: str
+    @property
+    def name(self) -> str: ...
 
     async def run(self, *, context: ExtensionContext) -> DerivedResult: ...
 

@@ -15,6 +15,18 @@ Items should be categorized under these headings:
 - **Fixed** - any bug fixes
 - **Security** - in case of vulnerabilities
 
+## [0.2.0] - 2026-09-09
+
+### Added
+- add repository-native extension contexts, exact input observations, typed derived outputs, and explicit legacy extension adapters
+
+### Changed
+- make compatibility output publication an explicit post-execution operation through `compat.outputs.project_execution`
+- require Hishel's HTTPX extra and compatible AnyIO to support async SQLite acquisition caches in fresh installations
+
+### Removed
+- remove the unused duplicate sync runtime and its obsolete orchestration tests while retaining transport regressions
+
 ## [0.1.0] - 2026-09-09
 
 ### Added

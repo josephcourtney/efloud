@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 import httpx
 
-from efloud.derived import DerivedResult, DerivedTask, ExtensionContext
+from efloud.derived import DerivedResult, ExtensionContext
 from efloud.fs import atomic_write_bytes, atomic_write_text, safe_json_dump
 from efloud.inventory import (
     ChangeToken,
@@ -122,7 +122,7 @@ def _inventory_evidence(item: FanoutItem) -> JsonObject:
 
 
 @dataclass(frozen=True)
-class RestBaseFanoutTask(DerivedTask):
+class RestBaseFanoutTask:
     """Materialize a REST collection as stable per-item artifacts."""
 
     name: str

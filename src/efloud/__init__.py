@@ -2,204 +2,31 @@ from __future__ import annotations
 
 from importlib.metadata import version
 
-from efloud.adapters import (
-    AdapterCapabilities,
-    AdapterDescriptor,
-    AdapterExecutionContext,
-    AdapterRegistry,
-    CollectionAcquisition,
-    HttpAcquisition,
-    RsyncAcquisition,
-    SourceAcquisition,
-    SourceAdapter,
-)
-from efloud.blob_store import BlobStore, FilesystemBlobStore
-from efloud.builtin_adapters import builtin_adapter_registry
-from efloud.dataset_constraints import DatasetConstraintError, DatasetConstraints
-from efloud.dataset_export import DetachedDatasetManifest, export_dataset_manifest, import_dataset_manifest
-from efloud.dataset_selectors import ExactSourceSnapshot, LatestCompleteSourceSnapshot, SourceSelection
-from efloud.datasets import (
-    DatasetDefinition,
-    DatasetManifest,
-    DatasetSelection,
-    DatasetSelector,
-    ExactObservation,
-    ImmutableDataset,
-    Latest,
-    LatestAll,
-    LatestBefore,
-    resolve_dataset,
-)
-from efloud.derivation import DependencySemantics, DerivationKey, DerivedTaskSpec
-from efloud.derived import DerivedOutput, DerivedResult, DerivedTask, ExtensionContext, RepositoryDerivedTask
-from efloud.engine import Engine, EngineSyncResult
-from efloud.executor import OperationExecutionResult, SyncExecutionResult
-from efloud.inventory import (
-    AbsenceEvidence,
-    AbsenceEvidenceKind,
-    ChangeToken,
-    ChangeTokenReliability,
-    IntegrityExpectation,
-    IntegrityExpectationError,
-    InventoryCoverage,
-    InventoryItem,
-    SourceInventory,
-)
-from efloud.maintenance import AuditReport, CleanupCandidate, RepositoryMaintenance
-from efloud.materialization import DatasetMaterializer, ExportPlan
-from efloud.models import EngineConfig
-from efloud.planning import PlannedOperation, PlanningDecision, SyncPlan, SyncRequest
-from efloud.policy import DefaultSyncPolicy, RefreshDecision, RoleDrivenSyncPolicy
-from efloud.read_only_repository import ReadOnlyRepository
-from efloud.registry import RsyncMode, SourceDefinition, SourceKind
-from efloud.repository import Repository
-from efloud.repository_models import (
-    ArtifactAbsence,
-    ArtifactKey,
-    ArtifactObservation,
-    ArtifactState,
-    ContentId,
-    ContentRef,
-    DatasetId,
-    DatasetSpecification,
-    DatasetSpecificationId,
-    ObservationId,
-    OperationId,
-    OperationStatus,
-    ProducerRef,
-    ProvenanceEdge,
-    RunId,
-    RunStatus,
-    SnapshotId,
-    SourceDefinitionRevision,
-    SourceDefinitionRevisionId,
-    SourceId,
-    SourceSnapshot,
-    TreeEntry,
-    TreeId,
-    ValidationResult,
-    ValidationStatus,
-)
-from efloud.repository_query import RepositoryQueryService, repository_query
-from efloud.repository_status import RepositoryStatusService
-from efloud.repository_view import RepositoryView
-from efloud.validation import (
-    ContentValidator,
-    ValidationRegistry,
-    ValidationService,
-    ValidationTarget,
-    ValidatorDescriptor,
-    builtin_validation_registry,
-)
-from efloud.writer_coordination import RepositoryBusyError
+from efloud.api import Dataset, DatasetManifest, DatasetSpec, Engine, Repository, SyncResult
+from efloud.errors import DatasetError, EfloudError, ExecutionError, ExportError, RepositoryError, VerificationError
+from efloud.planning import SyncRequest
+from efloud.sources import CollectionSource, HttpSource, RestSource, RsyncSource, Source
 
 __version__ = version("efloud")
 
 __all__ = [
-    "AbsenceEvidence",
-    "AbsenceEvidenceKind",
-    "AdapterCapabilities",
-    "AdapterDescriptor",
-    "AdapterExecutionContext",
-    "AdapterRegistry",
-    "ArtifactAbsence",
-    "ArtifactKey",
-    "ArtifactObservation",
-    "ArtifactState",
-    "AuditReport",
-    "BlobStore",
-    "ChangeToken",
-    "ChangeTokenReliability",
-    "CleanupCandidate",
-    "CollectionAcquisition",
-    "ContentId",
-    "ContentRef",
-    "ContentValidator",
-    "DatasetConstraintError",
-    "DatasetConstraints",
-    "DatasetDefinition",
-    "DatasetId",
+    "CollectionSource",
+    "Dataset",
+    "DatasetError",
     "DatasetManifest",
-    "DatasetMaterializer",
-    "DatasetSelection",
-    "DatasetSelector",
-    "DatasetSpecification",
-    "DatasetSpecificationId",
-    "DefaultSyncPolicy",
-    "DependencySemantics",
-    "DerivationKey",
-    "DerivedOutput",
-    "DerivedResult",
-    "DerivedTask",
-    "DerivedTaskSpec",
-    "DetachedDatasetManifest",
+    "DatasetSpec",
+    "EfloudError",
     "Engine",
-    "EngineConfig",
-    "EngineSyncResult",
-    "ExactObservation",
-    "ExactSourceSnapshot",
-    "ExportPlan",
-    "ExtensionContext",
-    "FilesystemBlobStore",
-    "HttpAcquisition",
-    "ImmutableDataset",
-    "IntegrityExpectation",
-    "IntegrityExpectationError",
-    "InventoryCoverage",
-    "InventoryItem",
-    "Latest",
-    "LatestAll",
-    "LatestBefore",
-    "LatestCompleteSourceSnapshot",
-    "ObservationId",
-    "OperationExecutionResult",
-    "OperationId",
-    "OperationStatus",
-    "PlannedOperation",
-    "PlanningDecision",
-    "ProducerRef",
-    "ProvenanceEdge",
-    "ReadOnlyRepository",
-    "RefreshDecision",
+    "ExecutionError",
+    "ExportError",
+    "HttpSource",
     "Repository",
-    "RepositoryBusyError",
-    "RepositoryDerivedTask",
-    "RepositoryMaintenance",
-    "RepositoryQueryService",
-    "RepositoryStatusService",
-    "RepositoryView",
-    "RoleDrivenSyncPolicy",
-    "RsyncAcquisition",
-    "RsyncMode",
-    "RunId",
-    "RunStatus",
-    "SnapshotId",
-    "SourceAcquisition",
-    "SourceAdapter",
-    "SourceDefinition",
-    "SourceDefinitionRevision",
-    "SourceDefinitionRevisionId",
-    "SourceId",
-    "SourceInventory",
-    "SourceKind",
-    "SourceSelection",
-    "SourceSnapshot",
-    "SyncExecutionResult",
-    "SyncPlan",
+    "RepositoryError",
+    "RestSource",
+    "RsyncSource",
+    "Source",
     "SyncRequest",
-    "TreeEntry",
-    "TreeId",
-    "ValidationRegistry",
-    "ValidationResult",
-    "ValidationService",
-    "ValidationStatus",
-    "ValidationTarget",
-    "ValidatorDescriptor",
+    "SyncResult",
+    "VerificationError",
     "__version__",
-    "builtin_adapter_registry",
-    "builtin_validation_registry",
-    "export_dataset_manifest",
-    "import_dataset_manifest",
-    "repository_query",
-    "resolve_dataset",
 ]

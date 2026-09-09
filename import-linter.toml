@@ -1,15 +1,13 @@
 # import-linter.toml
 #
-# These contracts describe the repository-centered architecture in DESIGN.md.
-# Keep them aligned with modules that actually exist; prospective package layouts
-# belong in design documentation, not in an active validation gate.
+# Active contracts for the compatibility-free repository-centered architecture.
+# Historical/deleted modules are asserted absent by packaging tests rather than
+# named here as architectural participants.
 #
 [tool.importlinter]
   root_package              = "efloud"
   include_external_packages = false
 
-# Domain identity and value objects are the lowest semantic layer. They may not
-# acquire orchestration, compatibility, or presentation dependencies.
 [[tool.importlinter.contracts]]
   name = "repository models stay below orchestration"
   type = "forbidden"
@@ -18,36 +16,24 @@
     "efloud.engine",
     "efloud.executor",
     "efloud.planner",
-    "efloud.query",
-    "efloud.repository_compat",
-    "efloud.repository_query",
-    "efloud.repository_status",
-    "efloud.sync",
   ]
 
-# Storage implementations are infrastructure beneath repository semantics. They
-# must not reach upward into planning/execution or compatibility projections.
 [[tool.importlinter.contracts]]
   name = "storage stays below orchestration"
   type = "forbidden"
   source_modules = [
     "efloud.blob_store",
     "efloud.metadata_store",
+    "efloud.schema",
     "efloud.schema_migrations",
     "efloud.sqlite_metadata",
-    "efloud.sqlite_metadata_v3",
   ]
   forbidden_modules = [
     "efloud.engine",
     "efloud.executor",
     "efloud.planner",
-    "efloud.repository_compat",
-    "efloud.repository_query",
-    "efloud.repository_status",
-    "efloud.sync",
   ]
 
-# Dataset consumers depend on narrow semantic reads, never the mutable writer.
 [[tool.importlinter.contracts]]
   name = "datasets do not depend on mutable repository"
   type = "forbidden"
@@ -60,16 +46,6 @@
   ]
   forbidden_modules = ["efloud.repository"]
 
-# The broad alpha RepositoryView remains only until compatibility deletion; new
-# canonical consumers must use repository_capabilities instead.
-[[tool.importlinter.contracts]]
-  name = "repository view does not depend on mutable repository"
-  type = "forbidden"
-  source_modules = ["efloud.repository_view"]
-  forbidden_modules = ["efloud.repository"]
-
-# Planning is deterministic description of work and must remain independent of
-# execution side effects.
 [[tool.importlinter.contracts]]
   name = "planning does not depend on execution"
   type = "forbidden"
@@ -80,11 +56,8 @@
   forbidden_modules = [
     "efloud.engine",
     "efloud.executor",
-    "efloud.sync",
   ]
 
-# Protocol adapters implement acquisition details; they should not import the
-# engine/executor that coordinates them.
 [[tool.importlinter.contracts]]
   name = "adapters do not depend on orchestration"
   type = "forbidden"
@@ -97,87 +70,4 @@
   forbidden_modules = [
     "efloud.engine",
     "efloud.executor",
-    "efloud.sync",
-  ]
-
-# Compatibility manifests and mirror projections are outward-facing adapters,
-# never dependencies of the authoritative repository/read model.
-[[tool.importlinter.contracts]]
-  name = "repository core does not depend on compatibility projections"
-  type = "forbidden"
-  source_modules = [
-    "efloud.datasets",
-    "efloud.reconciliation",
-    "efloud.repository",
-    "efloud.repository_view",
-    "efloud.validation",
-  ]
-  forbidden_modules = [
-    "efloud.manifest",
-    "efloud.repository_compat",
-    "efloud.repository_state",
-    "efloud.status",
-  ]
-
-# Canonical acquisition, derivation, validation, typed inspection, datasets, and
-# maintenance are a clean-break island. Alpha configuration/source models,
-# compatibility projections, parser/presentation facades, broad RepositoryView,
-# and the old derived/fanout extension shapes may exist only outside this island
-# until the next deletion milestone removes them entirely.
-[[tool.importlinter.contracts]]
-  name = "canonical execution does not depend on alpha compatibility"
-  type = "forbidden"
-  source_modules = [
-    "efloud.adapters",
-    "efloud.builtin_adapters",
-    "efloud.collection_adapter",
-    "efloud.collection_recording",
-    "efloud.collections",
-    "efloud.dataset_constraints",
-    "efloud.dataset_export",
-    "efloud.dataset_selectors",
-    "efloud.datasets",
-    "efloud.derivation",
-    "efloud.engine",
-    "efloud.executor",
-    "efloud.http_adapter",
-    "efloud.indexing",
-    "efloud.maintenance",
-    "efloud.materialization",
-    "efloud.operation_recording",
-    "efloud.planner",
-    "efloud.planning",
-    "efloud.policy",
-    "efloud.reconciliation",
-    "efloud.repository_capabilities",
-    "efloud.repository_query",
-    "efloud.repository_status",
-    "efloud.rsync_adapter",
-    "efloud.rsync_reconciliation",
-    "efloud.runtime",
-    "efloud.sources",
-    "efloud.transport.rsync_runtime",
-    "efloud.validation",
-  ]
-  forbidden_modules = [
-    "efloud.compat",
-    "efloud.derived",
-    "efloud.fanout",
-    "efloud.health",
-    "efloud.manifest",
-    "efloud.models",
-    "efloud.query",
-    "efloud.registry",
-    "efloud.repository_compat",
-    "efloud.repository_outputs",
-    "efloud.repository_state",
-    "efloud.repository_view",
-    "efloud.resolve",
-    "efloud.source_aliases",
-    "efloud.source_results",
-    "efloud.state",
-    "efloud.status",
-    "efloud.store_inspection",
-    "efloud.summary",
-    "efloud.sync",
   ]

@@ -84,7 +84,8 @@ class OperationRecord:
     def producer(self) -> ProducerRef:
         raw = json_mapping_or_none(self.parameters.get("producer"))
         if raw is None:
-            return ProducerRef("efloud:legacy", "0")
+            msg = f"Operation {self.operation_id} has no producer metadata."
+            raise ValueError(msg)
         return ProducerRef.from_mapping(raw)
 
 
@@ -276,7 +277,7 @@ class MetadataStore(Protocol):  # ruff: ignore[too-many-public-methods] - semant
         self,
         source_id: SourceId,
         *,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> tuple[SourceSnapshot, ...]: ...
 
     def record_dataset(self, record: DatasetRecord) -> None: ...

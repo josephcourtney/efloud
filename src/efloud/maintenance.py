@@ -174,13 +174,47 @@ class RepositoryMaintenance:
     def _snapshot_issues(repository: ReadOnlyRepository) -> list[AuditIssue]:
         issues: list[AuditIssue] = []
         for source in repository.sources():
-            for snapshot in repository.source_snapshots_for(source.source_id, limit=-1):
+            for snapshot in repository.source_snapshots_for(source.source_id, limit=None):
                 if snapshot.complete:
                     try:
                         snapshot_observations(repository, snapshot)
                     except ValueError as error:
                         issues.append(AuditIssue("incomplete-snapshot-evidence", str(snapshot.snapshot_id), str(error)))
         return issues
+
+    @staticmethod
+    def _cleanup_blocking_issues(
+        connection: sqlite3.Connection,
+        repository: ReadOnlyRepository,
+        roots: dict[str, set[str]],
+    ) -> tuple[AuditIssue, ...]:
+        issues = [
+            AuditIssue("sqlite-integrity", str(row[0]))
+            for row in connection.execute("PRAGMA integrity_check")
+            if row[0] != "ok"
+        ]
+        issues.extend(
+            AuditIssue("dangling-reference", str(row[0]), str(tuple(row)))
+            for row in connection.execute("PRAGMA foreign_key_check")
+        )
+        if issues:
+            return tuple(sorted(issues))
+        try:
+            issues.extend(
+                issue
+                for issue in RepositoryMaintenance._semantic_issues(connection, repository)
+                if issue.code != "running-lifecycle"
+            )
+        except (ValueError, TypeError, KeyError) as error:
+            issues.append(AuditIssue("invalid-semantic-metadata", "metadata", str(error)))
+        for content_id in sorted(roots):
+            if repository.content(content_id) is None:
+                issues.append(AuditIssue("missing-content-metadata", content_id))
+            elif not repository.contains_content(content_id):
+                issues.append(AuditIssue("missing-blob", content_id))
+            elif not repository.verify_content(content_id):
+                issues.append(AuditIssue("corrupt-blob", content_id))
+        return tuple(sorted(issues))
 
     def _blobs(self) -> tuple[tuple[str, Path], ...]:
         objects = self.root / "objects"
@@ -211,10 +245,13 @@ class RepositoryMaintenance:
             lease.close()
             raise
         try:
-            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-                msg = "Cleanup refused: repair dangling metadata references first"
-                raise ValueError(msg)
             roots = self._reachability(connection)
+            with ReadOnlyRepository(self.root) as repository:
+                blockers = self._cleanup_blocking_issues(connection, repository, roots)
+            if blockers:
+                summary = ", ".join(f"{issue.code}:{issue.subject}" for issue in blockers)
+                msg = f"Cleanup refused: repository audit failed ({summary})"
+                raise ValueError(msg)
             known = {row[0] for row in connection.execute("SELECT content_id FROM content_objects")}
             candidates = tuple(
                 CleanupCandidate(

@@ -255,6 +255,7 @@ class Repository:
 
     def store_bytes_content(self, data: bytes, *, media_type: str | None = None) -> ContentRef:
         """Store immutable bytes and register content identity without creating an observation."""
+        self._writer_lease.require_active()
         content = self.blobs.put_bytes(data, media_type=media_type)
         self.metadata.record_content(content)
         return content
@@ -768,7 +769,7 @@ class Repository:
         self,
         source_id: SourceId | str,
         *,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> tuple[SourceSnapshot, ...]:
         return self.metadata.source_snapshots_for(SourceId(str(source_id)), limit=limit)
 

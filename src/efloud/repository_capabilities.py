@@ -80,7 +80,7 @@ class SourceReader(Protocol):
         self,
         source_id: SourceId | str,
         *,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> tuple[SourceSnapshot, ...]: ...
 
 

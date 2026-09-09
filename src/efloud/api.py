@@ -398,7 +398,7 @@ class _SourceCollection:
         if limit is not None and limit < 0:
             msg = "limit must be nonnegative or None"
             raise ValueError(msg)
-        return self._repository._view.source_snapshots_for(source_id, limit=-1 if limit is None else limit)
+        return self._repository._view.source_snapshots_for(source_id, limit=limit)
 
 
 class _RunCollection:

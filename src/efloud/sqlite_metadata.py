@@ -817,17 +817,20 @@ class SQLiteMetadataStore:
         self,
         source_id: SourceId,
         *,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> tuple[SourceSnapshot, ...]:
-        rows = self._connection.execute(
-            """
+        if limit is not None and limit < 0:
+            msg = "limit must be nonnegative or None"
+            raise ValueError(msg)
+        query = """
             SELECT * FROM source_snapshots
             WHERE source_id = ?
             ORDER BY observed_at DESC, snapshot_id DESC
-            LIMIT ?
-            """,
-            (str(source_id), limit),
-        ).fetchall()
+        """
+        if limit is None:
+            rows = self._connection.execute(query, (str(source_id),)).fetchall()
+        else:
+            rows = self._connection.execute(f"{query} LIMIT ?", (str(source_id), limit)).fetchall()
         return tuple(self._source_snapshot_from_row(row) for row in rows)
 
     def record_dataset(self, record: DatasetRecord) -> None:

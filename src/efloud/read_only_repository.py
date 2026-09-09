@@ -222,7 +222,7 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         self,
         source_id: SourceId | str,
         *,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> tuple[SourceSnapshot, ...]:
         return self.metadata.source_snapshots_for(SourceId(str(source_id)), limit=limit)
 

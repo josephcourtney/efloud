@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from efloud.registry import RsyncMode, SourceDefinition, SourceKind
-
 if TYPE_CHECKING:
     from efloud.inventory import IntegrityExpectation
+    from efloud.json_types import JsonObject
 
 _MIN_RSYNC_PORT = 1
 _MAX_RSYNC_PORT = 65535
@@ -14,7 +13,7 @@ _MAX_RSYNC_PORT = 65535
 
 @runtime_checkable
 class Source(Protocol):
-    """Declarative external data source understood by an Efloud adapter."""
+    """Open declarative source contract dispatched by namespaced adapter identity."""
 
     @property
     def id(self) -> str: ...
@@ -31,6 +30,8 @@ class Source(Protocol):
     @property
     def tags(self) -> tuple[str, ...]: ...
 
+    def definition(self) -> JsonObject: ...
+
 
 def _require_text(value: str, *, field: str) -> None:
     if not value.strip():
@@ -45,11 +46,23 @@ def _normalize_tags(tags: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(sorted(set(tags)))
 
 
+def _common_definition(source: Source) -> JsonObject:
+    payload: JsonObject = {
+        "adapter_id": source.adapter_id,
+        "description": source.description,
+        "tags": list(source.tags),
+    }
+    if source.role is not None:
+        payload["role"] = source.role
+    return payload
+
+
 @dataclass(frozen=True, slots=True)
 class HttpSource:
     id: str
     url: str
     description: str = ""
+    cache_name: str | None = None
     role: str | None = None
     tags: tuple[str, ...] = ()
     expected_integrity: tuple[IntegrityExpectation, ...] = ()
@@ -61,12 +74,22 @@ class HttpSource:
         _require_text(self.url, field="Source URL")
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
 
+    def definition(self) -> JsonObject:
+        payload = _common_definition(self)
+        payload.update({"url": self.url, "protocol": "http"})
+        if self.cache_name is not None:
+            payload["cache_name"] = self.cache_name
+        if self.expected_integrity:
+            payload["expected_integrity"] = [item.to_dict() for item in self.expected_integrity]
+        return payload
+
 
 @dataclass(frozen=True, slots=True)
 class RestSource:
     id: str
     url: str
     description: str = ""
+    cache_name: str | None = None
     role: str | None = None
     tags: tuple[str, ...] = ()
     expected_integrity: tuple[IntegrityExpectation, ...] = ()
@@ -78,6 +101,15 @@ class RestSource:
         _require_text(self.url, field="Source URL")
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
 
+    def definition(self) -> JsonObject:
+        payload = _common_definition(self)
+        payload.update({"url": self.url, "protocol": "rest"})
+        if self.cache_name is not None:
+            payload["cache_name"] = self.cache_name
+        if self.expected_integrity:
+            payload["expected_integrity"] = [item.to_dict() for item in self.expected_integrity]
+        return payload
+
 
 @dataclass(frozen=True, slots=True)
 class RsyncSource:
@@ -85,6 +117,7 @@ class RsyncSource:
     url: str
     description: str = ""
     paths: tuple[str, ...] = ()
+    local_subpath: str | None = None
     port: int | None = None
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
@@ -104,10 +137,27 @@ class RsyncSource:
         object.__setattr__(self, "exclude", tuple(self.exclude))
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
 
+    def definition(self) -> JsonObject:
+        payload = _common_definition(self)
+        payload.update(
+            {
+                "url": self.url,
+                "protocol": "rsync",
+                "paths": list(self.paths),
+                "include": list(self.include),
+                "exclude": list(self.exclude),
+            }
+        )
+        if self.local_subpath is not None:
+            payload["local_subpath"] = self.local_subpath
+        if self.port is not None:
+            payload["port"] = self.port
+        return payload
+
 
 @dataclass(frozen=True, slots=True)
 class CollectionSource:
-    """Declarative collection source; canonical execution is completed in TODO 1."""
+    """Declarative HTTP collection whose inventory/fetch behavior is supplied separately."""
 
     id: str
     url: str
@@ -122,54 +172,22 @@ class CollectionSource:
         _require_text(self.url, field="Source URL")
         object.__setattr__(self, "tags", _normalize_tags(self.tags))
 
-
-def legacy_source_definition(source: Source) -> SourceDefinition:
-    """Bridge clean built-in source values onto the current canonical executor."""
-    if isinstance(source, HttpSource):
-        return SourceDefinition(
-            id=source.id,
-            description=source.description or source.id,
-            url=source.url,
-            kind=SourceKind.HTTP,
-            role=source.role,
-            tags=source.tags,
-            expected_integrity=source.expected_integrity,
-        )
-    if isinstance(source, RestSource):
-        return SourceDefinition(
-            id=source.id,
-            description=source.description or source.id,
-            url=source.url,
-            kind=SourceKind.REST,
-            role=source.role,
-            tags=source.tags,
-            expected_integrity=source.expected_integrity,
-        )
-    if isinstance(source, RsyncSource):
-        return SourceDefinition(
-            id=source.id,
-            description=source.description or source.id,
-            url=source.url,
-            kind=SourceKind.RSYNC,
-            rsync_mode=RsyncMode.PATHS if source.paths else RsyncMode.FULL,
-            rsync_paths=source.paths or None,
-            port=source.port,
-            include=source.include or None,
-            exclude=source.exclude or None,
-            role=source.role,
-            tags=source.tags,
-        )
-    if isinstance(source, CollectionSource):
-        return SourceDefinition(
-            id=source.id,
-            description=source.description or source.id,
-            url=source.url,
-            kind=SourceKind.REST_BASE,
-            role=source.role,
-            tags=source.tags,
-        )
-    msg = f"Adapter {source.adapter_id!r} is not yet connected to the canonical executor"
-    raise ValueError(msg)
+    def definition(self) -> JsonObject:
+        payload = _common_definition(self)
+        payload.update({"url": self.url, "protocol": "collection"})
+        return payload
 
 
-__all__ = ["CollectionSource", "HttpSource", "RestSource", "RsyncSource", "Source"]
+def source_definition(source: Source) -> JsonObject:
+    """Return the canonical persisted source definition supplied by the source itself."""
+    return source.definition()
+
+
+__all__ = [
+    "CollectionSource",
+    "HttpSource",
+    "RestSource",
+    "RsyncSource",
+    "Source",
+    "source_definition",
+]

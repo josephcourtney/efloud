@@ -3,14 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
+from efloud.sources import CollectionSource, RsyncSource
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
     from efloud.json_types import JsonObject
-    from efloud.models import EngineConfig, NormalizedManifest
-    from efloud.registry import RsyncMode, SourceDefinition
+    from efloud.planning import SyncRequest
     from efloud.repository_models import SourceSnapshot
+    from efloud.sources import Source
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,153 +23,75 @@ class RefreshDecision:
     forced: bool = False
 
     def to_dict(self) -> JsonObject:
-        return {
-            "refresh": self.refresh,
-            "reason": self.reason,
-            "forced": self.forced,
-        }
+        return {"refresh": self.refresh, "reason": self.reason, "forced": self.forced}
 
 
 class SyncPolicy(Protocol):
     def refresh_decision(
         self,
-        source: SourceDefinition,
-        cfg: EngineConfig,
+        source: Source,
+        request: SyncRequest,
         *,
         snapshot: SourceSnapshot | None,
     ) -> RefreshDecision: ...
 
-    def source_scope(self, source: SourceDefinition, cfg: EngineConfig) -> tuple[str, ...]: ...
-
-    def should_refresh(self, source: SourceDefinition, cfg: EngineConfig) -> bool: ...
-
-    def rsync_paths_for_source(
-        self,
-        *,
-        source: SourceDefinition,
-        cache_root: Path,
-        manifest: NormalizedManifest | None,
-    ) -> tuple[str, ...] | None: ...
+    def source_scope(self, source: Source, request: SyncRequest) -> tuple[str, ...]: ...
 
 
 def _ordinary_refresh_decision(snapshot: SourceSnapshot | None) -> RefreshDecision:
     if snapshot is None:
-        return RefreshDecision(
-            refresh=False,
-            reason="no repository snapshot; normal acquisition/cache semantics apply",
-        )
-    return RefreshDecision(
-        refresh=False,
-        reason="repository snapshot exists and no forced refresh was requested",
-    )
+        return RefreshDecision(False, "no repository snapshot; normal acquisition/cache semantics apply")
+    return RefreshDecision(False, "repository snapshot exists and no forced refresh was requested")
 
 
 class DefaultSyncPolicy:
     @staticmethod
     def refresh_decision(
-        source: SourceDefinition,
-        cfg: EngineConfig,
+        source: Source,
+        request: SyncRequest,
         *,
         snapshot: SourceSnapshot | None,
     ) -> RefreshDecision:
-        if cfg.refresh_all:
-            return RefreshDecision(refresh=True, reason="refresh_all requested", forced=True)
-        if source.kind.value in {"HTTP", "REST", "REST_BASE"} and cfg.refresh_http:
-            return RefreshDecision(refresh=True, reason="HTTP-family refresh requested", forced=True)
-        if source.kind.value == "RSYNC" and cfg.refresh_rsync:
-            return RefreshDecision(refresh=True, reason="rsync refresh requested", forced=True)
+        if request.refresh:
+            return RefreshDecision(True, "refresh requested for the sync", forced=True)
+        if source.id in request.refresh_source_ids:
+            return RefreshDecision(True, f"refresh requested for source {source.id!r}", forced=True)
         return _ordinary_refresh_decision(snapshot)
 
-    @classmethod
-    def should_refresh(cls, source: SourceDefinition, cfg: EngineConfig) -> bool:
-        return cls.refresh_decision(source, cfg, snapshot=None).refresh
-
     @staticmethod
-    def source_scope(source: SourceDefinition, cfg: EngineConfig) -> tuple[str, ...]:
-        del cfg
-        return tuple(source.rsync_paths or ()) if source.rsync_mode is not None else ()
-
-    @staticmethod
-    def rsync_paths_for_source(
-        *,
-        source: SourceDefinition,
-        cache_root: Path,
-        manifest: NormalizedManifest | None,
-    ) -> tuple[str, ...] | None:
-        del cache_root, manifest
-        return source.rsync_paths if source.rsync_mode is not None else None
+    def source_scope(source: Source, request: SyncRequest) -> tuple[str, ...]:
+        del request
+        return source.paths if isinstance(source, RsyncSource) else ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RoleDrivenSyncPolicy:
-    """Generic sync policy with per-role refresh and mirror-scope overrides."""
+    """Optional semantic refresh overrides layered on caller sync intent."""
 
-    http_role_refresh: Mapping[str, bool] = field(default_factory=dict)
-    rest_base_refresh: bool | None = None
-    rsync_mode: RsyncMode | None = None
-
-    def _configured_refresh_decision(
-        self,
-        source: SourceDefinition,
-        cfg: EngineConfig,
-    ) -> RefreshDecision | None:
-        if cfg.refresh_all:
-            return RefreshDecision(refresh=True, reason="refresh_all requested", forced=True)
-
-        kind_name = source.kind.value
-        role_override = (
-            bool(self.http_role_refresh[source.role])
-            if source.role is not None and source.role in self.http_role_refresh
-            else None
-        )
-        if kind_name in {"HTTP", "REST"} and role_override is not None:
-            return RefreshDecision(
-                refresh=role_override,
-                reason=f"role override for {source.role!r}",
-                forced=role_override,
-            )
-        if kind_name == "REST_BASE" and self.rest_base_refresh is not None:
-            return RefreshDecision(
-                refresh=bool(self.rest_base_refresh),
-                reason="REST collection policy override",
-                forced=bool(self.rest_base_refresh),
-            )
-        if kind_name in {"HTTP", "REST", "REST_BASE"} and cfg.refresh_http:
-            return RefreshDecision(refresh=True, reason="HTTP-family refresh requested", forced=True)
-        if kind_name == "RSYNC" and cfg.refresh_rsync:
-            return RefreshDecision(refresh=True, reason="rsync refresh requested", forced=True)
-        return None
+    role_refresh: Mapping[str, bool] = field(default_factory=dict)
+    collection_refresh: bool | None = None
 
     def refresh_decision(
         self,
-        source: SourceDefinition,
-        cfg: EngineConfig,
+        source: Source,
+        request: SyncRequest,
         *,
         snapshot: SourceSnapshot | None,
     ) -> RefreshDecision:
-        configured = self._configured_refresh_decision(source, cfg)
-        return configured if configured is not None else _ordinary_refresh_decision(snapshot)
+        explicit = DefaultSyncPolicy.refresh_decision(source, request, snapshot=snapshot)
+        if explicit.forced:
+            return explicit
+        if source.role is not None and source.role in self.role_refresh:
+            refresh = bool(self.role_refresh[source.role])
+            return RefreshDecision(refresh, f"role override for {source.role!r}", forced=refresh)
+        if isinstance(source, CollectionSource) and self.collection_refresh is not None:
+            refresh = bool(self.collection_refresh)
+            return RefreshDecision(refresh, "collection policy override", forced=refresh)
+        return explicit
 
-    def should_refresh(self, source: SourceDefinition, cfg: EngineConfig) -> bool:
-        return self.refresh_decision(source, cfg, snapshot=None).refresh
-
-    def source_scope(self, source: SourceDefinition, cfg: EngineConfig) -> tuple[str, ...]:
-        del cfg
-        if self.rsync_mode is None:
-            return tuple(source.rsync_paths or ()) if source.rsync_mode is not None else ()
-        return tuple(source.rsync_paths or ()) if source.rsync_mode is self.rsync_mode else ()
-
-    def rsync_paths_for_source(
-        self,
-        *,
-        source: SourceDefinition,
-        cache_root: Path,
-        manifest: NormalizedManifest | None,
-    ) -> tuple[str, ...] | None:
-        del cache_root, manifest
-        if self.rsync_mode is None:
-            return source.rsync_paths if source.rsync_mode is not None else None
-        return source.rsync_paths if source.rsync_mode is self.rsync_mode else None
+    @staticmethod
+    def source_scope(source: Source, request: SyncRequest) -> tuple[str, ...]:
+        return DefaultSyncPolicy.source_scope(source, request)
 
 
 __all__ = ["DefaultSyncPolicy", "RefreshDecision", "RoleDrivenSyncPolicy", "SyncPolicy"]

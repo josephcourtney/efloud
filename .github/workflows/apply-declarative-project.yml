@@ -1,0 +1,56 @@
+name: Apply declarative project schema
+
+on:
+  push:
+    branches:
+      - declarative-project-lock
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: declarative-project-lock
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.14
+      - name: Add collection provider evidence
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/efloud/sources.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''@dataclass(frozen=True, slots=True)\nclass CollectionSource:\n    """Declarative HTTP collection whose inventory/fetch behavior is supplied separately."""\n\n    id: str\n    url: str\n    description: str = ""\n    role: str | None = None\n    tags: tuple[str, ...] = ()\n    adapter_id: str = field(default="efloud:collection", init=False)\n\n    def __post_init__(self) -> None:\n        """Validate and normalize the declarative source."""\n        _require_text(self.id, field="Source id")\n        _require_text(self.url, field="Source URL")\n        object.__setattr__(self, "tags", _normalize_tags(self.tags))\n\n    def definition(self) -> JsonObject:\n        payload = _common_definition(self)\n        payload.update({"url": self.url, "protocol": "collection"})\n        return payload\n'''
+          new = '''@dataclass(frozen=True, slots=True)\nclass CollectionSource:\n    """Declarative HTTP collection whose inventory/fetch behavior is supplied separately."""\n\n    id: str\n    url: str\n    description: str = ""\n    role: str | None = None\n    tags: tuple[str, ...] = ()\n    provider_id: str | None = None\n    provider_version: str | None = None\n    provider_parameters: JsonObject = field(default_factory=dict)\n    adapter_id: str = field(default="efloud:collection", init=False)\n\n    def __post_init__(self) -> None:\n        """Validate and normalize the declarative source."""\n        _require_text(self.id, field="Source id")\n        _require_text(self.url, field="Source URL")\n        if (self.provider_id is None) != (self.provider_version is None):\n            msg = "Collection provider id and version must be specified together"\n            raise ValueError(msg)\n        if self.provider_id is not None:\n            _require_text(self.provider_id, field="Collection provider id")\n            _require_text(self.provider_version or "", field="Collection provider version")\n        if self.provider_parameters and self.provider_id is None:\n            msg = "Collection provider parameters require a provider identity"\n            raise ValueError(msg)\n        object.__setattr__(self, "provider_parameters", dict(self.provider_parameters))\n        object.__setattr__(self, "tags", _normalize_tags(self.tags))\n\n    def definition(self) -> JsonObject:\n        payload = _common_definition(self)\n        payload.update({"url": self.url, "protocol": "collection"})\n        if self.provider_id is not None and self.provider_version is not None:\n            payload["provider"] = {\n                "id": self.provider_id,\n                "version": self.provider_version,\n                "parameters": dict(self.provider_parameters),\n            }\n        return payload\n'''
+          if text.count(old) != 1:
+              raise SystemExit('CollectionSource replacement marker mismatch')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+      - name: Add signing dependency
+        run: |
+          uv add --optional signing 'cryptography>=46,<47'
+          uv add --dev 'cryptography>=46,<47'
+      - name: Format changed Python
+        run: uv run ruff format src/efloud/project.py src/efloud/lockfile.py src/efloud/sources.py tests/unit/test_project_declaration.py
+      - name: Run focused declarative tests
+        run: uv run pytest tests/unit/test_project_declaration.py -q
+      - name: Run canonical gate
+        run: uv run just check
+      - name: Commit implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/apply-declarative-project.yml
+          git add src tests docs pyproject.toml uv.lock
+          git commit -m 'Add declarative project and signed lock formats'
+          git push origin HEAD:declarative-project-lock

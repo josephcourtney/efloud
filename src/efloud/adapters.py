@@ -85,6 +85,19 @@ class HttpAcquisition:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalAcquisition:
+    source_id: str
+    status: AcquisitionStatus
+    destination: Path | None
+    observed_at: float
+    source_modified_at: float | None = None
+    size_bytes: int | None = None
+    media_type: str | None = None
+    expected_integrity: tuple[IntegrityExpectation, ...] = ()
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RsyncAcquisition:
     source_id: str
     status: AcquisitionStatus
@@ -119,7 +132,7 @@ class CollectionAcquisition:
     error: str | None = None
 
 
-type SourceAcquisition = HttpAcquisition | RsyncAcquisition | CollectionAcquisition
+type SourceAcquisition = HttpAcquisition | LocalAcquisition | RsyncAcquisition | CollectionAcquisition
 
 
 class SourceAdapter(Protocol):
@@ -161,6 +174,7 @@ __all__ = [
     "CollectionAcquisition",
     "CollectionItemAcquisition",
     "HttpAcquisition",
+    "LocalAcquisition",
     "RsyncAcquisition",
     "SourceAcquisition",
     "SourceAdapter",

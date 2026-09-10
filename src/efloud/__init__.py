@@ -5,7 +5,7 @@ from importlib.metadata import version
 from efloud.api import Dataset, DatasetManifest, DatasetSpec, Engine, Repository, SyncResult
 from efloud.errors import DatasetError, EfloudError, ExecutionError, ExportError, RepositoryError, VerificationError
 from efloud.planning import SyncRequest
-from efloud.sources import CollectionSource, HttpSource, RestSource, RsyncSource, Source
+from efloud.sources import CollectionSource, HttpSource, LocalSource, RestSource, RsyncSource, Source
 
 __version__ = version("efloud")
 
@@ -20,6 +20,7 @@ __all__ = [
     "ExecutionError",
     "ExportError",
     "HttpSource",
+    "LocalSource",
     "Repository",
     "RepositoryError",
     "RestSource",

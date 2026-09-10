@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from efloud.adapters import AdapterRegistry
+    from efloud.collections import CollectionDefinition
     from efloud.json_types import JsonObject
     from efloud.metadata_store import RunRecord, SourceRecord
     from efloud.planning import SyncPlan, SyncRequest
@@ -549,6 +550,7 @@ class Engine:
         *,
         adapters: AdapterRegistry | None = None,
         validators: ValidationRegistry | None = None,
+        collections: Sequence[CollectionDefinition] = (),
     ) -> None:
         writer = repository._require_writer()
         self.repository = repository
@@ -558,6 +560,7 @@ class Engine:
             self.sources,
             adapters=adapters,
             validators=validators,
+            collections=collections,
         )
 
     def plan(self, request: SyncRequest | None = None) -> SyncPlan:

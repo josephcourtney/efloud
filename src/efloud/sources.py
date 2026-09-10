@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from os import PathLike
+
     from efloud.inventory import IntegrityExpectation
     from efloud.json_types import JsonObject
 
@@ -55,6 +58,48 @@ def _common_definition(source: Source) -> JsonObject:
     if source.role is not None:
         payload["role"] = source.role
     return payload
+
+
+@dataclass(frozen=True, slots=True)
+class LocalSource:
+    """One explicit local file imported as an immutable source observation."""
+
+    id: str
+    path: str | PathLike[str]
+    description: str = ""
+    artifact_key: str | None = None
+    media_type: str | None = None
+    role: str | None = None
+    tags: tuple[str, ...] = ()
+    expected_integrity: tuple[IntegrityExpectation, ...] = ()
+    adapter_id: str = field(default="efloud:local", init=False)
+
+    def __post_init__(self) -> None:
+        """Validate and normalize the local acquisition declaration."""
+        _require_text(self.id, field="Source id")
+        normalized_path = Path(self.path).expanduser().resolve(strict=False)
+        _require_text(normalized_path.as_posix(), field="Source path")
+        if self.artifact_key is not None:
+            _require_text(self.artifact_key, field="Artifact key")
+        object.__setattr__(self, "path", normalized_path)
+        object.__setattr__(self, "tags", _normalize_tags(self.tags))
+
+    @property
+    def resolved_artifact_key(self) -> str:
+        return self.artifact_key or f"source:{self.id}"
+
+    def definition(self) -> JsonObject:
+        payload = _common_definition(self)
+        payload.update({
+            "path": Path(self.path).as_posix(),
+            "protocol": "local",
+            "artifact_key": self.resolved_artifact_key,
+        })
+        if self.media_type is not None:
+            payload["media_type"] = self.media_type
+        if self.expected_integrity:
+            payload["expected_integrity"] = [item.to_dict() for item in self.expected_integrity]
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +229,7 @@ def source_definition(source: Source) -> JsonObject:
 __all__ = [
     "CollectionSource",
     "HttpSource",
+    "LocalSource",
     "RestSource",
     "RsyncSource",
     "Source",

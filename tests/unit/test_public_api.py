@@ -30,6 +30,8 @@ def test_package_root_is_small_semantic_surface() -> None:
     assert "Engine" in efloud.__all__
     assert "Repository" in efloud.__all__
     assert "DatasetSpec" in efloud.__all__
+    assert "LocalSource" in efloud.__all__
+    assert "CollectionDefinition" not in efloud.__all__
 
 
 def test_public_source_types_are_protocol_specific() -> None:

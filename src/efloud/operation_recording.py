@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
-from efloud.adapters import CollectionAcquisition, HttpAcquisition, RsyncAcquisition, SourceAcquisition
+from efloud.adapters import (
+    CollectionAcquisition,
+    HttpAcquisition,
+    LocalAcquisition,
+    RsyncAcquisition,
+    SourceAcquisition,
+)
 from efloud.collection_recording import record_collection_acquisition
 from efloud.derivation import DerivedContext, DerivedResult, derivation_key_for, source_inputs
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_models import ObservationId, TreeEntry, canonical_json_bytes
 from efloud.rsync_reconciliation import reconcile_rsync_inventory
-from efloud.sources import HttpSource, RestSource, RsyncSource
+from efloud.sources import HttpSource, LocalSource, RestSource, RsyncSource
 
 if TYPE_CHECKING:
     from efloud.derivation import DerivedTask
@@ -132,6 +139,98 @@ def _record_http(
             "validation": validation_payload,
         },
     )
+
+
+def _local_integrity_expectations(
+    source: LocalSource,
+    acquisition: LocalAcquisition,
+) -> tuple[IntegrityExpectation, ...]:
+    expectations = list(source.expected_integrity)
+    seen = {(item.algorithm.lower(), item.digest.lower()) for item in expectations}
+    for expectation in acquisition.expected_integrity:
+        key = (expectation.algorithm.lower(), expectation.digest.lower())
+        if key not in seen:
+            expectations.append(expectation)
+            seen.add(key)
+    return tuple(expectations)
+
+
+def _record_local(
+    repository: RepositoryWriter,
+    validation: ValidationService,
+    *,
+    source: LocalSource,
+    operation: PlannedOperation,
+    run_id: RunId,
+    operation_id: OperationId,
+    acquisition: LocalAcquisition,
+) -> RecordedOperation:
+    if acquisition.status == "failed" or acquisition.destination is None:
+        return RecordedOperation("failed", details={"error": acquisition.error or "Local acquisition failed"})
+    destination = acquisition.destination
+    source_path = Path(source.path)
+    try:
+        content = repository.store_path_content(destination, media_type=acquisition.media_type)
+        validation_batch = validation.validate_content(
+            content,
+            name=source_path.name,
+            expectations=_local_integrity_expectations(source, acquisition),
+            checked_at=acquisition.observed_at,
+        )
+        validation_payload = validation_batch.to_dict()
+        if not validation_batch.ok:
+            return RecordedOperation(
+                "failed",
+                details={
+                    "error": "required validation failed",
+                    "content_id": str(content.content_id),
+                    "validation": validation_payload,
+                },
+            )
+        observation = repository.observe_content(
+            source.resolved_artifact_key,
+            content.content_id,
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=source.id,
+            observed_at=acquisition.observed_at,
+            source_path=source_path.name,
+            upstream_locator=source_path.as_uri(),
+            upstream_modified_at=acquisition.source_modified_at,
+            metadata={
+                "adapter_id": source.adapter_id,
+                "adapter_execution": True,
+                "local_import": True,
+                "validation": validation_payload,
+            },
+        )
+        evidence: JsonObject = {
+            "adapter": operation.producer.to_dict(),
+            "validation": validation_payload,
+        }
+        if acquisition.size_bytes is not None:
+            evidence["size_bytes"] = acquisition.size_bytes
+        if acquisition.source_modified_at is not None:
+            evidence["source_modified_at"] = acquisition.source_modified_at
+        snapshot = repository.record_source_snapshot(
+            source_id=source.id,
+            run_id=run_id,
+            complete=True,
+            observed_at=acquisition.observed_at,
+            evidence=evidence,
+        )
+        return RecordedOperation(
+            "succeeded",
+            (observation.observation_id,),
+            {
+                "observation_id": str(observation.observation_id),
+                "snapshot_id": str(snapshot.snapshot_id),
+                "validation": validation_payload,
+            },
+        )
+    finally:
+        with contextlib.suppress(OSError):
+            destination.unlink()
 
 
 def _safe_local_path(root: Path, relative_path: str) -> Path | None:
@@ -296,6 +395,16 @@ def record_source_acquisition(
         )
     if isinstance(acquisition, HttpAcquisition) and isinstance(source, HttpSource | RestSource):
         return _record_http(
+            repository,
+            validation,
+            source=source,
+            operation=operation,
+            run_id=run_id,
+            operation_id=operation_id,
+            acquisition=acquisition,
+        )
+    if isinstance(acquisition, LocalAcquisition) and isinstance(source, LocalSource):
+        return _record_local(
             repository,
             validation,
             source=source,

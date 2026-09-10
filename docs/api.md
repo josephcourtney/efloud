@@ -24,7 +24,7 @@ The intended package-root concepts are:
 - `Engine`
 - `Source`
 - built-in typed source constructors/types such as `HttpSource`, `RestSource`,
-  `RsyncSource`, and `CollectionSource`
+  `RsyncSource`, `LocalSource`, and `CollectionSource`
 - `SyncRequest`
 - `SyncResult`
 - `DatasetSpec`
@@ -132,6 +132,13 @@ RsyncSource(
     url="rsync://example.test/module",
     paths=("subset/",),
 )
+
+LocalSource(
+    id="analysis-input",
+    path="inputs/model.json",
+    artifact_key="analysis:model",
+    media_type="application/json",
+)
 ```
 
 There is no public `SourceKind` enum and no single `SourceDefinition` dataclass with
@@ -206,7 +213,12 @@ history; negative magic sentinels such as `limit=-1` are not part of the target 
 
 ## Extension contracts
 
-Advanced extension points remain explicit and narrow.
+Advanced extension points remain explicit and narrow. `efloud.collections` is a
+supported advanced module for `CollectionDefinition`, `CollectionContext`,
+`CollectionItem`, and `CollectionInventory`; ordinary callers do not need those
+types unless defining dynamic collection behavior. Public `Engine(..., collections=...)`
+passes those definitions into the canonical planner/executor without exposing the
+repository writer.
 
 A source adapter has a namespaced/versioned descriptor and receives only the source,
 planned intent/evidence, and read capabilities needed for acquisition. It returns

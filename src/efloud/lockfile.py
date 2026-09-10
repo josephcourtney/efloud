@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING, Protocol, cast
 
 from efloud.dataset_export import DetachedDatasetManifest
 from efloud.errors import EfloudError
@@ -13,8 +15,12 @@ from efloud.json_types import JsonObject, is_json_object
 from efloud.metadata_envelopes import source_definition_revision_id
 from efloud.repository_models import canonical_json_bytes, stable_id
 
+if TYPE_CHECKING:
+    from typing import NoReturn
+
 LOCK_VERSION = 1
 _DEFAULT_FILENAME = "efloud.lock"
+_ED25519_SIGNATURE_BYTES = 64
 
 
 class LockfileError(EfloudError):
@@ -23,6 +29,20 @@ class LockfileError(EfloudError):
 
 class SignatureError(LockfileError):
     """A project-lock signing or signature-verification operation failed."""
+
+
+class _SigningBackend(Protocol):
+    def sign_ed25519(self, private_key: bytes, message: bytes) -> bytes: ...
+
+    def verify_ed25519(self, public_key: bytes, message: bytes, signature: bytes) -> bool: ...
+
+
+def _lock_failure(message: str) -> NoReturn:
+    raise LockfileError(message)
+
+
+def _signature_failure(message: str) -> NoReturn:
+    raise SignatureError(message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,16 +54,18 @@ class LockSignature:
     value: str
 
     def __post_init__(self) -> None:
+        """Validate one serialized signature envelope."""
         if self.algorithm != "ed25519":
-            raise SignatureError(f"Unsupported lock signature algorithm: {self.algorithm!r}")
+            _signature_failure(f"Unsupported lock signature algorithm: {self.algorithm!r}")
         if not self.key_id.strip():
-            raise SignatureError("Lock signature key_id must not be empty")
+            _signature_failure("Lock signature key_id must not be empty")
         try:
             raw = base64.b64decode(self.value, validate=True)
         except ValueError as exc:
-            raise SignatureError("Lock signature is not valid base64") from exc
-        if len(raw) != 64:
-            raise SignatureError("Ed25519 lock signatures must be 64 bytes")
+            msg = "Lock signature is not valid base64"
+            raise SignatureError(msg) from exc
+        if len(raw) != _ED25519_SIGNATURE_BYTES:
+            _signature_failure("Ed25519 lock signatures must be 64 bytes")
 
     def to_dict(self) -> JsonObject:
         return {"algorithm": self.algorithm, "key_id": self.key_id, "value": self.value}
@@ -52,12 +74,12 @@ class LockSignature:
     def from_mapping(cls, value: Mapping[str, object]) -> LockSignature:
         unknown = sorted(set(value) - {"algorithm", "key_id", "value"})
         if unknown:
-            raise SignatureError(f"Unsupported signature keys: {unknown}")
+            _signature_failure(f"Unsupported signature keys: {unknown}")
         algorithm = value.get("algorithm")
         key_id = value.get("key_id")
         signature = value.get("value")
         if not all(isinstance(item, str) for item in (algorithm, key_id, signature)):
-            raise SignatureError("Lock signature fields must be strings")
+            _signature_failure("Lock signature fields must be strings")
         return cls(algorithm, key_id, signature)
 
 
@@ -69,8 +91,9 @@ class SignaturePolicy:
     required_key_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """Normalize the externally supplied signature policy."""
         if any(not value.strip() for value in self.required_key_ids):
-            raise SignatureError("Required signature key ids must not be empty")
+            _signature_failure("Required signature key ids must not be empty")
         object.__setattr__(self, "required_key_ids", tuple(sorted(set(self.required_key_ids))))
 
 
@@ -85,12 +108,13 @@ class ProjectLock:
     signatures: tuple[LockSignature, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        """Normalize ordering and validate all integrity-bearing lock evidence."""
         object.__setattr__(self, "declaration", dict(self.declaration))
         object.__setattr__(self, "sources", tuple(dict(item) for item in self.sources))
         object.__setattr__(self, "datasets", tuple(dict(item) for item in self.datasets))
         ordered = tuple(sorted(self.signatures, key=lambda item: item.key_id))
         if len({item.key_id for item in ordered}) != len(ordered):
-            raise SignatureError("A lock may contain at most one signature per key_id")
+            _signature_failure("A lock may contain at most one signature per key_id")
         object.__setattr__(self, "signatures", ordered)
         self.validate()
 
@@ -114,11 +138,7 @@ class ProjectLock:
 
     @property
     def complete(self) -> bool:
-        for source in self.sources:
-            snapshot = source.get("snapshot")
-            if not isinstance(snapshot, dict) or snapshot.get("complete") is not True or source.get("resolution") is None:
-                return False
-        return True
+        return all(_source_resolution_complete(source) for source in self.sources)
 
     def _unsigned_payload(self) -> JsonObject:
         return {
@@ -130,7 +150,7 @@ class ProjectLock:
         }
 
     def signing_bytes(self) -> bytes:
-        """Canonical bytes authenticated by every signature in this lock."""
+        """Return canonical bytes authenticated by every signature in this lock."""
         return canonical_json_bytes({**self._unsigned_payload(), "lock_id": self.lock_id})
 
     def to_dict(self) -> JsonObject:
@@ -158,110 +178,33 @@ class ProjectLock:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> ProjectLock:
-        try:
-            value = json.loads(data)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise LockfileError("efloud.lock is not valid UTF-8 JSON") from exc
-        if not is_json_object(value):
-            raise LockfileError("efloud.lock must contain a JSON object")
-        allowed = {
-            "version",
-            "lock_id",
-            "declaration_id",
-            "declaration",
-            "sources",
-            "datasets",
-            "signatures",
-        }
-        unknown = sorted(set(value) - allowed)
-        if unknown:
-            raise LockfileError(f"Unsupported lock keys: {unknown}")
-        if value.get("version") != LOCK_VERSION:
-            raise LockfileError(
-                f"Unsupported efloud.lock version: {value.get('version')!r}; expected {LOCK_VERSION}"
-            )
-        declaration = value.get("declaration")
-        raw_sources = value.get("sources")
-        raw_datasets = value.get("datasets")
-        raw_signatures = value.get("signatures", [])
-        if not is_json_object(declaration):
-            raise LockfileError("lock declaration must be a JSON object")
-        if not isinstance(raw_sources, list) or not all(is_json_object(item) for item in raw_sources):
-            raise LockfileError("lock sources must be an array of JSON objects")
-        if not isinstance(raw_datasets, list) or not all(is_json_object(item) for item in raw_datasets):
-            raise LockfileError("lock datasets must be an array of JSON objects")
-        if not isinstance(raw_signatures, list) or not all(isinstance(item, Mapping) for item in raw_signatures):
-            raise LockfileError("lock signatures must be an array of objects")
-        declaration_id = value.get("declaration_id")
-        lock_id = value.get("lock_id")
-        if not isinstance(declaration_id, str) or not isinstance(lock_id, str):
-            raise LockfileError("lock identities must be strings")
-        result = cls(
-            declaration_id,
-            dict(declaration),
-            tuple(dict(item) for item in raw_sources),
-            tuple(dict(item) for item in raw_datasets),
-            tuple(LockSignature.from_mapping(item) for item in raw_signatures),
-        )
+        value = _decode_lock(data)
+        declaration = _object(value.get("declaration"), context="lock declaration")
+        sources = _object_array(value.get("sources"), context="lock sources")
+        datasets = _object_array(value.get("datasets"), context="lock datasets")
+        signatures = _signature_array(value.get("signatures", []))
+        declaration_id = _required_text(value, "declaration_id", context="lock")
+        lock_id = _required_text(value, "lock_id", context="lock")
+        result = cls(declaration_id, declaration, sources, datasets, signatures)
         if result.lock_id != lock_id:
-            raise LockfileError("Project lock identity mismatch")
+            _lock_failure("Project lock identity mismatch")
         return result
 
     def validate(self) -> None:
-        expected_declaration = stable_id("project-declaration-v1", self.declaration)
-        if self.declaration_id != expected_declaration:
-            raise LockfileError("Project declaration identity mismatch")
-        source_ids: set[str] = set()
-        for source in self.sources:
-            source_id = _required_text(source, "source_id", context="lock source")
-            if source_id in source_ids:
-                raise LockfileError(f"Duplicate locked source: {source_id}")
-            source_ids.add(source_id)
-            definition = source.get("definition")
-            if not is_json_object(definition):
-                raise LockfileError(f"Locked source {source_id!r} has no valid definition")
-            definition_id = _required_text(source, "definition_id", context=f"source {source_id}")
-            if definition_id != str(source_definition_revision_id(source_id, definition)):
-                raise LockfileError(f"Source definition identity mismatch: {source_id}")
-            adapter = source.get("adapter")
-            if not is_json_object(adapter):
-                raise LockfileError(f"Locked source {source_id!r} has no adapter identity")
-            _required_text(adapter, "id", context=f"source {source_id} adapter")
-            _required_text(adapter, "version", context=f"source {source_id} adapter")
-            snapshot = source.get("snapshot")
-            if not is_json_object(snapshot) or snapshot.get("source_id") != source_id:
-                raise LockfileError(f"Locked source snapshot disagrees with source {source_id!r}")
-            if type(snapshot.get("complete")) is not bool:
-                raise LockfileError(f"Locked source {source_id!r} snapshot completeness is invalid")
-            resolution = source.get("resolution")
-            if resolution is not None:
-                _validate_manifest(resolution, context=f"source {source_id} resolution")
-        dataset_names: set[str] = set()
-        for dataset in self.datasets:
-            name = _required_text(dataset, "name", context="lock dataset")
-            if name in dataset_names:
-                raise LockfileError(f"Duplicate locked dataset: {name}")
-            dataset_names.add(name)
-            manifest = dataset.get("manifest")
-            parsed = _validate_manifest(manifest, context=f"dataset {name}")
-            for key, expected in (
-                ("specification_id", str(parsed.to_dict().get("specification_id"))),
-                ("dataset_id", parsed.dataset_id),
-                ("content_identity", parsed.content_identity),
-            ):
-                if dataset.get(key) != expected:
-                    raise LockfileError(f"Locked dataset {name!r} {key} mismatch")
+        """Recompute all lock identities and validate embedded exact evidence."""
+        _validate_declaration(self.declaration_id, self.declaration)
+        _validate_sources(self.sources)
+        _validate_datasets(self.datasets)
 
     def sign_ed25519(self, private_key: bytes, *, key_id: str) -> ProjectLock:
         """Return a new lock signed by one externally managed raw Ed25519 private key."""
         if not key_id.strip():
-            raise SignatureError("Signing key_id must not be empty")
-        Ed25519PrivateKey, _Ed25519PublicKey, _InvalidSignature = _cryptography_ed25519()
+            _signature_failure("Signing key_id must not be empty")
         try:
-            signer = Ed25519PrivateKey.from_private_bytes(private_key)
-            raw_signature = signer.sign(self.signing_bytes())
+            raw_signature = _signing_backend().sign_ed25519(private_key, self.signing_bytes())
         except ValueError as exc:
-            raise SignatureError("Ed25519 private keys must be 32 raw bytes") from exc
+            msg = "Ed25519 private keys must be 32 raw bytes"
+            raise SignatureError(msg) from exc
         signature = LockSignature("ed25519", key_id, base64.b64encode(raw_signature).decode("ascii"))
         retained = tuple(item for item in self.signatures if item.key_id != key_id)
         return replace(self, signatures=(*retained, signature))
@@ -270,44 +213,142 @@ class ProjectLock:
         self,
         public_keys: Mapping[str, bytes],
         *,
-        policy: SignaturePolicy = SignaturePolicy(),
+        policy: SignaturePolicy | None = None,
     ) -> bool:
         """Verify authentication policy using externally trusted raw Ed25519 public keys."""
         self.validate()
+        effective_policy = SignaturePolicy() if policy is None else policy
         if not self.signatures:
-            return not policy.require_signed and not policy.required_key_ids
-        _Ed25519PrivateKey, Ed25519PublicKey, InvalidSignature = _cryptography_ed25519()
-        valid: set[str] = set()
-        for signature in self.signatures:
-            raw_key = public_keys.get(signature.key_id)
-            if raw_key is None:
-                continue
-            try:
-                verifier = Ed25519PublicKey.from_public_bytes(raw_key)
-                verifier.verify(base64.b64decode(signature.value), self.signing_bytes())
-            except (InvalidSignature, ValueError):
-                continue
-            valid.add(signature.key_id)
-        if not set(policy.required_key_ids).issubset(valid):
-            return False
-        if policy.require_signed and not valid:
-            return False
-        return True
+            return not effective_policy.require_signed and not effective_policy.required_key_ids
+        backend = _signing_backend()
+        valid = {
+            signature.key_id
+            for signature in self.signatures
+            if _signature_valid(backend, signature, public_keys, self.signing_bytes())
+        }
+        required = set(effective_policy.required_key_ids)
+        return required.issubset(valid) and (not effective_policy.require_signed or bool(valid))
+
+
+def _decode_lock(data: bytes) -> JsonObject:
+    try:
+        value = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        msg = "efloud.lock is not valid UTF-8 JSON"
+        raise LockfileError(msg) from exc
+    result = _object(value, context="efloud.lock")
+    allowed = {
+        "version",
+        "lock_id",
+        "declaration_id",
+        "declaration",
+        "sources",
+        "datasets",
+        "signatures",
+    }
+    unknown = sorted(set(result) - allowed)
+    if unknown:
+        _lock_failure(f"Unsupported lock keys: {unknown}")
+    if result.get("version") != LOCK_VERSION:
+        _lock_failure(
+            f"Unsupported efloud.lock version: {result.get('version')!r}; expected {LOCK_VERSION}"
+        )
+    return result
+
+
+def _object(value: object, *, context: str) -> JsonObject:
+    if not is_json_object(value):
+        _lock_failure(f"{context} must be a JSON object")
+    return dict(value)
+
+
+def _object_array(value: object, *, context: str) -> tuple[JsonObject, ...]:
+    if not isinstance(value, list) or not all(is_json_object(item) for item in value):
+        _lock_failure(f"{context} must be an array of JSON objects")
+    return tuple(dict(item) for item in value)
+
+
+def _signature_array(value: object) -> tuple[LockSignature, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, Mapping) for item in value):
+        _lock_failure("lock signatures must be an array of objects")
+    return tuple(LockSignature.from_mapping(item) for item in value)
+
+
+def _source_resolution_complete(source: JsonObject) -> bool:
+    snapshot = source.get("snapshot")
+    return isinstance(snapshot, dict) and snapshot.get("complete") is True and source.get("resolution") is not None
+
+
+def _validate_declaration(declaration_id: str, declaration: JsonObject) -> None:
+    expected = stable_id("project-declaration-v1", declaration)
+    if declaration_id != expected:
+        _lock_failure("Project declaration identity mismatch")
+
+
+def _validate_sources(sources: Sequence[JsonObject]) -> None:
+    seen: set[str] = set()
+    for source in sources:
+        source_id = _required_text(source, "source_id", context="lock source")
+        if source_id in seen:
+            _lock_failure(f"Duplicate locked source: {source_id}")
+        seen.add(source_id)
+        _validate_source(source_id, source)
+
+
+def _validate_source(source_id: str, source: JsonObject) -> None:
+    definition = _object(source.get("definition"), context=f"source {source_id} definition")
+    definition_id = _required_text(source, "definition_id", context=f"source {source_id}")
+    if definition_id != str(source_definition_revision_id(source_id, definition)):
+        _lock_failure(f"Source definition identity mismatch: {source_id}")
+    adapter = _object(source.get("adapter"), context=f"source {source_id} adapter")
+    _required_text(adapter, "id", context=f"source {source_id} adapter")
+    _required_text(adapter, "version", context=f"source {source_id} adapter")
+    snapshot = _object(source.get("snapshot"), context=f"source {source_id} snapshot")
+    if snapshot.get("source_id") != source_id:
+        _lock_failure(f"Locked source snapshot disagrees with source {source_id!r}")
+    if type(snapshot.get("complete")) is not bool:
+        _lock_failure(f"Locked source {source_id!r} snapshot completeness is invalid")
+    resolution = source.get("resolution")
+    if resolution is not None:
+        _validate_manifest(resolution, context=f"source {source_id} resolution")
+
+
+def _validate_datasets(datasets: Sequence[JsonObject]) -> None:
+    seen: set[str] = set()
+    for dataset in datasets:
+        name = _required_text(dataset, "name", context="lock dataset")
+        if name in seen:
+            _lock_failure(f"Duplicate locked dataset: {name}")
+        seen.add(name)
+        _validate_dataset(name, dataset)
+
+
+def _validate_dataset(name: str, dataset: JsonObject) -> None:
+    parsed = _validate_manifest(dataset.get("manifest"), context=f"dataset {name}")
+    expected = {
+        "specification_id": str(parsed.to_dict().get("specification_id")),
+        "dataset_id": parsed.dataset_id,
+        "content_identity": parsed.content_identity,
+    }
+    for key, expected_value in expected.items():
+        if dataset.get(key) != expected_value:
+            _lock_failure(f"Locked dataset {name!r} {key} mismatch")
 
 
 def _validate_manifest(value: object, *, context: str) -> DetachedDatasetManifest:
     if not is_json_object(value):
-        raise LockfileError(f"{context} must contain a detached dataset manifest")
+        _lock_failure(f"{context} must contain a detached dataset manifest")
     try:
         return DetachedDatasetManifest.from_bytes(canonical_json_bytes(value))
     except (KeyError, TypeError, ValueError) as exc:
-        raise LockfileError(f"Invalid {context}: {exc}") from exc
+        msg = f"Invalid {context}: {exc}"
+        raise LockfileError(msg) from exc
 
 
 def _required_text(value: Mapping[str, object], key: str, *, context: str) -> str:
     item = value.get(key)
     if not isinstance(item, str) or not item.strip():
-        raise LockfileError(f"{context}.{key} must be a non-empty string")
+        _lock_failure(f"{context}.{key} must be a non-empty string")
     return item
 
 
@@ -319,13 +360,25 @@ def _dataset_sort_key(value: JsonObject) -> str:
     return _required_text(value, "name", context="lock dataset")
 
 
-def _cryptography_ed25519() -> tuple[type, type, type[Exception]]:
+def _signing_backend() -> _SigningBackend:
     try:
-        from cryptography.exceptions import InvalidSignature
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
-    except ImportError as exc:
-        raise SignatureError("Ed25519 signing requires the optional 'efloud[signing]' dependency") from exc
-    return Ed25519PrivateKey, Ed25519PublicKey, InvalidSignature
+        module = importlib.import_module("efloud.signing")
+    except ModuleNotFoundError as exc:
+        msg = "Ed25519 signing requires the optional 'efloud[signing]' dependency"
+        raise SignatureError(msg) from exc
+    return cast("_SigningBackend", module)
+
+
+def _signature_valid(
+    backend: _SigningBackend,
+    signature: LockSignature,
+    public_keys: Mapping[str, bytes],
+    message: bytes,
+) -> bool:
+    raw_key = public_keys.get(signature.key_id)
+    if raw_key is None:
+        return False
+    return backend.verify_ed25519(raw_key, message, base64.b64decode(signature.value))
 
 
 __all__ = [

@@ -6,6 +6,8 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Added
 
+- Add `LocalSource` as a built-in single-file acquisition source that stages a stable local copy, validates and records it through ordinary Engine execution, and pins immutable bytes independently of the originating file.
+- Make the existing `efloud.collections` contract a supported advanced extension surface and pass `CollectionDefinition` values through the public `Engine(..., collections=...)` facade.
 - Add a post-compatibility durability audit enumerating the remaining authoritative mutation paths, crash boundaries, coordination requirements, and acceptance evidence.
 
 ### Changed

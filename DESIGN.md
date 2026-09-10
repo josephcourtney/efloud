@@ -158,7 +158,7 @@ The package root should expose approximately 10-15 ordinary concepts:
 Repository
 Engine
 Source
-HttpSource / RestSource / RsyncSource / CollectionSource
+HttpSource / RestSource / RsyncSource / LocalSource / CollectionSource
 SyncRequest
 SyncResult
 DatasetSpec
@@ -226,8 +226,9 @@ with Repository.create("repository") as repo:
     result = await engine.sync()
 ```
 
-`Engine` may accept explicit adapter, validator, policy, and execution composition
-for advanced callers. Repository/storage configuration remains separate from
+`Engine` may accept explicit adapter, validator, policy, collection, and execution
+composition for advanced callers. Collection behavior is a supported focused
+extension contract rather than a package-root type. Repository/storage configuration remains separate from
 per-run synchronization intent.
 
 `EngineConfig` is not part of the target model. A single object must not combine
@@ -255,6 +256,7 @@ combinations are unrepresentable:
 ```python
 HttpSource(id="example", url="https://example.test/data.json")
 RsyncSource(id="tree", url="rsync://example.test/module", paths=("subset/",))
+LocalSource(id="analysis-input", path="inputs/model.json", artifact_key="analysis:model")
 ```
 
 There is no public closed `SourceKind` enum and no monolithic source dataclass full

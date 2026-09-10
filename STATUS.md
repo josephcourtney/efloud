@@ -8,6 +8,8 @@ Run the final repository-wide quality, packaging, architecture, compatibility-re
 
 ## Recently completed
 
+- BVP migration blockers #16/#17 are addressed on the public API: public `Engine` accepts supported advanced `efloud.collections` definitions, and root-level `LocalSource` imports explicit local files through ordinary acquisition/validation/provenance/snapshot recording without exposing writer primitives.
+- BVP-shaped acceptance verifies repository-driven collection enumeration and local import → freeze → original mutation/deletion → unchanged pinned dataset.
 - The clean package-root API is implemented: one explicit `Repository` type with `create`/`open` and read/write modes, `Engine`, typed built-in sources, `SyncRequest`/`SyncResult`, `DatasetSpec`/`Dataset`/`DatasetManifest`, and public error categories.
 - Canonical planner, executor, adapters, policy, validation, datasets, maintenance, derived work, and collection execution operate on typed sources, requests, runtime configuration, exact inputs, declared outputs, and narrow repository capabilities.
 - Backwards compatibility has been removed rather than isolated: `src/efloud/compat/`, deprecated `sync(cfg)`, alpha config/source/manifest/fanout/derived/query/status/state/adoption modules, compatibility projections/materialization helpers, aliases, and TTL index types are deleted.

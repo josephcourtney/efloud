@@ -8,6 +8,7 @@ import pytest
 
 from efloud import CollectionSource, DatasetSpec, Engine, LocalSource, Repository
 from efloud.collections import CollectionContext, CollectionDefinition, CollectionInventory
+from efloud.inventory import IntegrityExpectation
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -106,4 +107,22 @@ def test_missing_local_source_fails_without_advancing_artifact(tmp_path: Path) -
         result = asyncio.run(Engine(repository, (source,)).sync())
         assert result.ok is False
         assert repository.artifacts.latest("analysis:missing") is None
+        assert repository.sources.snapshots(source.id) == ()
+
+
+def test_local_source_integrity_failure_does_not_advance_artifact(tmp_path: Path) -> None:
+    repository_root = tmp_path / "repository"
+    source_path = tmp_path / "input.bin"
+    source_path.write_bytes(b"actual bytes")
+    source = LocalSource(
+        id="integrity-input",
+        path=source_path,
+        artifact_key="analysis:integrity-input",
+        expected_integrity=(IntegrityExpectation.sha256("0" * 64),),
+    )
+
+    with Repository.create(repository_root) as repository:
+        result = asyncio.run(Engine(repository, (source,)).sync())
+        assert result.ok is False
+        assert repository.artifacts.latest("analysis:integrity-input") is None
         assert repository.sources.snapshots(source.id) == ()

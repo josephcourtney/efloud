@@ -1,0 +1,94 @@
+name: Finalize public source capability documentation
+
+on:
+  push:
+    branches:
+      - public-collection-local-source
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: public-collection-local-source
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.14
+      - name: Finalize docs and local-integrity acceptance
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              if text.count(old) != 1:
+                  raise SystemExit(f"replacement marker count in {path}: {text.count(old)}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "DESIGN.md",
+              "HttpSource / RestSource / RsyncSource / CollectionSource\n",
+              "HttpSource / RestSource / RsyncSource / LocalSource / CollectionSource\n",
+          )
+          replace_once(
+              "DESIGN.md",
+              'HttpSource(id="example", url="https://example.test/data.json")\nRsyncSource(id="tree", url="rsync://example.test/module", paths=("subset/",))\n',
+              'HttpSource(id="example", url="https://example.test/data.json")\nRsyncSource(id="tree", url="rsync://example.test/module", paths=("subset/",))\nLocalSource(id="analysis-input", path="inputs/model.json", artifact_key="analysis:model")\n',
+          )
+          replace_once(
+              "DESIGN.md",
+              "`Engine` may accept explicit adapter, validator, policy, and execution composition\nfor advanced callers.",
+              "`Engine` may accept explicit adapter, validator, policy, collection, and execution\ncomposition for advanced callers. Collection behavior is a supported focused\nextension contract rather than a package-root type.",
+          )
+
+          replace_once(
+              "CHANGELOG.md",
+              "### Added\n\n- Add a post-compatibility durability audit",
+              "### Added\n\n- Add `LocalSource` as a built-in single-file acquisition source that stages a stable local copy, validates and records it through ordinary Engine execution, and pins immutable bytes independently of the originating file.\n- Make the existing `efloud.collections` contract a supported advanced extension surface and pass `CollectionDefinition` values through the public `Engine(..., collections=...)` facade.\n- Add a post-compatibility durability audit",
+          )
+
+          replace_once(
+              "STATUS.md",
+              "## Recently completed\n\n",
+              "## Recently completed\n\n- BVP migration blockers #16/#17 are addressed on the public API: public `Engine` accepts supported advanced `efloud.collections` definitions, and root-level `LocalSource` imports explicit local files through ordinary acquisition/validation/provenance/snapshot recording without exposing writer primitives.\n- BVP-shaped acceptance verifies repository-driven collection enumeration and local import → freeze → original mutation/deletion → unchanged pinned dataset.\n",
+          )
+
+          test_path = Path("tests/unit/test_public_source_extensions.py")
+          text = test_path.read_text(encoding="utf-8")
+          text = text.replace(
+              "import asyncio\nfrom dataclasses import dataclass\n",
+              "import asyncio\nfrom dataclasses import dataclass\n",
+              1,
+          )
+          text = text.replace(
+              "from efloud.collections import CollectionContext, CollectionDefinition, CollectionInventory\n",
+              "from efloud.collections import CollectionContext, CollectionDefinition, CollectionInventory\nfrom efloud.inventory import IntegrityExpectation\n",
+              1,
+          )
+          text += '''\n\ndef test_local_source_integrity_failure_does_not_advance_artifact(tmp_path: Path) -> None:\n    repository_root = tmp_path / "repository"\n    source_path = tmp_path / "input.bin"\n    source_path.write_bytes(b"actual bytes")\n    source = LocalSource(\n        id="integrity-input",\n        path=source_path,\n        artifact_key="analysis:integrity-input",\n        expected_integrity=(IntegrityExpectation.sha256("0" * 64),),\n    )\n\n    with Repository.create(repository_root) as repository:\n        result = asyncio.run(Engine(repository, (source,)).sync())\n        assert result.ok is False\n        assert repository.artifacts.latest("analysis:integrity-input") is None\n        assert repository.sources.snapshots(source.id) == ()\n'''
+          test_path.write_text(text, encoding="utf-8")
+          PY
+      - name: Install locked development environment
+        run: uv sync
+      - name: Format acceptance test
+        run: uv run ruff format tests/unit/test_public_source_extensions.py
+      - name: Run canonical gate
+        run: uv run just check
+      - name: Commit final documentation and acceptance
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/finalize-public-source-docs.yml
+          git add DESIGN.md STATUS.md CHANGELOG.md tests/unit/test_public_source_extensions.py
+          git commit -m 'Document public collection and local source contracts'
+          git push origin HEAD:public-collection-local-source

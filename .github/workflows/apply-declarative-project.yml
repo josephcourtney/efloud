@@ -97,8 +97,8 @@ jobs:
           test_path = Path('tests/unit/test_project_declaration.py')
           tests = test_path.read_text(encoding='utf-8')
           tests = tests.replace(
-              '        del context\n        return CollectionInventory',
-              '        del context\n        await asyncio.sleep(0)\n        return CollectionInventory',
+              '        async def enumerate_empty(*, context: object) -> CollectionInventory:\n            del context\n            return CollectionInventory',
+              '        async def enumerate_empty(*, context: object) -> CollectionInventory:\n            del context\n            await asyncio.sleep(0)\n            return CollectionInventory',
           )
           tests = tests.replace(
               'assert selections[2]["timestamp"] == 1789041600.0',

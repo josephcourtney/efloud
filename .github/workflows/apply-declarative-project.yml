@@ -23,7 +23,7 @@ jobs:
           enable-cache: true
       - name: Install Python
         run: uv python install 3.14
-      - name: Apply semantic source and declaration fixes
+      - name: Apply source and project schema integration
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -38,13 +38,33 @@ jobs:
 
           project_path = Path('src/efloud/project.py')
           text = project_path.read_text(encoding='utf-8')
+          text = text.replace(
+              'from efloud.json_types import JsonObject, JsonValue, is_json_object, is_json_value\n',
+              'from efloud.json_types import JsonObject, JsonValue, is_json_object\nfrom efloud.lockfile import ProjectLock\n',
+          )
+          text = text.replace(
+              'DECLARATION_VERSION = 1\n_DEFAULT_FILENAME = "efloud.toml"\n',
+              'DECLARATION_VERSION = 1\n_DEFAULT_FILENAME = "efloud.toml"\n_VALIDATION_PAIR_LENGTH = 2\n',
+          )
+          for marker, doc in (
+              ('class ProviderReference:', 'Validate and normalize provider parameters.'),
+              ('class DeclaredSource:', 'Validate generic declarative source fields.'),
+              ('class SourceDeclaration:', 'Validate serialized source intent.'),
+              ('class DatasetDeclaration:', 'Validate the named dataset declaration.'),
+              ('class Project:', 'Validate uniqueness and normalize project ordering.'),
+          ):
+              start = text.index(marker)
+              method = text.index('    def __post_init__(self) -> None:\n', start)
+              insertion = method + len('    def __post_init__(self) -> None:\n')
+              if not text[insertion:].startswith('        """'):
+                  text = text[:insertion] + f'        """{doc}"""\n' + text[insertion:]
           old = '''    @property\n    def base_dir(self) -> Path:\n        return self.path.parent if self.path is not None else Path.cwd().resolve()\n'''
           new = '''    @property\n    def base_dir(self) -> Path | None:\n        return self.path.parent if self.path is not None else None\n'''
           if text.count(old) != 1:
               raise SystemExit('base_dir replacement marker mismatch')
           text = text.replace(old, new)
-          old = '''    def materialize(self, *, base_dir: Path) -> Source:\n'''
-          new = '''    def materialize(self, *, base_dir: Path | None) -> Source:\n'''
+          old = '    def materialize(self, *, base_dir: Path) -> Source:\n'
+          new = '    def materialize(self, *, base_dir: Path | None) -> Source:\n'
           if text.count(old) != 1:
               raise SystemExit('materialize base_dir marker mismatch')
           text = text.replace(old, new)
@@ -58,11 +78,43 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit('provider base_dir marker mismatch')
           text = text.replace(old, new)
+          text = text.replace(
+              '    ) -> ProjectLock:\n        from efloud.lockfile import ProjectLock\n\n        sources, collections',
+              '    ) -> ProjectLock:\n        sources, collections',
+          )
+          text = text.replace('len(item) != 2', 'len(item) != _VALIDATION_PAIR_LENGTH')
+          old = '''def _project_toml(project: Project) -> str:\n    lines = [f"schema_version = {DECLARATION_VERSION}", "", "[sync]"]\n    sync = project.sync_request.to_dict()\n    for key in ("source_ids", "include_derived", "dry_run", "max_concurrency", "refresh", "refresh_source_ids"):\n        value = sync[key]\n        if value is not None:\n            lines.append(f"{key} = {_toml_value(value)}")\n    for source in project.sources:\n        lines.extend(("", "[[sources]]", f"id = {_toml_value(source.id)}", f"adapter = {_toml_value(source.adapter)}"))\n        if source.adapter_version is not None:\n            lines.append(f"adapter_version = {_toml_value(source.adapter_version)}")\n        if source.description:\n            lines.append(f"description = {_toml_value(source.description)}")\n        if source.role is not None:\n            lines.append(f"role = {_toml_value(source.role)}")\n        if source.tags:\n            lines.append(f"tags = {_toml_value(list(source.tags))}")\n        lines.append("[sources.config]")\n        for key in sorted(source.config):\n            lines.append(f"{_toml_key(key)} = {_toml_value(source.config[key])}")\n        if source.provider is not None:\n            lines.extend((\n                "[sources.provider]",\n                f"id = {_toml_value(source.provider.provider_id)}",\n                f"version = {_toml_value(source.provider.version)}",\n                f"parameters = {_toml_value(source.provider.parameters)}",\n            ))\n    for dataset in project.datasets:\n        definition = dataset.to_dict()\n        lines.extend(("", "[[datasets]]", f"name = {_toml_value(dataset.name)}"))\n        metadata = definition.get("metadata", {})\n        if metadata:\n            lines.append(f"metadata = {_toml_value(metadata)}")\n        constraints = definition.get("constraints")\n        if constraints is not None:\n            lines.append(f"constraints = {_toml_value(constraints)}")\n        selections = definition.get("selections")\n        if not isinstance(selections, list):\n            raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid selections")\n        for selection in selections:\n            if not isinstance(selection, dict):\n                raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid selection")\n            lines.append("[[datasets.selections]]")\n            for key in sorted(selection):\n                value = selection[key]\n                if value is not None:\n                    lines.append(f"{_toml_key(key)} = {_toml_value(value)}")\n    return "\\n".join(lines) + "\\n"\n'''
+          new = '''def _project_toml(project: Project) -> str:\n    lines = [f"schema_version = {DECLARATION_VERSION}"]\n    _append_sync_toml(lines, project.sync_request)\n    for source in project.sources:\n        _append_source_toml(lines, source)\n    for dataset in project.datasets:\n        _append_dataset_toml(lines, dataset)\n    return "\\n".join(lines) + "\\n"\n\n\ndef _append_sync_toml(lines: list[str], request: SyncRequest) -> None:\n    lines.extend(("", "[sync]"))\n    sync = request.to_dict()\n    keys = ("source_ids", "include_derived", "dry_run", "max_concurrency", "refresh", "refresh_source_ids")\n    lines.extend(f"{key} = {_toml_value(sync[key])}" for key in keys if sync[key] is not None)\n\n\ndef _append_source_toml(lines: list[str], source: SourceDeclaration) -> None:\n    lines.extend(("", "[[sources]]", f"id = {_toml_value(source.id)}", f"adapter = {_toml_value(source.adapter)}"))\n    optional = (\n        ("adapter_version", source.adapter_version),\n        ("description", source.description or None),\n        ("role", source.role),\n        ("tags", list(source.tags) if source.tags else None),\n    )\n    lines.extend(f"{key} = {_toml_value(value)}" for key, value in optional if value is not None)\n    lines.append("[sources.config]")\n    lines.extend(f"{_toml_key(key)} = {_toml_value(source.config[key])}" for key in sorted(source.config))\n    if source.provider is not None:\n        lines.extend((\n            "[sources.provider]",\n            f"id = {_toml_value(source.provider.provider_id)}",\n            f"version = {_toml_value(source.provider.version)}",\n            f"parameters = {_toml_value(source.provider.parameters)}",\n        ))\n\n\ndef _append_dataset_toml(lines: list[str], dataset: DatasetDeclaration) -> None:\n    definition = dataset.to_dict()\n    lines.extend(("", "[[datasets]]", f"name = {_toml_value(dataset.name)}"))\n    metadata = definition.get("metadata", {})\n    constraints = definition.get("constraints")\n    if metadata:\n        lines.append(f"metadata = {_toml_value(metadata)}")\n    if constraints is not None:\n        lines.append(f"constraints = {_toml_value(constraints)}")\n    selections = definition.get("selections")\n    if not isinstance(selections, list):\n        msg = f"Dataset {dataset.name!r} has invalid selections"\n        raise ProjectSchemaError(msg)\n    for selection in selections:\n        _append_selection_toml(lines, dataset.name, selection)\n\n\ndef _append_selection_toml(lines: list[str], dataset_name: str, selection: object) -> None:\n    if not isinstance(selection, dict):\n        msg = f"Dataset {dataset_name!r} has invalid selection"\n        raise ProjectSchemaError(msg)\n    lines.append("[[datasets.selections]]")\n    lines.extend(\n        f"{_toml_key(key)} = {_toml_value(selection[key])}"\n        for key in sorted(selection)\n        if selection[key] is not None\n    )\n'''
+          if text.count(old) != 1:
+              raise SystemExit('project TOML emitter marker mismatch')
+          text = text.replace(old, new)
           old = '''    if isinstance(value, dict):\n        return "{ " + ", ".join(\n            f"{_toml_key(key)} = {_toml_value(item)}" for key, item in sorted(value.items())\n        ) + " }"\n'''
           new = '''    if isinstance(value, dict):\n        items = ((key, item) for key, item in sorted(value.items()) if item is not None)\n        return "{ " + ", ".join(f"{_toml_key(key)} = {_toml_value(item)}" for key, item in items) + " }"\n'''
           if text.count(old) != 1:
               raise SystemExit('TOML mapping replacement marker mismatch')
           project_path.write_text(text.replace(old, new), encoding='utf-8')
+
+          test_path = Path('tests/unit/test_project_declaration.py')
+          tests = test_path.read_text(encoding='utf-8')
+          tests = tests.replace(
+              '        del context\n        return CollectionInventory',
+              '        del context\n        await asyncio.sleep(0)\n        return CollectionInventory',
+          )
+          tests = tests.replace(
+              'assert selections[2]["timestamp"] == 1789041600.0',
+              'assert selections[2]["timestamp"] == pytest.approx(1789041600.0)',
+          )
+          tests = tests.replace(
+              'assert selections[3]["before"] == 1789041600.0',
+              'assert selections[3]["before"] == pytest.approx(1789041600.0)',
+          )
+          old = '''    with Repository.create(tmp_path / "repository") as repository:\n        with pytest.raises(ProjectError, match="current definition|no resolved snapshot"):\n            project.lock(repository)\n'''
+          new = '''    with (\n        Repository.create(tmp_path / "repository") as repository,\n        pytest.raises(ProjectError, match=r"current definition|no resolved snapshot"),\n    ):\n        project.lock(repository)\n'''
+          if tests.count(old) != 1:
+              raise SystemExit('final test context marker mismatch')
+          tests = tests.replace(old, new)
+          tests += '''\n\ndef test_relative_local_source_without_declaration_base_fails_closed() -> None:\n    project = Project.from_toml(\n        """\n        schema_version = 1\n        [[sources]]\n        id = "local"\n        adapter = "efloud:local"\n        [sources.config]\n        path = "relative.dat"\n        """\n    )\n    with pytest.raises(ProjectSchemaError, match="declaration file or explicit base_dir"):\n        project.materialize()\n'''
+          test_path.write_text(tests, encoding='utf-8')
           PY
       - name: Add signing dependency
         run: |
@@ -70,9 +122,9 @@ jobs:
           uv add --dev 'cryptography>=46,<47'
       - name: Format and autofix changed Python
         run: |
-          uv run ruff format src/efloud/project.py src/efloud/lockfile.py src/efloud/sources.py tests/unit/test_project_declaration.py
-          uv run ruff check --fix src/efloud/project.py src/efloud/lockfile.py src/efloud/sources.py tests/unit/test_project_declaration.py || true
-          uv run ruff format src/efloud/project.py src/efloud/lockfile.py src/efloud/sources.py tests/unit/test_project_declaration.py
+          uv run ruff format src/efloud/project.py src/efloud/lockfile.py src/efloud/signing.py src/efloud/sources.py tests/unit/test_project_declaration.py
+          uv run ruff check --fix src/efloud/project.py src/efloud/lockfile.py src/efloud/signing.py src/efloud/sources.py tests/unit/test_project_declaration.py || true
+          uv run ruff format src/efloud/project.py src/efloud/lockfile.py src/efloud/signing.py src/efloud/sources.py tests/unit/test_project_declaration.py
       - name: Run focused declarative tests
         run: uv run pytest tests/unit/test_project_declaration.py -q
       - name: Run canonical gate

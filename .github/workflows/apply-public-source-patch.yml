@@ -1,0 +1,568 @@
+name: Apply public source capability patch
+
+on:
+  push:
+    branches:
+      - public-collection-local-source
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: public-collection-local-source
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.14
+      - name: Apply implementation and acceptance tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"replacement marker missing in {path}: {old[:80]!r}")
+              if text.count(old) != 1:
+                  raise SystemExit(f"replacement marker not unique in {path}: {old[:80]!r}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          # Public declarative LocalSource.
+          replace_once(
+              "src/efloud/sources.py",
+              "from dataclasses import dataclass, field\nfrom typing import TYPE_CHECKING, Protocol, runtime_checkable\n",
+              "from dataclasses import dataclass, field\nfrom os import PathLike\nfrom pathlib import Path\nfrom typing import TYPE_CHECKING, Protocol, runtime_checkable\n",
+          )
+          local_source = dedent('''
+          @dataclass(frozen=True, slots=True)
+          class LocalSource:
+              """One explicit local file imported as an immutable source observation."""
+
+              id: str
+              path: str | PathLike[str]
+              description: str = ""
+              artifact_key: str | None = None
+              media_type: str | None = None
+              role: str | None = None
+              tags: tuple[str, ...] = ()
+              expected_integrity: tuple[IntegrityExpectation, ...] = ()
+              adapter_id: str = field(default="efloud:local", init=False)
+
+              def __post_init__(self) -> None:
+                  """Validate and normalize the local acquisition declaration."""
+                  _require_text(self.id, field="Source id")
+                  normalized_path = Path(self.path).expanduser().resolve(strict=False)
+                  _require_text(normalized_path.as_posix(), field="Source path")
+                  if self.artifact_key is not None:
+                      _require_text(self.artifact_key, field="Artifact key")
+                  object.__setattr__(self, "path", normalized_path)
+                  object.__setattr__(self, "tags", _normalize_tags(self.tags))
+
+              @property
+              def resolved_artifact_key(self) -> str:
+                  return self.artifact_key or f"source:{self.id}"
+
+              def definition(self) -> JsonObject:
+                  payload = _common_definition(self)
+                  payload.update({
+                      "path": Path(self.path).as_posix(),
+                      "protocol": "local",
+                      "artifact_key": self.resolved_artifact_key,
+                  })
+                  if self.media_type is not None:
+                      payload["media_type"] = self.media_type
+                  if self.expected_integrity:
+                      payload["expected_integrity"] = [item.to_dict() for item in self.expected_integrity]
+                  return payload
+
+
+          ''')
+          replace_once(
+              "src/efloud/sources.py",
+              "@dataclass(frozen=True, slots=True)\nclass HttpSource:\n",
+              local_source + "@dataclass(frozen=True, slots=True)\nclass HttpSource:\n",
+          )
+          replace_once(
+              "src/efloud/sources.py",
+              '    "HttpSource",\n',
+              '    "HttpSource",\n    "LocalSource",\n',
+          )
+
+          # Typed local adapter result.
+          replace_once(
+              "src/efloud/adapters.py",
+              "@dataclass(frozen=True, slots=True)\nclass RsyncAcquisition:\n",
+              dedent('''
+              @dataclass(frozen=True, slots=True)
+              class LocalAcquisition:
+                  source_id: str
+                  status: AcquisitionStatus
+                  destination: Path | None
+                  observed_at: float
+                  source_modified_at: float | None = None
+                  size_bytes: int | None = None
+                  media_type: str | None = None
+                  expected_integrity: tuple[IntegrityExpectation, ...] = ()
+                  error: str | None = None
+
+
+              @dataclass(frozen=True, slots=True)
+              class RsyncAcquisition:
+              '''),
+          )
+          replace_once(
+              "src/efloud/adapters.py",
+              "type SourceAcquisition = HttpAcquisition | RsyncAcquisition | CollectionAcquisition\n",
+              "type SourceAcquisition = HttpAcquisition | LocalAcquisition | RsyncAcquisition | CollectionAcquisition\n",
+          )
+          replace_once(
+              "src/efloud/adapters.py",
+              '    "HttpAcquisition",\n',
+              '    "HttpAcquisition",\n    "LocalAcquisition",\n',
+          )
+
+          Path("src/efloud/local_adapter.py").write_text(dedent('''
+          from __future__ import annotations
+
+          import asyncio
+          import contextlib
+          import hashlib
+          import shutil
+          import time
+          from dataclasses import dataclass
+          from pathlib import Path
+
+          from efloud.adapters import (
+              AdapterCapabilities,
+              AdapterDescriptor,
+              AdapterExecutionContext,
+              LocalAcquisition,
+              SourceAdapter,
+          )
+          from efloud.sources import LocalSource
+
+          _LOCAL_DESCRIPTOR = AdapterDescriptor(
+              adapter_id="efloud:local",
+              version="1",
+              capabilities=AdapterCapabilities(inventory=False, fetch=True),
+          )
+
+
+          def _source(context: AdapterExecutionContext) -> LocalSource:
+              source = context.source
+              if (
+                  not isinstance(source, LocalSource)
+                  or source.adapter_id != _LOCAL_DESCRIPTOR.adapter_id
+                  or context.operation.producer != _LOCAL_DESCRIPTOR.producer
+              ):
+                  msg = f"Local adapter cannot acquire {type(source).__name__}."
+                  raise TypeError(msg)
+              return source
+
+
+          def _staging_path(context: AdapterExecutionContext, source: LocalSource) -> Path:
+              identity = hashlib.sha256(source.id.encode("utf-8")).hexdigest()
+              suffix = Path(source.path).suffix
+              return context.runtime.staging_root / "local" / f"{identity}{suffix}"
+
+
+          def _copy_stable_source(source_path: Path, destination: Path) -> tuple[float, int]:
+              resolved = source_path.resolve(strict=True)
+              before = resolved.stat()
+              if not resolved.is_file():
+                  msg = f"Local source is not a regular file: {resolved}"
+                  raise ValueError(msg)
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              temporary = destination.with_name(f".{destination.name}.tmp")
+              try:
+                  shutil.copyfile(resolved, temporary)
+                  after = resolved.stat()
+                  if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                      msg = f"Local source changed while being imported: {resolved}"
+                      raise RuntimeError(msg)
+                  temporary.replace(destination)
+              finally:
+                  with contextlib.suppress(FileNotFoundError):
+                      temporary.unlink()
+              return before.st_mtime, before.st_size
+
+
+          @dataclass(frozen=True, slots=True)
+          class LocalSourceAdapter:
+              descriptor: AdapterDescriptor = _LOCAL_DESCRIPTOR
+
+              async def acquire(self, context: AdapterExecutionContext) -> LocalAcquisition:
+                  source = _source(context)
+                  source_path = Path(source.path)
+                  destination = _staging_path(context, source)
+                  try:
+                      modified_at, size_bytes = await asyncio.to_thread(
+                          _copy_stable_source,
+                          source_path,
+                          destination,
+                      )
+                  except (OSError, RuntimeError, ValueError) as exc:
+                      return LocalAcquisition(
+                          source_id=source.id,
+                          status="failed",
+                          destination=None,
+                          observed_at=time.time(),
+                          media_type=source.media_type,
+                          expected_integrity=source.expected_integrity,
+                          error=f"{type(exc).__name__}: {exc}",
+                      )
+                  return LocalAcquisition(
+                      source_id=source.id,
+                      status="succeeded",
+                      destination=destination,
+                      observed_at=time.time(),
+                      source_modified_at=modified_at,
+                      size_bytes=size_bytes,
+                      media_type=source.media_type,
+                      expected_integrity=source.expected_integrity,
+                  )
+
+
+          def local_source_adapter() -> SourceAdapter:
+              return LocalSourceAdapter()
+
+
+          __all__ = ["LocalSourceAdapter", "local_source_adapter"]
+          '''), encoding="utf-8")
+
+          # Register local as a built-in adapter.
+          replace_once(
+              "src/efloud/builtin_adapters.py",
+              "from efloud.http_adapter import http_source_adapters\n",
+              "from efloud.http_adapter import http_source_adapters\nfrom efloud.local_adapter import local_source_adapter\n",
+          )
+          replace_once(
+              "src/efloud/builtin_adapters.py",
+              "        *http_source_adapters(),\n        rsync_source_adapter(),\n",
+              "        *http_source_adapters(),\n        local_source_adapter(),\n        rsync_source_adapter(),\n",
+          )
+
+          # Record LocalAcquisition through the canonical internal writer.
+          replace_once(
+              "src/efloud/operation_recording.py",
+              "from __future__ import annotations\n\nimport time\n",
+              "from __future__ import annotations\n\nimport contextlib\nimport time\n",
+          )
+          replace_once(
+              "src/efloud/operation_recording.py",
+              "from efloud.adapters import CollectionAcquisition, HttpAcquisition, RsyncAcquisition, SourceAcquisition\n",
+              "from efloud.adapters import CollectionAcquisition, HttpAcquisition, LocalAcquisition, RsyncAcquisition, SourceAcquisition\n",
+          )
+          replace_once(
+              "src/efloud/operation_recording.py",
+              "from efloud.sources import HttpSource, RestSource, RsyncSource\n",
+              "from efloud.sources import HttpSource, LocalSource, RestSource, RsyncSource\n",
+          )
+          local_recording = dedent('''
+          def _local_integrity_expectations(
+              source: LocalSource,
+              acquisition: LocalAcquisition,
+          ) -> tuple[IntegrityExpectation, ...]:
+              expectations = list(source.expected_integrity)
+              seen = {(item.algorithm.lower(), item.digest.lower()) for item in expectations}
+              for expectation in acquisition.expected_integrity:
+                  key = (expectation.algorithm.lower(), expectation.digest.lower())
+                  if key not in seen:
+                      expectations.append(expectation)
+                      seen.add(key)
+              return tuple(expectations)
+
+
+          def _record_local(
+              repository: RepositoryWriter,
+              validation: ValidationService,
+              *,
+              source: LocalSource,
+              operation: PlannedOperation,
+              run_id: RunId,
+              operation_id: OperationId,
+              acquisition: LocalAcquisition,
+          ) -> RecordedOperation:
+              if acquisition.status == "failed" or acquisition.destination is None:
+                  return RecordedOperation("failed", details={"error": acquisition.error or "Local acquisition failed"})
+              destination = acquisition.destination
+              source_path = Path(source.path)
+              try:
+                  content = repository.store_path_content(destination, media_type=acquisition.media_type)
+                  validation_batch = validation.validate_content(
+                      content,
+                      name=source_path.name,
+                      expectations=_local_integrity_expectations(source, acquisition),
+                      checked_at=acquisition.observed_at,
+                  )
+                  validation_payload = validation_batch.to_dict()
+                  if not validation_batch.ok:
+                      return RecordedOperation(
+                          "failed",
+                          details={
+                              "error": "required validation failed",
+                              "content_id": str(content.content_id),
+                              "validation": validation_payload,
+                          },
+                      )
+                  observation = repository.observe_content(
+                      source.resolved_artifact_key,
+                      content.content_id,
+                      run_id=run_id,
+                      operation_id=operation_id,
+                      source_id=source.id,
+                      observed_at=acquisition.observed_at,
+                      source_path=source_path.name,
+                      upstream_locator=source_path.as_uri(),
+                      upstream_modified_at=acquisition.source_modified_at,
+                      metadata={
+                          "adapter_id": source.adapter_id,
+                          "adapter_execution": True,
+                          "local_import": True,
+                          "validation": validation_payload,
+                      },
+                  )
+                  evidence: JsonObject = {
+                      "adapter": operation.producer.to_dict(),
+                      "validation": validation_payload,
+                  }
+                  if acquisition.size_bytes is not None:
+                      evidence["size_bytes"] = acquisition.size_bytes
+                  if acquisition.source_modified_at is not None:
+                      evidence["source_modified_at"] = acquisition.source_modified_at
+                  snapshot = repository.record_source_snapshot(
+                      source_id=source.id,
+                      run_id=run_id,
+                      complete=True,
+                      observed_at=acquisition.observed_at,
+                      evidence=evidence,
+                  )
+                  return RecordedOperation(
+                      "succeeded",
+                      (observation.observation_id,),
+                      {
+                          "observation_id": str(observation.observation_id),
+                          "snapshot_id": str(snapshot.snapshot_id),
+                          "validation": validation_payload,
+                      },
+                  )
+              finally:
+                  with contextlib.suppress(OSError):
+                      destination.unlink()
+
+
+          ''')
+          replace_once(
+              "src/efloud/operation_recording.py",
+              "def _safe_local_path(root: Path, relative_path: str) -> Path | None:\n",
+              local_recording + "def _safe_local_path(root: Path, relative_path: str) -> Path | None:\n",
+          )
+          replace_once(
+              "src/efloud/operation_recording.py",
+              "    if isinstance(acquisition, RsyncAcquisition) and isinstance(source, RsyncSource):\n",
+              "    if isinstance(acquisition, LocalAcquisition) and isinstance(source, LocalSource):\n        return _record_local(\n            repository,\n            validation,\n            source=source,\n            operation=operation,\n            run_id=run_id,\n            operation_id=operation_id,\n            acquisition=acquisition,\n        )\n    if isinstance(acquisition, RsyncAcquisition) and isinstance(source, RsyncSource):\n",
+          )
+
+          # Make the existing collection extension contract usable through the public Engine facade.
+          replace_once(
+              "src/efloud/api.py",
+              "    from efloud.adapters import AdapterRegistry\n",
+              "    from efloud.adapters import AdapterRegistry\n    from efloud.collections import CollectionDefinition\n",
+          )
+          replace_once(
+              "src/efloud/api.py",
+              "        adapters: AdapterRegistry | None = None,\n        validators: ValidationRegistry | None = None,\n",
+              "        adapters: AdapterRegistry | None = None,\n        validators: ValidationRegistry | None = None,\n        collections: Sequence[CollectionDefinition] = (),\n",
+          )
+          replace_once(
+              "src/efloud/api.py",
+              "            adapters=adapters,\n            validators=validators,\n",
+              "            adapters=adapters,\n            validators=validators,\n            collections=collections,\n",
+          )
+
+          # Package-root convenience for the ordinary built-in local source.
+          replace_once(
+              "src/efloud/__init__.py",
+              "from efloud.sources import CollectionSource, HttpSource, RestSource, RsyncSource, Source\n",
+              "from efloud.sources import CollectionSource, HttpSource, LocalSource, RestSource, RsyncSource, Source\n",
+          )
+          replace_once(
+              "src/efloud/__init__.py",
+              '    "HttpSource",\n',
+              '    "HttpSource",\n    "LocalSource",\n',
+          )
+
+          # Document the ordinary local source and supported advanced collection seam.
+          replace_once(
+              "docs/api.md",
+              "- built-in typed source constructors/types such as `HttpSource`, `RestSource`,\n  `RsyncSource`, and `CollectionSource`\n",
+              "- built-in typed source constructors/types such as `HttpSource`, `RestSource`,\n  `RsyncSource`, `LocalSource`, and `CollectionSource`\n",
+          )
+          replace_once(
+              "docs/api.md",
+              "Advanced extension points remain explicit and narrow.\n\nA source adapter has a namespaced/versioned descriptor",
+              "Advanced extension points remain explicit and narrow. `efloud.collections` is a\nsupported advanced module for `CollectionDefinition`, `CollectionContext`,\n`CollectionItem`, and `CollectionInventory`; ordinary callers do not need those\ntypes unless defining dynamic collection behavior. Public `Engine(..., collections=...)`\npasses those definitions into the canonical planner/executor without exposing the\nrepository writer.\n\nA source adapter has a namespaced/versioned descriptor",
+          )
+          replace_once(
+              "docs/api.md",
+              "RsyncSource(\n    id=\"reference-tree\",\n    url=\"rsync://example.test/module\",\n    paths=(\"subset/\",),\n)\n```\n",
+              "RsyncSource(\n    id=\"reference-tree\",\n    url=\"rsync://example.test/module\",\n    paths=(\"subset/\",),\n)\n\nLocalSource(\n    id=\"analysis-input\",\n    path=\"inputs/model.json\",\n    artifact_key=\"analysis:model\",\n    media_type=\"application/json\",\n)\n```\n",
+          )
+
+          # BVP-driven public acceptance tests for both gaps.
+          Path("tests/unit/test_public_source_extensions.py").write_text(dedent('''
+          from __future__ import annotations
+
+          import asyncio
+          from dataclasses import dataclass
+          from typing import TYPE_CHECKING
+
+          import pytest
+
+          from efloud import CollectionSource, DatasetSpec, Engine, LocalSource, Repository
+          from efloud.collections import CollectionContext, CollectionDefinition, CollectionInventory
+
+          if TYPE_CHECKING:
+              from pathlib import Path
+
+          pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
+
+
+          @dataclass
+          class HoldingsEnumerator:
+              observed: bytes | None = None
+
+              async def __call__(self, *, context: CollectionContext) -> CollectionInventory:
+                  assert len(context.inputs) == 1
+                  with context.repository.open_content(context.inputs[0].content_id) as stream:
+                      self.observed = stream.read()
+                  await asyncio.sleep(0)
+                  return CollectionInventory((), complete=True, upstream_identity="fixture-holdings")
+
+
+          def test_public_engine_executes_advanced_collection_definition_from_repository_inputs(tmp_path: Path) -> None:
+              repository_root = tmp_path / "repository"
+              holdings_path = tmp_path / "holdings.txt"
+              holdings_path.write_bytes(b"1abc\\n2def\\n")
+              holdings = LocalSource(
+                  id="holdings",
+                  path=holdings_path,
+                  artifact_key="pdb:holdings",
+                  media_type="text/plain",
+              )
+              collection = CollectionSource(
+                  id="pdb-core-entry",
+                  url="https://example.invalid/core/entry",
+              )
+              enumerator = HoldingsEnumerator()
+              definition = CollectionDefinition(
+                  source_id=collection.id,
+                  enumerator=enumerator,
+                  input_source_ids=(holdings.id,),
+              )
+
+              with Repository.create(repository_root) as repository:
+                  result = asyncio.run(
+                      Engine(
+                          repository,
+                          (collection, holdings),
+                          collections=(definition,),
+                      ).sync()
+                  )
+
+                  assert result.ok
+                  assert enumerator.observed == b"1abc\\n2def\\n"
+                  snapshots = repository.sources.snapshots(collection.id)
+                  assert len(snapshots) == 1
+                  assert snapshots[0].complete is True
+
+
+          def test_local_source_pins_bytes_independently_of_original_file(tmp_path: Path) -> None:
+              repository_root = tmp_path / "repository"
+              source_path = tmp_path / "analysis-input.json"
+              source_path.write_bytes(b'{"version":1}\\n')
+              source = LocalSource(
+                  id="analysis-input",
+                  path=source_path,
+                  artifact_key="analysis:input",
+                  media_type="application/json",
+                  role="analysis-input",
+              )
+
+              with Repository.create(repository_root) as repository:
+                  result = asyncio.run(Engine(repository, (source,)).sync())
+                  assert result.ok
+                  assert len(result.observation_ids) == 1
+                  frozen = repository.datasets.freeze(DatasetSpec.latest("analysis:input"))
+                  dataset_id = frozen.id
+                  content_id = frozen.member("analysis:input").content_id
+
+              source_path.write_bytes(b'{"version":2}\\n')
+              source_path.unlink()
+
+              with Repository.open(repository_root, mode="r") as repository:
+                  frozen = repository.datasets.get(dataset_id)
+                  assert frozen.verify()
+                  assert frozen.member("analysis:input").content_id == content_id
+                  with frozen.open("analysis:input") as stream:
+                      assert stream.read() == b'{"version":1}\\n'
+
+
+          def test_missing_local_source_fails_without_advancing_artifact(tmp_path: Path) -> None:
+              repository_root = tmp_path / "repository"
+              source = LocalSource(
+                  id="missing-input",
+                  path=tmp_path / "missing.dat",
+                  artifact_key="analysis:missing",
+              )
+
+              with Repository.create(repository_root) as repository:
+                  result = asyncio.run(Engine(repository, (source,)).sync())
+                  assert result.ok is False
+                  assert repository.artifacts.latest("analysis:missing") is None
+                  assert repository.sources.snapshots(source.id) == ()
+          '''), encoding="utf-8")
+
+          replace_once(
+              "tests/unit/test_public_api.py",
+              "    assert \"DatasetSpec\" in efloud.__all__\n",
+              "    assert \"DatasetSpec\" in efloud.__all__\n    assert \"LocalSource\" in efloud.__all__\n    assert \"CollectionDefinition\" not in efloud.__all__\n",
+          )
+          PY
+      - name: Install locked development environment
+        run: uv sync
+      - name: Format changed Python files
+        run: >-
+          uv run ruff format
+          src/efloud/sources.py
+          src/efloud/adapters.py
+          src/efloud/local_adapter.py
+          src/efloud/builtin_adapters.py
+          src/efloud/operation_recording.py
+          src/efloud/api.py
+          src/efloud/__init__.py
+          tests/unit/test_public_source_extensions.py
+          tests/unit/test_public_api.py
+      - name: Run focused acceptance tests
+        run: uv run pytest tests/unit/test_public_source_extensions.py tests/unit/test_public_api.py -q
+      - name: Run canonical gate
+        run: uv run just check
+      - name: Commit implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git rm .github/workflows/apply-public-source-patch.yml
+          git add src tests docs/api.md
+          git commit -m 'Add public collection composition and local sources'
+          git push origin HEAD:public-collection-local-source

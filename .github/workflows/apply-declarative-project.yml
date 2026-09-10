@@ -23,38 +23,56 @@ jobs:
           enable-cache: true
       - name: Install Python
         run: uv python install 3.14
-      - name: Add collection provider evidence
+      - name: Apply semantic source and declaration fixes
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('src/efloud/sources.py')
-          text = path.read_text(encoding='utf-8')
+          source_path = Path('src/efloud/sources.py')
+          text = source_path.read_text(encoding='utf-8')
           old = '''@dataclass(frozen=True, slots=True)\nclass CollectionSource:\n    """Declarative HTTP collection whose inventory/fetch behavior is supplied separately."""\n\n    id: str\n    url: str\n    description: str = ""\n    role: str | None = None\n    tags: tuple[str, ...] = ()\n    adapter_id: str = field(default="efloud:collection", init=False)\n\n    def __post_init__(self) -> None:\n        """Validate and normalize the declarative source."""\n        _require_text(self.id, field="Source id")\n        _require_text(self.url, field="Source URL")\n        object.__setattr__(self, "tags", _normalize_tags(self.tags))\n\n    def definition(self) -> JsonObject:\n        payload = _common_definition(self)\n        payload.update({"url": self.url, "protocol": "collection"})\n        return payload\n'''
           new = '''@dataclass(frozen=True, slots=True)\nclass CollectionSource:\n    """Declarative HTTP collection whose inventory/fetch behavior is supplied separately."""\n\n    id: str\n    url: str\n    description: str = ""\n    role: str | None = None\n    tags: tuple[str, ...] = ()\n    provider_id: str | None = None\n    provider_version: str | None = None\n    provider_parameters: JsonObject = field(default_factory=dict)\n    adapter_id: str = field(default="efloud:collection", init=False)\n\n    def __post_init__(self) -> None:\n        """Validate and normalize the declarative source."""\n        _require_text(self.id, field="Source id")\n        _require_text(self.url, field="Source URL")\n        if (self.provider_id is None) != (self.provider_version is None):\n            msg = "Collection provider id and version must be specified together"\n            raise ValueError(msg)\n        if self.provider_id is not None:\n            _require_text(self.provider_id, field="Collection provider id")\n            _require_text(self.provider_version or "", field="Collection provider version")\n        if self.provider_parameters and self.provider_id is None:\n            msg = "Collection provider parameters require a provider identity"\n            raise ValueError(msg)\n        object.__setattr__(self, "provider_parameters", dict(self.provider_parameters))\n        object.__setattr__(self, "tags", _normalize_tags(self.tags))\n\n    def definition(self) -> JsonObject:\n        payload = _common_definition(self)\n        payload.update({"url": self.url, "protocol": "collection"})\n        if self.provider_id is not None and self.provider_version is not None:\n            payload["provider"] = {\n                "id": self.provider_id,\n                "version": self.provider_version,\n                "parameters": dict(self.provider_parameters),\n            }\n        return payload\n'''
           if text.count(old) != 1:
               raise SystemExit('CollectionSource replacement marker mismatch')
-          path.write_text(text.replace(old, new), encoding='utf-8')
-          PY
-      - name: Fix TOML nullable defaults
-        run: |
-          python - <<'PY'
-          from pathlib import Path
+          source_path.write_text(text.replace(old, new), encoding='utf-8')
 
-          path = Path('src/efloud/project.py')
-          text = path.read_text(encoding='utf-8')
+          project_path = Path('src/efloud/project.py')
+          text = project_path.read_text(encoding='utf-8')
+          old = '''    @property\n    def base_dir(self) -> Path:\n        return self.path.parent if self.path is not None else Path.cwd().resolve()\n'''
+          new = '''    @property\n    def base_dir(self) -> Path | None:\n        return self.path.parent if self.path is not None else None\n'''
+          if text.count(old) != 1:
+              raise SystemExit('base_dir replacement marker mismatch')
+          text = text.replace(old, new)
+          old = '''    def materialize(self, *, base_dir: Path) -> Source:\n'''
+          new = '''    def materialize(self, *, base_dir: Path | None) -> Source:\n'''
+          if text.count(old) != 1:
+              raise SystemExit('materialize base_dir marker mismatch')
+          text = text.replace(old, new)
+          old = '''            raw_path = _pop_text(config, "path", context=self.id)\n            path = Path(raw_path).expanduser()\n            if not path.is_absolute():\n                path = base_dir / path\n'''
+          new = '''            raw_path = _pop_text(config, "path", context=self.id)\n            path = Path(raw_path).expanduser()\n            if not path.is_absolute():\n                if base_dir is None:\n                    msg = "Relative local source paths require a declaration file or explicit base_dir"\n                    raise ProjectSchemaError(msg)\n                path = base_dir / path\n'''
+          if text.count(old) != 1:
+              raise SystemExit('local relative path marker mismatch')
+          text = text.replace(old, new)
+          old = '''            definition = provider.build(\n                source=source,\n                parameters=dict(reference.parameters),\n                base_dir=self.base_dir,\n            )\n'''
+          new = '''            base_dir = self.base_dir\n            if base_dir is None:\n                msg = "Collection providers require a declaration file or explicit base_dir"\n                raise ProviderResolutionError(msg)\n            definition = provider.build(\n                source=source,\n                parameters=dict(reference.parameters),\n                base_dir=base_dir,\n            )\n'''
+          if text.count(old) != 1:
+              raise SystemExit('provider base_dir marker mismatch')
+          text = text.replace(old, new)
           old = '''    if isinstance(value, dict):\n        return "{ " + ", ".join(\n            f"{_toml_key(key)} = {_toml_value(item)}" for key, item in sorted(value.items())\n        ) + " }"\n'''
           new = '''    if isinstance(value, dict):\n        items = ((key, item) for key, item in sorted(value.items()) if item is not None)\n        return "{ " + ", ".join(f"{_toml_key(key)} = {_toml_value(item)}" for key, item in items) + " }"\n'''
           if text.count(old) != 1:
               raise SystemExit('TOML mapping replacement marker mismatch')
-          path.write_text(text.replace(old, new), encoding='utf-8')
+          project_path.write_text(text.replace(old, new), encoding='utf-8')
           PY
       - name: Add signing dependency
         run: |
           uv add --optional signing 'cryptography>=46,<47'
           uv add --dev 'cryptography>=46,<47'
-      - name: Format changed Python
-        run: uv run ruff format src/efloud/project.py src/efloud/lockfile.py src/efloud/sources.py tests/unit/test_project_declaration.py
+      - name: Format and autofix changed Python
+        run: |
+          uv run ruff format src/efloud/project.py src/efloud/lockfile.py src/efloud/sources.py tests/unit/test_project_declaration.py
+          uv run ruff check --fix src/efloud/project.py src/efloud/lockfile.py src/efloud/sources.py tests/unit/test_project_declaration.py || true
+          uv run ruff format src/efloud/project.py src/efloud/lockfile.py src/efloud/sources.py tests/unit/test_project_declaration.py
       - name: Run focused declarative tests
         run: uv run pytest tests/unit/test_project_declaration.py -q
       - name: Run canonical gate

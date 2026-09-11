@@ -9,7 +9,21 @@ from typing import TYPE_CHECKING
 import pytest
 
 import efloud
-from efloud import DatasetManifest, DatasetSpec, Engine, HttpSource, Repository, SyncRequest
+from efloud import (
+    CollectionContext,
+    CollectionDefinition,
+    CollectionInventory,
+    CollectionItem,
+    CollectionProvider,
+    DatasetManifest,
+    DatasetSpec,
+    Engine,
+    HttpSource,
+    Project,
+    ProjectLock,
+    Repository,
+    SyncRequest,
+)
 from efloud.adapters import HttpAcquisition
 from efloud.errors import RepositoryOpenError
 from efloud.http_adapter import HttpSourceAdapter
@@ -20,18 +34,37 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
-def test_package_root_is_small_semantic_surface() -> None:
+def test_package_root_is_semantic_surface() -> None:
     assert "EngineConfig" not in efloud.__all__
     assert "SourceDefinition" not in efloud.__all__
     assert "SourceKind" not in efloud.__all__
     assert "ReadOnlyRepository" not in efloud.__all__
     assert "RepositoryView" not in efloud.__all__
     assert "DatasetMaterializer" not in efloud.__all__
-    assert "Engine" in efloud.__all__
-    assert "Repository" in efloud.__all__
-    assert "DatasetSpec" in efloud.__all__
-    assert "LocalSource" in efloud.__all__
-    assert "CollectionDefinition" not in efloud.__all__
+    for name in (
+        "Engine",
+        "Repository",
+        "DatasetSpec",
+        "LocalSource",
+        "Project",
+        "ProjectLock",
+        "CollectionProvider",
+        "CollectionDefinition",
+        "CollectionContext",
+        "CollectionInventory",
+        "CollectionItem",
+    ):
+        assert name in efloud.__all__
+
+
+def test_declarative_types_are_importable_from_package_root() -> None:
+    assert Project is efloud.Project
+    assert ProjectLock is efloud.ProjectLock
+    assert CollectionProvider is efloud.CollectionProvider
+    assert CollectionDefinition is efloud.CollectionDefinition
+    assert CollectionContext is efloud.CollectionContext
+    assert CollectionInventory is efloud.CollectionInventory
+    assert CollectionItem is efloud.CollectionItem
 
 
 def test_public_source_types_are_protocol_specific() -> None:

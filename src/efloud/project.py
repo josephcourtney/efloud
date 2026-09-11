@@ -522,6 +522,8 @@ class Project:
             if source.adapter_version is None:
                 continue
             decision = decisions.get(source.id)
+            if decision is not None and not decision.selected:
+                continue
             actual = None if decision is None else decision.adapter_version
             if actual != source.adapter_version:
                 raise ProjectError(

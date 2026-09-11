@@ -27,6 +27,7 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Fixed
 
+- Ignore declared adapter-version constraints for sources explicitly unselected by a selective project plan while continuing to fail closed for selected version mismatches.
 - Require an active repository writer lease before standalone byte content staging can mutate the content-addressed store.
 - Make destructive cleanup fail closed on SQLite/foreign-key failures, semantic tree/dataset/source/snapshot corruption, and missing or corrupt reachable content while preserving validation-only and provenance history.
 - Reject operation records with missing producer metadata instead of manufacturing a synthetic legacy producer identity.

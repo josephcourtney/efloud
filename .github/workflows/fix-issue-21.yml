@@ -31,7 +31,9 @@ jobs:
         run: uv python install "$UV_PYTHON"
 
       - name: Sync locked development environment
-        run: uv sync
+        run: |
+          uv sync
+          uv pip install cryptography
 
       - name: Apply focused repair and regression tests
         run: |
@@ -52,7 +54,7 @@ jobs:
           if marker not in tests:
               raise SystemExit("test insertion marker not found")
           addition = '''def _selective_version_project(\n    tmp_path: Path,\n    *,\n    selected_version: str = "1",\n    unselected_version: str = "999",\n) -> Project:\n    (tmp_path / "selected.txt").write_text("selected", encoding="utf-8")\n    (tmp_path / "unselected.txt").write_text("unselected", encoding="utf-8")\n    return Project.from_toml(\n        f"""\n        schema_version = 1\n        [sync]\n        source_ids = ["selected"]\n        dry_run = true\n\n        [[sources]]\n        id = "selected"\n        adapter = "efloud:local"\n        adapter_version = "{selected_version}"\n        [sources.config]\n        path = "selected.txt"\n\n        [[sources]]\n        id = "unselected"\n        adapter = "efloud:local"\n        adapter_version = "{unselected_version}"\n        [sources.config]\n        path = "unselected.txt"\n        """,\n        base_dir=tmp_path,\n    )\n\n\ndef test_selective_project_version_validation_ignores_unselected_sources(tmp_path: Path) -> None:\n    project = _selective_version_project(tmp_path)\n    with Repository.create(tmp_path / "repository") as repository:\n        plan = project.plan(repository)\n        decisions = {item.source_id: item for item in plan.decisions}\n        assert decisions["selected"].selected\n        assert decisions["selected"].adapter_version == "1"\n        assert not decisions["unselected"].selected\n        assert decisions["unselected"].adapter_version is None\n\n        result = asyncio.run(project.sync(repository))\n        assert result.ok\n\n\ndef test_selective_project_version_validation_still_fails_for_selected_mismatch(tmp_path: Path) -> None:\n    project = _selective_version_project(tmp_path, selected_version="999", unselected_version="1")\n    with Repository.create(tmp_path / "repository") as repository:\n        with pytest.raises(ProjectError, match="declaration requires '999'"):\n            project.plan(repository)\n        with pytest.raises(ProjectError, match="declaration requires '999'"):\n            asyncio.run(project.sync(repository))\n\n\n'''
-          tests = tests.replace(f"def {marker}", addition + f"def {marker}", 1)
+          tests = tests.replace(marker, addition + marker, 1)
           test_path.write_text(tests)
 
           changelog = Path("CHANGELOG.md")
@@ -71,11 +73,12 @@ jobs:
 
       - name: Run focused regression tests
         run: >-
-          uv run --with cryptography pytest tests/unit/test_project_declaration.py
-          -k 'selective_project_version_validation'
+          uv run pytest
+          tests/unit/test_project_declaration.py::test_selective_project_version_validation_ignores_unselected_sources
+          tests/unit/test_project_declaration.py::test_selective_project_version_validation_still_fails_for_selected_mismatch
 
       - name: Run canonical gate
-        run: uv run --with cryptography just check
+        run: uv run just check
 
       - name: Remove repair workflow
         run: rm .github/workflows/fix-issue-21.yml

@@ -87,7 +87,9 @@ def test_project_round_trips_semantic_toml_and_anchors_local_paths(tmp_path: Pat
     project_dir.mkdir()
     project = Project.from_toml(PROJECT_TOML, base_dir=project_dir)
 
-    assert project.declaration_id == Project.from_toml(project.to_toml(), base_dir=project_dir).declaration_id
+    rendered = project.to_toml()
+    assert "max_observation_skew" not in rendered
+    assert project.declaration_id == Project.from_toml(rendered, base_dir=project_dir).declaration_id
     assert project.sync_request.max_concurrency == 3
     assert project.dataset("analysis")._definition().to_dict() == {  # noqa: SLF001 - verifies public model parity.
         "selections": [{"kind": "latest", "artifact_key": "analysis:input", "role": "configuration"}],
@@ -243,6 +245,67 @@ def test_dataset_declaration_accepts_all_selector_shapes_and_normalizes_time() -
     assert selections[2]["timestamp"] == 1789041600.0
     assert selections[3]["before"] == 1789041600.0
     assert Project.from_toml(project.to_toml()).datasets[0].specification_id == project.datasets[0].specification_id
+
+
+def _selective_version_project(
+    tmp_path: Path,
+    *,
+    selected_version: str = "1",
+    unselected_version: str = "999",
+) -> Project:
+    (tmp_path / "selected.txt").write_text("selected", encoding="utf-8")
+    (tmp_path / "unselected.txt").write_text("unselected", encoding="utf-8")
+    return Project.from_toml(
+        f"""
+        schema_version = 1
+        [sync]
+        source_ids = ["selected"]
+        dry_run = true
+
+        [[sources]]
+        id = "selected"
+        adapter = "efloud:local"
+        adapter_version = "{selected_version}"
+        [sources.config]
+        path = "selected.txt"
+
+        [[sources]]
+        id = "unselected"
+        adapter = "efloud:local"
+        adapter_version = "{unselected_version}"
+        [sources.config]
+        path = "unselected.txt"
+        """,
+        base_dir=tmp_path,
+    )
+
+
+def test_selective_project_version_validation_ignores_unselected_sources(tmp_path: Path) -> None:
+    project = _selective_version_project(tmp_path)
+    with Repository.create(tmp_path / "repository") as repository:
+        plan = project.plan(repository)
+        decisions = {item.source_id: item for item in plan.decisions}
+        assert decisions["selected"].selected
+        assert decisions["selected"].adapter_version == "1"
+        assert not decisions["unselected"].selected
+        assert decisions["unselected"].adapter_version is None
+
+        result = asyncio.run(project.sync(repository))
+        assert result.ok
+
+
+def test_selective_project_version_validation_still_fails_for_selected_mismatch(tmp_path: Path) -> None:
+    project = _selective_version_project(tmp_path, selected_version="999", unselected_version="1")
+    with (
+        Repository.create(tmp_path / "plan-repository") as repository,
+        pytest.raises(ProjectError),
+    ):
+        project.plan(repository)
+    with (
+        Repository.create(tmp_path / "sync-repository") as repository,
+        pytest.raises(ProjectError),
+    ):
+        asyncio.run(project.sync(repository))
 
 
 def test_project_sync_lock_roundtrip_and_detached_source_resolution(tmp_path: Path) -> None:

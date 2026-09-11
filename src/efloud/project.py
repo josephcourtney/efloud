@@ -522,6 +522,8 @@ class Project:
             if source.adapter_version is None:
                 continue
             decision = decisions.get(source.id)
+            if decision is not None and not decision.selected:
+                continue
             actual = None if decision is None else decision.adapter_version
             if actual != source.adapter_version:
                 raise ProjectError(
@@ -722,7 +724,10 @@ def _project_toml(project: Project) -> str:
             lines.append(f"metadata = {_toml_value(metadata)}")
         constraints = definition.get("constraints")
         if constraints is not None:
-            lines.append(f"constraints = {_toml_value(constraints)}")
+            if not isinstance(constraints, dict):
+                raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid constraints")
+            toml_constraints = {key: value for key, value in constraints.items() if value is not None}
+            lines.append(f"constraints = {_toml_value(toml_constraints)}")
         selections = definition.get("selections")
         if not isinstance(selections, list):
             raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid selections")

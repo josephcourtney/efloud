@@ -174,11 +174,8 @@ def test_collection_provider_is_declarative_versioned_and_not_serialized_as_call
     assert provider.seen_parameters == {"holdings_source": "holdings"}
     source = sources[0]
     assert isinstance(source, CollectionSource)
-    assert source.definition()["provider"] == {
-        "id": "test:empty-collection",
-        "version": "2",
-        "parameters": {"holdings_source": "holdings"},
-    }
+    assert "provider" not in source.definition()
+    assert source.definition()["url"] == "https://example.invalid/entry"
     serialized = project.to_toml()
     assert "test:empty-collection" in serialized
     assert "callback" not in serialized

@@ -68,8 +68,12 @@ jobs:
               changelog.write_text(log)
           PY
 
-      - name: Format changed Python files
-        run: uv run ruff format src/efloud/project.py tests/unit/test_project_declaration.py
+      - name: Format changed and pre-existing declarative Python files
+        run: >-
+          uv run ruff format
+          src/efloud/project.py
+          src/efloud/lockfile.py
+          tests/unit/test_project_declaration.py
 
       - name: Run focused regression tests
         run: >-
@@ -87,6 +91,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/efloud/project.py tests/unit/test_project_declaration.py CHANGELOG.md .github/workflows/fix-issue-21.yml
+          git add src/efloud/project.py src/efloud/lockfile.py tests/unit/test_project_declaration.py CHANGELOG.md .github/workflows/fix-issue-21.yml
           git commit -m "Fix selective project adapter version validation"
           git push origin HEAD:fix-selective-adapter-version

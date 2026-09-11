@@ -1,0 +1,75 @@
+name: Fix project TOML null roundtrip
+
+on:
+  push:
+    branches:
+      - fix-selective-adapter-version
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.14"
+      UV_LOCKED: "true"
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fix-selective-adapter-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install Python
+        run: uv python install "$UV_PYTHON"
+
+      - name: Sync environment
+        run: |
+          uv sync
+          uv pip install cryptography
+
+      - name: Apply TOML projection repair
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          project_path = Path("src/efloud/project.py")
+          text = project_path.read_text()
+          old = '''        constraints = definition.get("constraints")\n        if constraints is not None:\n            lines.append(f"constraints = {_toml_value(constraints)}")\n'''
+          new = '''        constraints = definition.get("constraints")\n        if constraints is not None:\n            if not isinstance(constraints, dict):\n                raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid constraints")\n            toml_constraints = {key: value for key, value in constraints.items() if value is not None}\n            lines.append(f"constraints = {_toml_value(toml_constraints)}")\n'''
+          if old not in text:
+              raise SystemExit("constraints TOML serialization target not found")
+          project_path.write_text(text.replace(old, new, 1))
+
+          test_path = Path("tests/unit/test_project_declaration.py")
+          tests = test_path.read_text()
+          old_test = '''    assert project.declaration_id == Project.from_toml(project.to_toml(), base_dir=project_dir).declaration_id\n    assert project.sync_request.max_concurrency == 3\n'''
+          new_test = '''    rendered = project.to_toml()\n    assert "max_observation_skew" not in rendered\n    assert project.declaration_id == Project.from_toml(rendered, base_dir=project_dir).declaration_id\n    assert project.sync_request.max_concurrency == 3\n'''
+          if old_test not in tests:
+              raise SystemExit("roundtrip assertion target not found")
+          test_path.write_text(tests.replace(old_test, new_test, 1))
+          PY
+
+      - name: Run project declaration tests
+        run: uv run pytest tests/unit/test_project_declaration.py
+
+      - name: Check syntax and patch whitespace
+        run: |
+          uv run python -m compileall -q src/efloud/project.py tests/unit/test_project_declaration.py
+          git diff --check
+
+      - name: Remove repair workflow
+        run: rm .github/workflows/fix-project-toml-null.yml
+
+      - name: Commit repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/efloud/project.py tests/unit/test_project_declaration.py .github/workflows/fix-project-toml-null.yml
+          git commit -m "Fix project TOML constraint roundtrip"
+          git push origin HEAD:fix-selective-adapter-version

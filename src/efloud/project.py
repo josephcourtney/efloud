@@ -724,7 +724,10 @@ def _project_toml(project: Project) -> str:
             lines.append(f"metadata = {_toml_value(metadata)}")
         constraints = definition.get("constraints")
         if constraints is not None:
-            lines.append(f"constraints = {_toml_value(constraints)}")
+            if not isinstance(constraints, dict):
+                raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid constraints")
+            toml_constraints = {key: value for key, value in constraints.items() if value is not None}
+            lines.append(f"constraints = {_toml_value(toml_constraints)}")
         selections = definition.get("selections")
         if not isinstance(selections, list):
             raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid selections")

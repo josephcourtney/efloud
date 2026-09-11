@@ -87,7 +87,9 @@ def test_project_round_trips_semantic_toml_and_anchors_local_paths(tmp_path: Pat
     project_dir.mkdir()
     project = Project.from_toml(PROJECT_TOML, base_dir=project_dir)
 
-    assert project.declaration_id == Project.from_toml(project.to_toml(), base_dir=project_dir).declaration_id
+    rendered = project.to_toml()
+    assert "max_observation_skew" not in rendered
+    assert project.declaration_id == Project.from_toml(rendered, base_dir=project_dir).declaration_id
     assert project.sync_request.max_concurrency == 3
     assert project.dataset("analysis")._definition().to_dict() == {  # noqa: SLF001 - verifies public model parity.
         "selections": [{"kind": "latest", "artifact_key": "analysis:input", "role": "configuration"}],

@@ -249,15 +249,11 @@ class SourceDeclaration:
                 **_empty_config(config, self.id),
             )
         if self.adapter == "efloud:collection":
-            provider = self.provider
-            if provider is None:
+            if self.provider is None:
                 raise ProjectSchemaError(f"Collection source {self.id!r} has no provider")
             return CollectionSource(
                 **common,
                 url=_pop_text(config, "url", context=self.id),
-                provider_id=provider.provider_id,
-                provider_version=provider.version,
-                provider_parameters=provider.parameters,
                 **_empty_config(config, self.id),
             )
         return DeclaredSource(

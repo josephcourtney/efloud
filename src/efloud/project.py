@@ -11,20 +11,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from efloud.api import Dataset, DatasetSpec, Engine, Repository, SyncResult
-from efloud.collections import CollectionDefinition
 from efloud.dataset_constraints import DatasetConstraints
 from efloud.dataset_selectors import ExactSourceSnapshot, LatestCompleteSourceSnapshot, SourceSelection
 from efloud.datasets import DatasetDefinition, DatasetSelection, ExactObservation, Latest, LatestAll, LatestBefore
 from efloud.errors import EfloudError
 from efloud.fs import atomic_write_text
 from efloud.inventory import IntegrityExpectation
-from efloud.json_types import JsonObject, JsonValue, is_json_object, is_json_value
+from efloud.json_types import JsonObject, JsonValue, is_json_object
+from efloud.lockfile import ProjectLock
 from efloud.planning import SyncPlan, SyncRequest
 from efloud.repository_models import stable_id
 from efloud.sources import CollectionSource, HttpSource, LocalSource, RestSource, RsyncSource, Source
 
 if TYPE_CHECKING:
     from efloud.adapters import AdapterRegistry
+    from efloud.collections import CollectionDefinition
     from efloud.validation import ValidationRegistry
 
 DECLARATION_VERSION = 1
@@ -53,10 +54,12 @@ class ProviderReference:
     parameters: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Validate the provider reference and freeze its parameters."""
         _require_namespaced(self.provider_id, field_name="provider.id")
         _require_text(self.version, field_name="provider.version")
         if not is_json_object(self.parameters):
-            raise ProjectSchemaError("provider.parameters must be JSON-compatible")
+            msg = "provider.parameters must be JSON-compatible"
+            raise ProjectSchemaError(msg)
         object.__setattr__(self, "parameters", dict(self.parameters))
 
     def to_dict(self) -> JsonObject:
@@ -71,7 +74,8 @@ class ProviderReference:
         _reject_unknown(value, {"id", "version", "parameters"}, context="provider")
         parameters = value.get("parameters", {})
         if not is_json_object(parameters):
-            raise ProjectSchemaError("provider.parameters must be a table of JSON-compatible values")
+            msg = "provider.parameters must be a table of JSON-compatible values"
+            raise ProjectSchemaError(msg)
         return cls(
             _text(value.get("id"), field_name="provider.id"),
             _text(value.get("version"), field_name="provider.version"),
@@ -109,13 +113,16 @@ class DeclaredSource:
     tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """Validate the open source declaration and freeze its collections."""
         _require_text(self.id, field_name="source.id")
         _require_namespaced(self.adapter_id, field_name="source.adapter")
         if not is_json_object(self.config):
-            raise ProjectSchemaError("source.config must be JSON-compatible")
+            msg = "source.config must be JSON-compatible"
+            raise ProjectSchemaError(msg)
         reserved = {"adapter_id", "description", "role", "tags"}.intersection(self.config)
         if reserved:
-            raise ProjectSchemaError(f"source.config uses reserved keys: {sorted(reserved)}")
+            msg = f"source.config uses reserved keys: {sorted(reserved)}"
+            raise ProjectSchemaError(msg)
         object.__setattr__(self, "config", dict(self.config))
         object.__setattr__(self, "tags", _tags(self.tags, field_name="source.tags"))
 
@@ -145,16 +152,20 @@ class SourceDeclaration:
     provider: ProviderReference | None = None
 
     def __post_init__(self) -> None:
+        """Validate the source declaration and freeze its configuration."""
         _require_text(self.id, field_name="source.id")
         _require_namespaced(self.adapter, field_name="source.adapter")
         if self.adapter_version is not None:
             _require_text(self.adapter_version, field_name="source.adapter_version")
         if not is_json_object(self.config):
-            raise ProjectSchemaError("source.config must be JSON-compatible")
+            msg = "source.config must be JSON-compatible"
+            raise ProjectSchemaError(msg)
         if self.provider is not None and self.adapter != "efloud:collection":
-            raise ProjectSchemaError("provider is supported only for efloud:collection in schema v1")
+            msg = "provider is supported only for efloud:collection in schema v1"
+            raise ProjectSchemaError(msg)
         if self.adapter == "efloud:collection" and self.provider is None:
-            raise ProjectSchemaError("efloud:collection requires a provider reference")
+            msg = "efloud:collection requires a provider reference"
+            raise ProjectSchemaError(msg)
         object.__setattr__(self, "config", dict(self.config))
         object.__setattr__(self, "tags", _tags(self.tags, field_name="source.tags"))
 
@@ -164,12 +175,14 @@ class SourceDeclaration:
         _reject_unknown(value, allowed, context="source")
         config = value.get("config", {})
         if not is_json_object(config):
-            raise ProjectSchemaError("source.config must be a table of JSON-compatible values")
+            msg = "source.config must be a table of JSON-compatible values"
+            raise ProjectSchemaError(msg)
         provider_value = value.get("provider")
         provider = None
         if provider_value is not None:
             if not isinstance(provider_value, Mapping):
-                raise ProjectSchemaError("source.provider must be a table")
+                msg = "source.provider must be a table"
+                raise ProjectSchemaError(msg)
             provider = ProviderReference.from_mapping(provider_value)
         role = _optional_text(value.get("role"), field_name="source.role")
         adapter_version = _optional_text(value.get("adapter_version"), field_name="source.adapter_version")
@@ -207,7 +220,7 @@ class SourceDeclaration:
             "role": self.role,
             "tags": self.tags,
         }
-        config = dict(self.config)
+        config: JsonObject = dict(self.config)
         if self.adapter == "efloud:http":
             return HttpSource(
                 **common,
@@ -250,7 +263,8 @@ class SourceDeclaration:
             )
         if self.adapter == "efloud:collection":
             if self.provider is None:
-                raise ProjectSchemaError(f"Collection source {self.id!r} has no provider")
+                msg = f"Collection source {self.id!r} has no provider"
+                raise ProjectSchemaError(msg)
             return CollectionSource(
                 **common,
                 url=_pop_text(config, "url", context=self.id),
@@ -274,6 +288,7 @@ class DatasetDeclaration:
     _definition: DatasetDefinition = field(repr=False)
 
     def __post_init__(self) -> None:
+        """Validate the dataset name."""
         _require_text(self.name, field_name="dataset.name")
 
     @classmethod
@@ -310,12 +325,15 @@ class Project:
     path: Path | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Validate and deterministically order the project declarations."""
         source_ids = [item.id for item in self.sources]
         dataset_names = [item.name for item in self.datasets]
         if len(source_ids) != len(set(source_ids)):
-            raise ProjectSchemaError("source ids must be unique")
+            msg = "source ids must be unique"
+            raise ProjectSchemaError(msg)
         if len(dataset_names) != len(set(dataset_names)):
-            raise ProjectSchemaError("dataset names must be unique")
+            msg = "dataset names must be unique"
+            raise ProjectSchemaError(msg)
         object.__setattr__(self, "sources", tuple(sorted(self.sources, key=lambda item: item.id)))
         object.__setattr__(self, "datasets", tuple(sorted(self.datasets, key=lambda item: item.name)))
         if self.path is not None:
@@ -352,18 +370,20 @@ class Project:
         _reject_unknown(value, {"schema_version", "sync", "sources", "datasets"}, context="project")
         version = value.get("schema_version")
         if type(version) is not int or version != DECLARATION_VERSION:
-            raise ProjectSchemaError(
-                f"Unsupported efloud.toml schema version: {version!r}; expected {DECLARATION_VERSION}"
-            )
+            msg = f"Unsupported efloud.toml schema version: {version!r}; expected {DECLARATION_VERSION}"
+            raise ProjectSchemaError(msg)
         raw_sources = value.get("sources", [])
         raw_datasets = value.get("datasets", [])
         if not isinstance(raw_sources, list) or not all(isinstance(item, Mapping) for item in raw_sources):
-            raise ProjectSchemaError("sources must be an array of tables")
+            msg = "sources must be an array of tables"
+            raise ProjectSchemaError(msg)
         if not isinstance(raw_datasets, list) or not all(isinstance(item, Mapping) for item in raw_datasets):
-            raise ProjectSchemaError("datasets must be an array of tables")
+            msg = "datasets must be an array of tables"
+            raise ProjectSchemaError(msg)
         raw_sync = value.get("sync", {})
         if not isinstance(raw_sync, Mapping):
-            raise ProjectSchemaError("sync must be a table")
+            msg = "sync must be a table"
+            raise ProjectSchemaError(msg)
         return cls(
             sources=tuple(SourceDeclaration.from_mapping(item) for item in raw_sources),
             datasets=tuple(DatasetDeclaration.from_mapping(item) for item in raw_datasets),
@@ -385,7 +405,8 @@ class Project:
     def write(self, path: str | Path | None = None) -> Path:
         destination = Path(path) if path is not None else self.path
         if destination is None:
-            raise ProjectError("No efloud.toml destination was supplied")
+            msg = "No efloud.toml destination was supplied"
+            raise ProjectError(msg)
         destination = destination.expanduser().resolve(strict=False)
         atomic_write_text(destination, self.to_toml())
         return destination
@@ -394,7 +415,8 @@ class Project:
         for declaration in self.datasets:
             if declaration.name == name:
                 return declaration.spec
-        raise ProjectError(f"Unknown declared dataset: {name}")
+        msg = f"Unknown declared dataset: {name}"
+        raise ProjectError(msg)
 
     def materialize(
         self,
@@ -411,25 +433,29 @@ class Project:
                 continue
             reference = declaration.provider
             if reference is None:
-                raise ProviderResolutionError(f"Collection source {source.id!r} has no provider")
+                msg = f"Collection source {source.id!r} has no provider"
+                raise ProviderResolutionError(msg)
             provider = provider_map.get(reference.provider_id)
             if provider is None:
-                raise ProviderResolutionError(f"Unknown collection provider: {reference.provider_id}")
+                msg = f"Unknown collection provider: {reference.provider_id}"
+                raise ProviderResolutionError(msg)
             if provider.provider_id != reference.provider_id or provider.version != reference.version:
-                raise ProviderResolutionError(
+                msg = (
                     f"Provider {reference.provider_id!r} version mismatch: "
                     f"declared {reference.version!r}, available {provider.version!r}"
                 )
+                raise ProviderResolutionError(msg)
             definition = provider.build(
                 source=source,
                 parameters=dict(reference.parameters),
                 base_dir=self.base_dir,
             )
             if definition.source_id != source.id:
-                raise ProviderResolutionError(
+                msg = (
                     f"Provider {reference.provider_id!r} returned definition for {definition.source_id!r}, "
                     f"expected {source.id!r}"
                 )
+                raise ProviderResolutionError(msg)
             collections.append(definition)
         return tuple(sources), tuple(collections)
 
@@ -496,8 +522,6 @@ class Project:
         validators: ValidationRegistry | None = None,
         require_complete: bool = True,
     ) -> ProjectLock:
-        from efloud.lockfile import ProjectLock
-
         sources, collections = self.materialize(providers=providers)
         engine = Engine(
             repository,
@@ -526,10 +550,11 @@ class Project:
                 continue
             actual = None if decision is None else decision.adapter_version
             if actual != source.adapter_version:
-                raise ProjectError(
+                msg = (
                     f"Adapter {source.adapter!r} for source {source.id!r} resolved to version {actual!r}; "
                     f"declaration requires {source.adapter_version!r}"
                 )
+                raise ProjectError(msg)
 
     def _source_locks(
         self,
@@ -546,23 +571,28 @@ class Project:
             materialized = source_by_id[declaration.id]
             record = repository.sources.get(declaration.id)
             if record is None or record.definition != materialized.definition():
-                raise ProjectError(f"Repository does not contain the current definition of source {declaration.id!r}")
+                msg = f"Repository does not contain the current definition of source {declaration.id!r}"
+                raise ProjectError(msg)
             snapshots = repository.sources.snapshots(declaration.id, limit=1)
             if not snapshots:
-                raise ProjectError(f"Source {declaration.id!r} has no resolved snapshot")
+                msg = f"Source {declaration.id!r} has no resolved snapshot"
+                raise ProjectError(msg)
             snapshot = snapshots[0]
             if require_complete and not snapshot.complete:
-                raise ProjectError(f"Source {declaration.id!r} has no complete resolved snapshot")
+                msg = f"Source {declaration.id!r} has no complete resolved snapshot"
+                raise ProjectError(msg)
             resolution: JsonObject | None = None
             if snapshot.complete:
                 dataset = repository.datasets.resolve(DatasetSpec.source_snapshot(str(snapshot.snapshot_id)))
                 decoded = json.loads(dataset.manifest().to_bytes())
                 if not is_json_object(decoded):
-                    raise ProjectError("Detached source resolution was not a JSON object")
+                    msg = "Detached source resolution was not a JSON object"
+                    raise ProjectError(msg)
                 resolution = decoded
             decision = decision_by_id.get(declaration.id)
             if decision is None or decision.adapter_id is None or decision.adapter_version is None:
-                raise ProjectError(f"No resolved adapter identity for source {declaration.id!r}")
+                msg = f"No resolved adapter identity for source {declaration.id!r}"
+                raise ProjectError(msg)
             entry: JsonObject = {
                 "source_id": declaration.id,
                 "definition_id": str(record.revision_id),
@@ -582,7 +612,8 @@ class Project:
             dataset = repository.datasets.resolve(declaration.spec)
             decoded = json.loads(dataset.manifest().to_bytes())
             if not is_json_object(decoded):
-                raise ProjectError("Detached dataset manifest was not a JSON object")
+                msg = "Detached dataset manifest was not a JSON object"
+                raise ProjectError(msg)
             result.append({
                 "name": declaration.name,
                 "specification_id": dataset.specification_id,
@@ -596,22 +627,33 @@ class Project:
 def _dataset_definition(value: Mapping[str, object]) -> DatasetDefinition:
     raw_selections = value.get("selections")
     if not isinstance(raw_selections, list) or not raw_selections:
-        raise ProjectSchemaError("dataset.selections must be a non-empty array of tables")
+        msg = "dataset.selections must be a non-empty array of tables"
+        raise ProjectSchemaError(msg)
     selections = tuple(_dataset_selection(item) for item in raw_selections)
     metadata = value.get("metadata", {})
     if not is_json_object(metadata):
-        raise ProjectSchemaError("dataset.metadata must be JSON-compatible")
+        msg = "dataset.metadata must be JSON-compatible"
+        raise ProjectSchemaError(msg)
     constraints = _dataset_constraints(value.get("constraints", {}))
     return DatasetDefinition(selections, dict(metadata), constraints)
 
 
 def _dataset_selection(value: object) -> DatasetSelection:
     if not isinstance(value, Mapping):
-        raise ProjectSchemaError("dataset selection must be a table")
+        msg = "dataset selection must be a table"
+        raise ProjectSchemaError(msg)
     raw = dict(value)
     kind = _text(raw.pop("kind", None), field_name="dataset.selection.kind")
     role = _optional_text(raw.pop("role", None), field_name="dataset.selection.role")
-    selector: ExactObservation | Latest | LatestBefore | LatestAll | SourceSelection | ExactSourceSnapshot | LatestCompleteSourceSnapshot
+    selector: (
+        ExactObservation
+        | Latest
+        | LatestBefore
+        | LatestAll
+        | SourceSelection
+        | ExactSourceSnapshot
+        | LatestCompleteSourceSnapshot
+    )
     if kind == "exact":
         selector = ExactObservation(_pop_text(raw, "observation_id", context=kind))
     elif kind == "latest":
@@ -642,7 +684,8 @@ def _dataset_selection(value: object) -> DatasetSelection:
             _pop_optional_timestamp(raw, "before", context=kind),
         )
     else:
-        raise ProjectSchemaError(f"Unsupported dataset selection kind: {kind!r}")
+        msg = f"Unsupported dataset selection kind: {kind!r}"
+        raise ProjectSchemaError(msg)
     _empty_config(raw, f"dataset selection {kind!r}")
     return DatasetSelection(selector, role)
 
@@ -651,18 +694,25 @@ def _dataset_constraints(value: object) -> DatasetConstraints:
     if value is None:
         return DatasetConstraints()
     if not isinstance(value, Mapping):
-        raise ProjectSchemaError("dataset.constraints must be a table")
+        msg = "dataset.constraints must be a table"
+        raise ProjectSchemaError(msg)
     raw = dict(value)
     same_run = _pop_bool(raw, "same_run", default=False, context="dataset.constraints")
     complete = _pop_bool(raw, "complete_snapshots", default=False, context="dataset.constraints")
     skew = _pop_optional_number(raw, "max_observation_skew", context="dataset.constraints")
     validations_raw = raw.pop("validations", [])
     if not isinstance(validations_raw, list):
-        raise ProjectSchemaError("dataset.constraints.validations must be an array")
+        msg = "dataset.constraints.validations must be an array"
+        raise ProjectSchemaError(msg)
     validations: list[tuple[str, str]] = []
     for item in validations_raw:
-        if not isinstance(item, list) or len(item) != 2 or not all(isinstance(part, str) and part for part in item):
-            raise ProjectSchemaError("each validation constraint must be [validator, version]")
+        if (
+            not isinstance(item, list)
+            or len(item) != _VALIDATION_CONSTRAINT_PARTS
+            or not all(isinstance(part, str) and part for part in item)
+        ):
+            msg = "each validation constraint must be [validator, version]"
+            raise ProjectSchemaError(msg)
         validations.append((item[0], item[1]))
     _empty_config(raw, "dataset.constraints")
     return DatasetConstraints(
@@ -689,6 +739,9 @@ def _sync_request(value: Mapping[str, object]) -> SyncRequest:
     return request
 
 
+_VALIDATION_CONSTRAINT_PARTS = 2
+
+
 def _project_toml(project: Project) -> str:
     lines = [f"schema_version = {DECLARATION_VERSION}", "", "[sync]"]
     sync = project.sync_request.to_dict()
@@ -697,49 +750,68 @@ def _project_toml(project: Project) -> str:
         if value is not None:
             lines.append(f"{key} = {_toml_value(value)}")
     for source in project.sources:
-        lines.extend(("", "[[sources]]", f"id = {_toml_value(source.id)}", f"adapter = {_toml_value(source.adapter)}"))
-        if source.adapter_version is not None:
-            lines.append(f"adapter_version = {_toml_value(source.adapter_version)}")
-        if source.description:
-            lines.append(f"description = {_toml_value(source.description)}")
-        if source.role is not None:
-            lines.append(f"role = {_toml_value(source.role)}")
-        if source.tags:
-            lines.append(f"tags = {_toml_value(list(source.tags))}")
-        lines.append("[sources.config]")
-        for key in sorted(source.config):
-            lines.append(f"{_toml_key(key)} = {_toml_value(source.config[key])}")
-        if source.provider is not None:
-            lines.extend((
-                "[sources.provider]",
-                f"id = {_toml_value(source.provider.provider_id)}",
-                f"version = {_toml_value(source.provider.version)}",
-                f"parameters = {_toml_value(source.provider.parameters)}",
-            ))
+        lines.extend(_source_toml_lines(source))
     for dataset in project.datasets:
-        definition = dataset.to_dict()
-        lines.extend(("", "[[datasets]]", f"name = {_toml_value(dataset.name)}"))
-        metadata = definition.get("metadata", {})
-        if metadata:
-            lines.append(f"metadata = {_toml_value(metadata)}")
-        constraints = definition.get("constraints")
-        if constraints is not None:
-            if not isinstance(constraints, dict):
-                raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid constraints")
-            toml_constraints = {key: value for key, value in constraints.items() if value is not None}
-            lines.append(f"constraints = {_toml_value(toml_constraints)}")
-        selections = definition.get("selections")
-        if not isinstance(selections, list):
-            raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid selections")
-        for selection in selections:
-            if not isinstance(selection, dict):
-                raise ProjectSchemaError(f"Dataset {dataset.name!r} has invalid selection")
-            lines.append("[[datasets.selections]]")
-            for key in sorted(selection):
-                value = selection[key]
-                if value is not None:
-                    lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
+        lines.extend(_dataset_toml_lines(dataset))
     return "\n".join(lines) + "\n"
+
+
+def _source_toml_lines(source: SourceDeclaration) -> list[str]:
+    lines = ["", "[[sources]]", f"id = {_toml_value(source.id)}", f"adapter = {_toml_value(source.adapter)}"]
+    if source.adapter_version is not None:
+        lines.append(f"adapter_version = {_toml_value(source.adapter_version)}")
+    if source.description:
+        lines.append(f"description = {_toml_value(source.description)}")
+    if source.role is not None:
+        lines.append(f"role = {_toml_value(source.role)}")
+    if source.tags:
+        lines.append(f"tags = {_toml_value(list(source.tags))}")
+    lines.append("[sources.config]")
+    lines.extend(f"{_toml_key(key)} = {_toml_value(source.config[key])}" for key in sorted(source.config))
+    if source.provider is not None:
+        lines.extend((
+            "[sources.provider]",
+            f"id = {_toml_value(source.provider.provider_id)}",
+            f"version = {_toml_value(source.provider.version)}",
+            f"parameters = {_toml_value(source.provider.parameters)}",
+        ))
+    return lines
+
+
+def _dataset_toml_lines(dataset: DatasetDeclaration) -> list[str]:
+    definition = dataset.to_dict()
+    lines = ["", "[[datasets]]", f"name = {_toml_value(dataset.name)}"]
+    metadata = definition.get("metadata", {})
+    if metadata:
+        lines.append(f"metadata = {_toml_value(metadata)}")
+    constraints = definition.get("constraints")
+    if constraints is not None:
+        if not isinstance(constraints, dict):
+            msg = f"Dataset {dataset.name!r} has invalid constraints"
+            raise ProjectSchemaError(msg)
+        toml_constraints: JsonObject = {}
+        for key, value in constraints.items():
+            if value is not None:
+                toml_constraints[key] = value
+        lines.append(f"constraints = {_toml_value(toml_constraints)}")
+    selections = definition.get("selections")
+    if not isinstance(selections, list):
+        msg = f"Dataset {dataset.name!r} has invalid selections"
+        raise ProjectSchemaError(msg)
+    for selection in selections:
+        if not isinstance(selection, dict):
+            msg = f"Dataset {dataset.name!r} has invalid selection"
+            raise ProjectSchemaError(msg)
+        lines.extend(_selection_toml_lines(selection))
+    return lines
+
+
+def _selection_toml_lines(selection: dict[str, JsonValue]) -> list[str]:
+    lines = ["[[datasets.selections]]"]
+    lines.extend(
+        f"{_toml_key(key)} = {_toml_value(value)}" for key, value in sorted(selection.items()) if value is not None
+    )
+    return lines
 
 
 def _toml_key(value: str) -> str:
@@ -748,7 +820,8 @@ def _toml_key(value: str) -> str:
 
 def _toml_value(value: JsonValue) -> str:
     if value is None:
-        raise ProjectSchemaError("TOML cannot represent null values; omit optional values instead")
+        msg = "TOML cannot represent null values; omit optional values instead"
+        raise ProjectSchemaError(msg)
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
@@ -757,31 +830,34 @@ def _toml_value(value: JsonValue) -> str:
         return str(value)
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise ProjectSchemaError("TOML declarations require finite numbers")
+            msg = "TOML declarations require finite numbers"
+            raise ProjectSchemaError(msg)
         return repr(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
     if isinstance(value, dict):
-        return "{ " + ", ".join(
-            f"{_toml_key(key)} = {_toml_value(item)}" for key, item in sorted(value.items())
-        ) + " }"
-    raise ProjectSchemaError(f"Unsupported TOML value: {type(value).__name__}")
+        return "{ " + ", ".join(f"{_toml_key(key)} = {_toml_value(item)}" for key, item in sorted(value.items())) + " }"
+    msg = f"Unsupported TOML value: {type(value).__name__}"
+    raise ProjectSchemaError(msg)
 
 
 def _require_namespaced(value: str, *, field_name: str) -> None:
     _require_text(value, field_name=field_name)
     if _NAMESPACED_ID.fullmatch(value) is None:
-        raise ProjectSchemaError(f"{field_name} must be a stable namespaced identity")
+        msg = f"{field_name} must be a stable namespaced identity"
+        raise ProjectSchemaError(msg)
 
 
 def _require_text(value: str, *, field_name: str) -> None:
     if not value.strip():
-        raise ProjectSchemaError(f"{field_name} must not be empty")
+        msg = f"{field_name} must not be empty"
+        raise ProjectSchemaError(msg)
 
 
 def _text(value: object, *, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ProjectSchemaError(f"{field_name} must be a non-empty string")
+        msg = f"{field_name} must be a non-empty string"
+        raise ProjectSchemaError(msg)
     return value
 
 
@@ -791,127 +867,142 @@ def _optional_text(value: object, *, field_name: str) -> str | None:
 
 def _string_tuple(value: object, *, field_name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
-        raise ProjectSchemaError(f"{field_name} must be an array of non-empty strings")
+        msg = f"{field_name} must be an array of non-empty strings"
+        raise ProjectSchemaError(msg)
     return tuple(value)
 
 
 def _tags(value: Sequence[str], *, field_name: str) -> tuple[str, ...]:
     if any(not isinstance(item, str) or not item.strip() for item in value):
-        raise ProjectSchemaError(f"{field_name} must contain non-empty strings")
+        msg = f"{field_name} must contain non-empty strings"
+        raise ProjectSchemaError(msg)
     return tuple(sorted(set(value)))
 
 
 def _bool(value: object, *, field_name: str) -> bool:
     if type(value) is not bool:
-        raise ProjectSchemaError(f"{field_name} must be a boolean")
+        msg = f"{field_name} must be a boolean"
+        raise ProjectSchemaError(msg)
     return value
 
 
 def _int(value: object, *, field_name: str) -> int:
     if type(value) is not int:
-        raise ProjectSchemaError(f"{field_name} must be an integer")
+        msg = f"{field_name} must be an integer"
+        raise ProjectSchemaError(msg)
     return value
 
 
 def _timestamp(value: object, *, field_name: str) -> float:
     if isinstance(value, datetime):
         if value.tzinfo is None or value.utcoffset() is None:
-            raise ProjectSchemaError(f"{field_name} datetime must include an offset")
+            msg = f"{field_name} datetime must include an offset"
+            raise ProjectSchemaError(msg)
         return value.timestamp()
     if isinstance(value, str):
         text = value[:-1] + "+00:00" if value.endswith("Z") else value
         try:
             parsed = datetime.fromisoformat(text)
         except ValueError as exc:
-            raise ProjectSchemaError(f"{field_name} must be RFC 3339 or a Unix timestamp") from exc
+            msg = f"{field_name} must be RFC 3339 or a Unix timestamp"
+            raise ProjectSchemaError(msg) from exc
         if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ProjectSchemaError(f"{field_name} datetime must include an offset")
+            msg = f"{field_name} datetime must include an offset"
+            raise ProjectSchemaError(msg)
         return parsed.timestamp()
     if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(float(value)):
-        raise ProjectSchemaError(f"{field_name} must be RFC 3339 or a finite Unix timestamp")
+        msg = f"{field_name} must be RFC 3339 or a finite Unix timestamp"
+        raise ProjectSchemaError(msg)
     return float(value)
 
 
 def _reject_unknown(value: Mapping[str, object], allowed: set[str], *, context: str) -> None:
     unknown = sorted(set(value) - allowed)
     if unknown:
-        raise ProjectSchemaError(f"Unsupported {context} keys: {unknown}")
+        msg = f"Unsupported {context} keys: {unknown}"
+        raise ProjectSchemaError(msg)
 
 
-def _empty_config(config: Mapping[str, object], context: str) -> dict[str, object]:
+def _empty_config(config: Mapping[str, object], context: str) -> JsonObject:
     if config:
-        raise ProjectSchemaError(f"Unsupported {context} configuration keys: {sorted(config)}")
+        msg = f"Unsupported {context} configuration keys: {sorted(config)}"
+        raise ProjectSchemaError(msg)
     return {}
 
 
-def _pop_text(config: dict[str, object], key: str, *, context: str) -> str:
+def _pop_text(config: JsonObject, key: str, *, context: str) -> str:
     return _text(config.pop(key, None), field_name=f"{context}.{key}")
 
 
-def _pop_optional_text(config: dict[str, object], key: str, *, context: str) -> str | None:
+def _pop_optional_text(config: JsonObject, key: str, *, context: str) -> str | None:
     return _optional_text(config.pop(key, None), field_name=f"{context}.{key}")
 
 
-def _pop_text_tuple(config: dict[str, object], key: str, *, context: str) -> tuple[str, ...]:
+def _pop_text_tuple(config: JsonObject, key: str, *, context: str) -> tuple[str, ...]:
     return _string_tuple(config.pop(key, []), field_name=f"{context}.{key}")
 
 
-def _pop_optional_int(config: dict[str, object], key: str, *, context: str) -> int | None:
+def _pop_optional_int(config: JsonObject, key: str, *, context: str) -> int | None:
     value = config.pop(key, None)
     return None if value is None else _int(value, field_name=f"{context}.{key}")
 
 
-def _pop_integrity(config: dict[str, object]) -> tuple[IntegrityExpectation, ...]:
+def _pop_integrity(config: JsonObject) -> tuple[IntegrityExpectation, ...]:
     value = config.pop("expected_integrity", [])
     if not isinstance(value, list):
-        raise ProjectSchemaError("expected_integrity must be an array of tables")
+        msg = "expected_integrity must be an array of tables"
+        raise ProjectSchemaError(msg)
     result: list[IntegrityExpectation] = []
     for item in value:
         if not isinstance(item, Mapping):
-            raise ProjectSchemaError("expected_integrity entries must be tables")
+            msg = "expected_integrity entries must be tables"
+            raise ProjectSchemaError(msg)
         raw = dict(item)
         algorithm = _pop_text(raw, "algorithm", context="expected_integrity")
         digest = _pop_text(raw, "digest", context="expected_integrity")
         required = _pop_bool(raw, "required", default=True, context="expected_integrity")
         metadata = raw.pop("metadata", {})
         if not is_json_object(metadata):
-            raise ProjectSchemaError("expected_integrity.metadata must be JSON-compatible")
+            msg = "expected_integrity.metadata must be JSON-compatible"
+            raise ProjectSchemaError(msg)
         _empty_config(raw, "expected_integrity")
         result.append(IntegrityExpectation(algorithm, digest, required=required, metadata=dict(metadata)))
     return tuple(result)
 
 
-def _pop_bool(config: dict[str, object], key: str, *, default: bool, context: str) -> bool:
+def _pop_bool(config: JsonObject, key: str, *, default: bool, context: str) -> bool:
     return _bool(config.pop(key, default), field_name=f"{context}.{key}")
 
 
-def _pop_optional_number(config: dict[str, object], key: str, *, context: str) -> float | None:
+def _pop_optional_number(config: JsonObject, key: str, *, context: str) -> float | None:
     value = config.pop(key, None)
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(float(value)):
-        raise ProjectSchemaError(f"{context}.{key} must be a finite number")
+        msg = f"{context}.{key} must be a finite number"
+        raise ProjectSchemaError(msg)
     return float(value)
 
 
-def _pop_timestamp(config: dict[str, object], key: str, *, context: str) -> float:
+def _pop_timestamp(config: JsonObject, key: str, *, context: str) -> float:
     return _timestamp(config.pop(key, None), field_name=f"{context}.{key}")
 
 
-def _pop_optional_timestamp(config: dict[str, object], key: str, *, context: str) -> float | None:
+def _pop_optional_timestamp(config: JsonObject, key: str, *, context: str) -> float | None:
     value = config.pop(key, None)
     return None if value is None else _timestamp(value, field_name=f"{context}.{key}")
 
 
-def _pop_time_basis(config: dict[str, object], *, context: str) -> None:
+def _pop_time_basis(config: JsonObject, *, context: str) -> None:
     value = config.pop("time_basis", "repository-observation")
     if value != "repository-observation":
-        raise ProjectSchemaError(f"{context}.time_basis must be 'repository-observation'")
+        msg = f"{context}.time_basis must be 'repository-observation'"
+        raise ProjectSchemaError(msg)
 
 
 __all__ = [
-    "CollectionProvider",
     "DECLARATION_VERSION",
+    "CollectionProvider",
     "DatasetDeclaration",
     "DeclaredSource",
     "Project",

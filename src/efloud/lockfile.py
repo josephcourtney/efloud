@@ -80,7 +80,7 @@ class LockSignature:
         signature = value.get("value")
         if not all(isinstance(item, str) for item in (algorithm, key_id, signature)):
             _signature_failure("Lock signature fields must be strings")
-        return cls(algorithm, key_id, signature)
+        return cls(cast("str", algorithm), cast("str", key_id), cast("str", signature))
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,9 +250,7 @@ def _decode_lock(data: bytes) -> JsonObject:
     if unknown:
         _lock_failure(f"Unsupported lock keys: {unknown}")
     if result.get("version") != LOCK_VERSION:
-        _lock_failure(
-            f"Unsupported efloud.lock version: {result.get('version')!r}; expected {LOCK_VERSION}"
-        )
+        _lock_failure(f"Unsupported efloud.lock version: {result.get('version')!r}; expected {LOCK_VERSION}")
     return result
 
 

@@ -4,13 +4,14 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from efloud import Repository
-from efloud.collections import CollectionDefinition, CollectionInventory
+from efloud.collections import CollectionContext, CollectionDefinition, CollectionInventory
 from efloud.lockfile import LockfileError, ProjectLock, SignaturePolicy
 from efloud.project import (
     CollectionProvider,
@@ -21,6 +22,9 @@ from efloud.project import (
     ProviderResolutionError,
 )
 from efloud.sources import CollectionSource, LocalSource
+
+if TYPE_CHECKING:
+    from efloud.json_types import JsonObject
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -69,13 +73,14 @@ class EmptyCollectionProvider:
         self,
         *,
         source: CollectionSource,
-        parameters: dict[str, object],
+        parameters: JsonObject,
         base_dir: Path,
     ) -> CollectionDefinition:
         self.seen_parameters = dict(parameters)
         assert base_dir.is_absolute()
 
-        async def enumerate_empty(*, context: object) -> CollectionInventory:
+        async def enumerate_empty(*, context: CollectionContext) -> CollectionInventory:
+            await asyncio.sleep(0)
             del context
             return CollectionInventory((), complete=True, upstream_identity="empty")
 
@@ -91,7 +96,7 @@ def test_project_round_trips_semantic_toml_and_anchors_local_paths(tmp_path: Pat
     assert "max_observation_skew" not in rendered
     assert project.declaration_id == Project.from_toml(rendered, base_dir=project_dir).declaration_id
     assert project.sync_request.max_concurrency == 3
-    assert project.dataset("analysis")._definition().to_dict() == {  # noqa: SLF001 - verifies public model parity.
+    assert project.dataset("analysis")._definition().to_dict() == {
         "selections": [{"kind": "latest", "artifact_key": "analysis:input", "role": "configuration"}],
         "metadata": {"purpose": "test"},
         "constraints": {
@@ -110,7 +115,9 @@ def test_project_round_trips_semantic_toml_and_anchors_local_paths(tmp_path: Pat
     assert Path(source.path) == (project_dir / "inputs" / "analysis.json").resolve()
 
 
-def test_project_file_path_resolution_is_independent_of_process_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_project_file_path_resolution_is_independent_of_process_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project_dir = tmp_path / "project"
     project_dir.mkdir()
     declaration = project_dir / "efloud.toml"
@@ -242,8 +249,10 @@ def test_dataset_declaration_accepts_all_selector_shapes_and_normalizes_time() -
     definition = project.datasets[0].to_dict()
     selections = definition["selections"]
     assert isinstance(selections, list)
-    assert selections[2]["timestamp"] == 1789041600.0
-    assert selections[3]["before"] == 1789041600.0
+    assert isinstance(selections[2], dict)
+    assert isinstance(selections[3], dict)
+    assert selections[2]["timestamp"] == pytest.approx(1789041600.0)
+    assert selections[3]["before"] == pytest.approx(1789041600.0)
     assert Project.from_toml(project.to_toml()).datasets[0].specification_id == project.datasets[0].specification_id
 
 
@@ -332,6 +341,7 @@ def test_project_sync_lock_roundtrip_and_detached_source_resolution(tmp_path: Pa
     assert isinstance(source_resolution, dict)
     members = source_resolution["members"]
     assert isinstance(members, list)
+    assert isinstance(members[0], dict)
     assert members[0]["artifact_key"] == "analysis:input"
     assert len(lock.datasets) == 1
     assert lock.datasets[0]["name"] == "analysis"
@@ -377,9 +387,14 @@ def test_lock_ed25519_signature_uses_external_trust_key() -> None:
     assert signed.lock_id == lock.lock_id
     assert signed.verify_signatures({"release": public_raw}, policy=required)
     assert not signed.verify_signatures({}, policy=required)
-    other = Ed25519PrivateKey.generate().public_key().public_bytes(
-        serialization.Encoding.Raw,
-        serialization.PublicFormat.Raw,
+    other = (
+        Ed25519PrivateKey
+        .generate()
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        )
     )
     assert not signed.verify_signatures({"release": other}, policy=required)
     assert ProjectLock.from_bytes(signed.to_bytes()).verify_signatures({"release": public_raw}, policy=required)
@@ -392,6 +407,8 @@ def test_lock_requires_current_source_definition_and_complete_snapshot(tmp_path:
     (inputs / "analysis.json").write_text("{}", encoding="utf-8")
     project = Project.from_toml(PROJECT_TOML, base_dir=project_dir)
 
-    with Repository.create(tmp_path / "repository") as repository:
-        with pytest.raises(ProjectError, match="current definition|no resolved snapshot"):
-            project.lock(repository)
+    with (
+        Repository.create(tmp_path / "repository") as repository,
+        pytest.raises(ProjectError, match=r"current definition|no resolved snapshot"),
+    ):
+        project.lock(repository)

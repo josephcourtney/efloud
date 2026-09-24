@@ -200,7 +200,7 @@ sync force="false":
       # Fingerprint the sync policy itself.
       printf '%s\n' "sync"
       printf '%s\n' "uv sync"
-      printf 'uv-sync-arg=%s\n' "${sync_args[@]}"
+      printf 'uv-sync-arg=%s\n' "${sync_args[@]+"${sync_args[@]}"}"
 
       for file in pyproject.toml uv.lock uv.toml .python-version; do
         [[ ! -f "$file" ]] || cat "$file"
@@ -223,7 +223,7 @@ sync force="false":
     exit 0
   fi
 
-  {{UV}} sync "${sync_args[@]}"
+  {{UV}} sync "${sync_args[@]+"${sync_args[@]}"}"
 
   # uv sync may update uv.lock.
   fingerprint > "$stamp"
@@ -533,7 +533,7 @@ test strict="true" fast="false" dev="false" quiet="" logs="" debug="" failing="f
     eval "args+=($mode_flags)"
   fi
 
-  args+=("${extra_flags[@]}")
+  args+=("${extra_flags[@]+"${extra_flags[@]}"}")
 
   test_paths=("{{ROOT_DIR}}/{{PY_TESTPATH}}")
 
@@ -551,7 +551,7 @@ test strict="true" fast="false" dev="false" quiet="" logs="" debug="" failing="f
       "--no-cov"
     )
 
-    collect_args+=("${extra_flags[@]}")
+    collect_args+=("${extra_flags[@]+"${extra_flags[@]}"}")
     collect_args+=("${test_paths[@]}")
 
     set +e

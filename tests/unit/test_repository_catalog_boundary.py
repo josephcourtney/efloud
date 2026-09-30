@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from efloud.catalog import MemoryCatalog
+from efloud.catalog.memory import MemoryCatalog
 from efloud.metadata_store import LegacyMetadataStore
 from efloud.repository import Repository
 
@@ -48,9 +48,7 @@ class _UnusedBlobStore:
 
 def test_legacy_metadata_boundary_contains_only_replacement_targets() -> None:
     public_methods = {
-        name
-        for name, value in LegacyMetadataStore.__dict__.items()
-        if not name.startswith("_") and callable(value)
+        name for name, value in LegacyMetadataStore.__dict__.items() if not name.startswith("_") and callable(value)
     }
     assert public_methods == {
         "materializations_for",

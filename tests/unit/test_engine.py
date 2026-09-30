@@ -53,7 +53,7 @@ def test_engine_records_http_adapter_result(tmp_path: Path, monkeypatch: pytest.
         assert snapshot.complete
         assert snapshot.evidence["status_code"] == 200
         assert result.repository_run_id is not None
-        operation = repository.metadata.operations_for_run(result.repository_run_id)[0]
+        operation = repository.operations_for_run(result.repository_run_id)[0]
         assert operation.producer.producer_id == "efloud:http"
         assert operation.producer.version == "1"
 

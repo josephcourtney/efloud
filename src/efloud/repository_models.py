@@ -307,11 +307,11 @@ def absence_id_for(
     )
 
 
-def run_id_for(*, root: str, started_at: float, source_ids: tuple[str, ...]) -> RunId:
+def run_id_for(*, started_at: float, source_ids: tuple[str, ...]) -> RunId:
     return RunId(
         stable_id(
             "run",
-            {"root": root, "started_at": started_at, "source_ids": list(source_ids)},
+            {"started_at": started_at, "source_ids": list(source_ids)},
         )
     )
 

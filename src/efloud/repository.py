@@ -166,7 +166,6 @@ class Repository:
         started = time.time() if started_at is None else started_at
         normalized_source_ids = tuple(sorted(str(source_id) for source_id in source_ids))
         run_id = run_id_for(
-            root=self.root.as_posix(),
             started_at=started,
             source_ids=normalized_source_ids,
         )

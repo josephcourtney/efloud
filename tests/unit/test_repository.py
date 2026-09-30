@@ -220,3 +220,27 @@ def test_schema_v1_is_rejected_without_migration(tmp_path: Path) -> None:
         assert names == {"sentinel"}
     finally:
         connection.close()
+
+
+def test_dataset_identity_is_independent_of_repository_location(tmp_path: Path) -> None:
+    def resolve_at(root: Path) -> tuple[str, str]:
+        with Repository(root) as repo:
+            source, run, op = _run(repo)
+            observation = repo.ingest_bytes(
+                "artifact:a",
+                b"hello",
+                run_id=run,
+                operation_id=op,
+                source_id=source,
+                observed_at=101.0,
+            )
+            dataset = repo.resolve_dataset(
+                DatasetDefinition.from_selectors(ExactObservation(observation.observation_id))
+            )
+            return str(dataset.id), dataset.content_identity
+
+    left_id, left_content = resolve_at(tmp_path / "left")
+    right_id, right_content = resolve_at(tmp_path / "right")
+
+    assert left_id == right_id
+    assert left_content == right_content

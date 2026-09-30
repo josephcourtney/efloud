@@ -19,6 +19,7 @@ class GitTreeStore:
     root: Path
 
     def __post_init__(self) -> None:
+        """Normalize the configured Git repository root."""
         object.__setattr__(self, "root", self.root.resolve())
 
     @classmethod

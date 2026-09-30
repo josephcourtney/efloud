@@ -50,12 +50,10 @@ def _resolve_two_source_dataset(repository: Repository) -> ImmutableDataset:
         observed_at=102.0,
         source_path="right.dat",
     )
-    definition = DatasetDefinition(
-        (
-            DatasetSelection(ExactObservation(left_observation.observation_id), role="left-role"),
-            DatasetSelection(ExactObservation(right_observation.observation_id), role="right-role"),
-        )
-    )
+    definition = DatasetDefinition((
+        DatasetSelection(ExactObservation(left_observation.observation_id), role="left-role"),
+        DatasetSelection(ExactObservation(right_observation.observation_id), role="right-role"),
+    ))
     return repository.resolve_dataset(definition)
 
 

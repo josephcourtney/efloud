@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import functools
-import os
 import shutil
 import stat
 import threading
@@ -100,12 +99,12 @@ def test_annex_verify_detects_corrupted_local_content(tmp_path: Path) -> None:
     object_path = _annex_object_path(store, key)
 
     original_mode = object_path.stat().st_mode
-    os.chmod(object_path, original_mode | stat.S_IWUSR)
+    Path(object_path).chmod(original_mode | stat.S_IWUSR)
     try:
         object_path.write_bytes(b"corrupted content")
     finally:
         if object_path.exists():
-            os.chmod(object_path, original_mode)
+            Path(object_path).chmod(original_mode)
 
     assert not store.verify(key)
     assert str(key).startswith("SHA256-")

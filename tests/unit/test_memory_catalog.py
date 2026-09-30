@@ -110,7 +110,9 @@ def test_memory_catalog_tracks_observation_absence_provenance_and_validation() -
 
     catalog.finish_operation(operation_id, finished_at=7.0, status="succeeded", details={})
     catalog.finish_run(run_id, finished_at=8.0, status="succeeded")
-    assert catalog.run(run_id).status == "succeeded"  # type: ignore[union-attr]
+    finished = catalog.run(run_id)
+    assert finished is not None
+    assert finished.status == "succeeded"
 
 
 def test_memory_catalog_keeps_snapshot_history_and_merges_dataset_specifications() -> None:
@@ -155,7 +157,9 @@ def test_memory_catalog_keeps_snapshot_history_and_merges_dataset_specifications
     assert stored is not None
     assert stored.created_at == 10.0
     assert len(stored.specifications) == 2
-    assert {spec.definition["selections"][0]["kind"] for spec in stored.specifications} == {"latest", "exact"}
+    definitions = [specification.definition for specification in stored.specifications]
+    assert first.definition in definitions
+    assert second.definition in definitions
 
 
 def test_catalog_boundary_excludes_physical_tree_and_materialization_state() -> None:

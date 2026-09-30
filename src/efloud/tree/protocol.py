@@ -13,11 +13,13 @@ class GitTreeId:
     value: str
 
     def __post_init__(self) -> None:
+        """Reject empty or whitespace-containing tree object IDs."""
         if not self.value or any(char.isspace() for char in self.value):
             msg = "Git tree IDs must be non-empty single tokens"
             raise ValueError(msg)
 
     def __str__(self) -> str:
+        """Return the underlying Git tree object ID."""
         return self.value
 
 
@@ -28,11 +30,13 @@ class GitCommitId:
     value: str
 
     def __post_init__(self) -> None:
+        """Reject empty or whitespace-containing commit object IDs."""
         if not self.value or any(char.isspace() for char in self.value):
             msg = "Git commit IDs must be non-empty single tokens"
             raise ValueError(msg)
 
     def __str__(self) -> str:
+        """Return the underlying Git commit object ID."""
         return self.value
 
 
@@ -45,6 +49,7 @@ class TreeBlob:
     mode: GitFileMode = "100644"
 
     def __post_init__(self) -> None:
+        """Reject paths that cannot represent one safe repository-relative Git entry."""
         parts = self.relative_path.split("/")
         if (
             not self.relative_path

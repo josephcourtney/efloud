@@ -12,6 +12,7 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Changed
 
+- Split repository infrastructure behind internal `Catalog`, `ContentStore`, and `TreeStore` boundaries; semantic repository state now routes through `Catalog`, while the temporary legacy metadata capability is limited to materialization bookkeeping and custom-tree persistence.
 - Close dataset/export acceptance through the clean public API: verify resolve-versus-freeze semantics, frozen historical evidence, incomplete-snapshot behavior, detached handoff, missing/corrupt content, safe exclusive publication, and a standard-library-only manifest consumer.
 - Exercise explicit Linux reflink export on a reflink-enabled XFS CI filesystem and atomic `renameat2(RENAME_NOREPLACE)` publication; document detached dataset manifest v1 as a repository-independent contract.
 - Reject `.` as an export member path, return `False` when detached verification has no usable root, and report public manifest-layout export failures consistently as `ExportError`.

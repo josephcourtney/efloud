@@ -37,6 +37,7 @@ class MemoryCatalog:  # ruff: ignore[too-many-instance-attributes,too-many-publi
     """Pure in-memory semantic catalog for fast storage-independent tests."""
 
     def __init__(self) -> None:
+        """Initialize empty semantic evidence collections."""
         self._sources: dict[SourceId, SourceRecord] = {}
         self._runs: dict[RunId, RunRecord] = {}
         self._operations: dict[OperationId, OperationRecord] = {}
@@ -227,7 +228,9 @@ class MemoryCatalog:  # ruff: ignore[too-many-instance-attributes,too-many-publi
             for absence in self._absences.values()
             if absence.artifact_key == artifact_key and (before is None or absence.observed_at <= before)
         ]
-        return max(candidates, key=lambda item: (item.observed_at, str(item.observation_id)), default=None)
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: (item.observed_at, str(item.observation_id)))
 
     def latest_state(self, artifact_key: ArtifactKey, *, before: float | None = None) -> ArtifactState | None:
         observation = self.latest_observation(artifact_key, before=before)
@@ -251,7 +254,9 @@ class MemoryCatalog:  # ruff: ignore[too-many-instance-attributes,too-many-publi
             for observation in self._observations.values()
             if observation.artifact_key == artifact_key and (before is None or observation.observed_at <= before)
         ]
-        return max(candidates, key=lambda item: (item.observed_at, str(item.observation_id)), default=None)
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: (item.observed_at, str(item.observation_id)))
 
     def artifact_keys(self) -> tuple[ArtifactKey, ...]:
         keys = {observation.artifact_key for observation in self._observations.values()}

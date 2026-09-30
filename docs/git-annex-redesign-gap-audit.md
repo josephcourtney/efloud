@@ -29,7 +29,7 @@ The experiment should replace infrastructure around those semantics rather than 
 | filesystem tree identity | `TreeId`, `TreeEntry`, custom indexing/tree persistence | Git tree/commit | replace production identity mechanism |
 | source inventory semantics | adapters + inventory/reconciliation | Efloud | retain and narrow |
 | generic HTTP/rsync transfer | `transport/`, protocol runtime/retry/cache code | git-annex where practical | delete after source-specific gaps are classified |
-| source-specific authenticated/API retrieval | adapters | Efloud-assisted temporary retrieval → git-annex ingest | retain only where required |
+| source-specific authenticated/API retrieval | adapters | Efloud-assisted temporary retrieval -> git-annex ingest | retain only where required |
 | semantic metadata | SQLite metadata/repository records | Efloud catalog | retain, shrink to unique semantics |
 | public durable facade | `Repository` | `Repository` facade over catalog + content/tree infrastructure | retain public boundary; split internals |
 | generic derivation DAG/execution | `derivation.py`, executor paths | DVC/downstream | remove from core |
@@ -62,6 +62,78 @@ The following behaviors must have explicit tests independent of a particular sto
 
 Existing tests may satisfy an item; the experiment should reuse them when they assert the semantic contract rather than storage implementation details.
 
+## Phase A evidence map
+
+The semantic characterization is intentionally mapped to storage-independent assertions. Tests may still execute through the current backend until the cutover, but the listed assertion is not the legacy CAS/tree/transport mechanism itself.
+
+| # | Characterization | Retained evidence |
+|---|---|---|
+| 1 | unchanged bytes create new observations without new semantic content | `tests/unit/test_repository.py::test_content_dedup_and_observation_history` |
+| 2 | changed bytes create new content without rewriting history | `tests/unit/test_dataset_export_public_acceptance.py::test_frozen_membership_and_detached_evidence_ignore_later_source_changes` |
+| 3 | absence requires sufficient complete coverage | `tests/unit/test_absence_evidence.py::test_inventory_absence_requires_complete_coverage`, `::test_inventory_absence_requires_target_inside_scope` |
+| 4 | partial/scoped inventory cannot prove global absence | `tests/unit/test_inventory_reconciliation.py::test_incomplete_inventory_never_infers_absence`, `::test_complete_scoped_inventory_only_infers_absence_inside_known_scope`, plus public incomplete-snapshot acceptance |
+| 5 | interrupted acquisition cannot create authoritative references to unavailable content | `tests/unit/test_phase14_17.py::test_blob_before_metadata_commit_is_a_safe_orphan`; preserve the metadata atomicity assertion while replacing blob-path cleanup details |
+| 6 | semantic/source validation is distinct from byte integrity | `tests/unit/test_phase12_validation.py::test_required_http_integrity_failure_does_not_advance_source`, `::test_invalid_json_fails_validation_without_mutating_content` |
+| 7 | validation evidence is reusable/versioned for unchanged content | `tests/unit/test_phase12_validation.py::test_validation_reuses_content_and_validator_version_evidence`, `::test_invalid_gzip_is_reusable_validation_evidence` |
+| 8 | exact snapshot resolution is deterministic | `tests/unit/test_phase14_17.py::test_snapshot_reopens_elsewhere_and_ignores_later_mutation`, `::test_partial_snapshots_never_become_complete_datasets` |
+| 9 | latest/latest-before are observation-time deterministic | `tests/unit/test_repository.py::test_latest_before_dataset_selection` |
+| 10 | multi-source composition preserves source/role evidence | `tests/unit/test_semantic_characterization.py::test_multi_source_dataset_preserves_source_and_role_evidence` |
+| 11 | repeated resolution/export produces stable dataset/manifest identity | `tests/unit/test_dataset_export_public_acceptance.py::test_resolve_is_read_only_while_freeze_persists_same_identity`, `tests/unit/test_phase14_17.py::test_materialization_is_detached_deterministic_and_read_only` |
+| 12 | repository path and export layout do not affect `DatasetId` | `tests/unit/test_repository.py::test_dataset_identity_is_independent_of_repository_location`, `tests/unit/test_semantic_characterization.py::test_dataset_identity_is_independent_of_detached_export_layout` |
+| 13 | frozen membership/evidence survives later source changes | `tests/unit/test_dataset_export_public_acceptance.py::test_frozen_membership_and_detached_evidence_ignore_later_source_changes` |
+| 14 | incomplete snapshots cannot establish complete reproducibility | `tests/unit/test_dataset_export_public_acceptance.py::test_incomplete_source_snapshot_never_implies_absence_or_reproducibility`, `tests/unit/test_phase14_17.py::test_partial_snapshots_never_become_complete_datasets` |
+| 15 | detached manifests/locks are repository-layout independent | `tests/unit/test_dataset_export_public_acceptance.py::test_freeze_export_manifest_reopens_and_verifies_after_repository_is_gone`, `::test_generic_standard_library_consumer_validates_manifest_and_bytes`, `tests/unit/test_project_declaration.py::test_project_sync_lock_roundtrip_and_detached_source_resolution` |
+
+No additional broad characterization suite is required. Future tests should be added only when a replacement boundary exposes a concrete semantic gap.
+
+## Legacy-only test classification
+
+The following assertions are not requirements of the replacement architecture and should be deleted or rewritten when their owning subsystem is removed:
+
+| Legacy assertion family | Current examples | Disposition |
+|---|---|---|
+| filesystem CAS object paths/counts/layout | `test_blob_store_contract.py`, blob-path/count assertions in repository and acceptance tests | delete; retain only content immutability/dedup/presence semantics through `ContentStore` |
+| custom SHA-256 storage verification and corruption mechanics | `FilesystemBlobStore` corruption/path tests, CAS-specific maintenance checks | replace with real git-annex verification/presence/drop/reacquire integration tests |
+| orphan-blob filesystem scanning and CAS reachability cleanup | maintenance portions of `test_phase14_17.py` | replace with fail-closed annex-aware maintenance; do not preserve CAS traversal |
+| custom `TreeId`/`TreeEntry` hash persistence | `test_indexing.py`, tree-hash/path assertions in snapshot tests | delete production mechanism; retain exact source membership/completeness semantics and replace tree evidence with Git |
+| transport implementation internals | low-level HTTP/rsync retry/cache/process assertions in `test_transport_http_utils_rsync.py` | delete when delegated; retain only adapter/source evidence behavior that Efloud still owns |
+| generic derivation DAG/execution/reuse | `test_engine_derived.py`, derivation-specific portions of phase 8/11 tests | delete from core; retain generic observation provenance needed for acquisition semantics |
+| legacy schema migration support | historical schema/migration tests | reject unsupported pre-experiment formats explicitly; do not preserve migration code in normal runtime |
+
+Tests that mix a retained semantic assertion with one of these implementation assertions should be split during the corresponding cutover instead of retained wholesale.
+
+## Persisted semantic field classification
+
+SQLite remains a semantic catalog, not a second content/tree/workflow implementation.
+
+| Persisted concept | Classification | Experimental destination |
+|---|---|---|
+| source ID and source-definition revisions | keep | catalog |
+| run/operation identity, lifecycle, producer/version, normalized acquisition parameters | keep | catalog provenance |
+| logical artifact key | keep | catalog |
+| immutable content reference, byte size, media type | keep, identity source changes | catalog stores annex-backed `ContentRef`; git-annex owns byte identity/presence/integrity |
+| physical content path/location/copy count | derive/delete | query git-annex; never semantic catalog identity |
+| observations and explicit absences | keep | catalog temporal evidence |
+| provenance edges | keep | catalog |
+| semantic/source validation evidence | keep | catalog |
+| storage-integrity validation records generated by Efloud | delete | git-annex verification owns byte integrity |
+| source snapshot time/scope/completeness/evidence | keep | catalog |
+| exact source-snapshot membership binding | keep | catalog semantic membership/evidence |
+| custom `TreeId` and persisted `TreeEntry` hash identity | delete/replace | Git tree/commit evidence; not `DatasetId` |
+| dataset specification, frozen dataset identity, exact members, roles, resolution evidence | keep | catalog and detached manifest/lock |
+| materialization/export filesystem paths as authoritative state | delete | layout/export layer only; optional operational audit must not affect identity |
+| generic derivation keys/task execution state | delete from core | downstream DVC/consumer workflow |
+| historical alpha schema compatibility/migrations | delete | clean-break current schema plus one-shot external migration if later required |
+
+## Public contract migration destination
+
+- `Repository`: retained public semantic facade; internally composes catalog, annex content custody, and Git tree/history capabilities.
+- `Engine`: retained but narrowed to discovery/reconciliation/acquisition/observation orchestration.
+- `Source` and built-ins: retained declarative contracts using stable namespaced adapter/provider identity.
+- `DatasetSpec`, `Dataset`, and `DatasetManifest`: retained as semantic intent, exact immutable membership, and portable detached evidence.
+- `efloud.toml`: retained as editable intent and continues to round-trip the same semantic models as Python APIs.
+- `efloud.lock`: retained as canonical exact resolved state and extended with Git/git-annex evidence without making either tool's repository identity the Efloud dataset identity.
+
 ## Phase A acceptance criteria — characterization and boundaries
 
 Phase A is complete when:
@@ -69,8 +141,10 @@ Phase A is complete when:
 - every characterization item above maps to at least one focused test;
 - tests that only assert legacy CAS paths, custom tree hashes, transfer internals, or generic derivation execution are classified for deletion rather than preserved as requirements;
 - no new compatibility API is introduced;
-- the current persistent semantic fields are classified as `keep`, `derive from git-annex/Git`, or `delete`;
+- the current persistent semantic fields are classified as `keep`, `derive from git-annex/Git`, or delete;
 - the public `Repository`, `Engine`, source, dataset, manifest, declarative-project, and lock contracts have an explicit migration destination.
+
+The evidence map and classifications above satisfy the design portion of Phase A. Phase A is considered validated only after the exact branch head containing the characterization tests passes the applicable local checks.
 
 ## Phase B acceptance criteria — infrastructure ports
 

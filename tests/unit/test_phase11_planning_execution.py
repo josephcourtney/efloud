@@ -119,7 +119,7 @@ def test_planning_is_deterministic_and_performs_no_acquisition_or_authoritative_
         assert [operation.operation_key for operation in first.operations] == ["source:a", "source:b"]
         assert adapter.calls == []
         assert repository.artifact_keys() == ()
-        assert repository.metadata.operations_for_source(SourceId("a")) == ()
+        assert repository.operations_for_source(SourceId("a")) == ()
         assert first.decisions[0].refresh is not None
         assert first.decisions[0].refresh.reason
         assert first.operation("source:a").parameters["adapter_capabilities"] == {
@@ -174,7 +174,7 @@ def test_dry_run_executes_exact_plan_shape_without_repository_mutation(tmp_path:
         assert {operation.status for operation in result.execution.operations} == {"not-executed"}
         assert adapter.calls == []
         assert repository.artifact_keys() == ()
-        assert repository.metadata.operations_for_source(SourceId("a")) == ()
+        assert repository.operations_for_source(SourceId("a")) == ()
 
 
 def test_executor_enforces_requested_concurrency_bound(tmp_path: Path) -> None:
@@ -207,7 +207,7 @@ def test_failed_dependency_blocks_derived_operation_and_persists_adapter_produce
         assert task.calls == 0
         assert result.ok is False
         assert result.repository_run_id is not None
-        persisted = repository.metadata.operations_for_run(result.repository_run_id)
+        persisted = repository.operations_for_run(result.repository_run_id)
         source_operation = next(operation for operation in persisted if operation.subject == "a")
         derived_operation = next(operation for operation in persisted if operation.subject == "dependent")
         assert source_operation.producer.producer_id == "efloud:http"

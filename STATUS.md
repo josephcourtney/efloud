@@ -4,28 +4,30 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Experimental clean-break rewrite delegating generic storage/tree/workflow infrastructure to Git, git-annex, optional DataLad, and downstream DVC while preserving Efloud's source-observation and semantic-dataset model.
+Phase B of the experimental clean-break rewrite: cut `Repository` onto the proven internal `Catalog`, `ContentStore`, and `TreeStore` boundaries while leaving legacy tree/materialization behavior explicitly isolated until replacement.
 
 ## Baseline
 
 - Branch: `experiment/git-annex-redesign`.
 - Starting main commit: `53023cf9482e7a2cfca20a0f71f5cb05483ba1b8`.
 - Current main already contains declarative `efloud.toml` and canonical lock/signing work; that boundary is being reused.
-- The branch has a working annex-oriented internal `ContentStore` and a real `GitAnnexContentStore` integration slice.
-- The legacy filesystem CAS, custom tree identity, transfer/runtime code, and derivation execution still exist and are targeted for replacement/deletion after the corresponding replacement boundaries are proven.
+- The experiment has internal `ContentStore`, `TreeStore`, and `Catalog` ports; none are package-root API.
+- The legacy filesystem CAS, custom tree persistence, transfer/runtime code, and derivation execution still exist and remain replacement/deletion targets.
 
 ## Verified evidence
 
 - macOS arm64 local environment: Git 2.56.0 and git-annex 10.20260901.
-- The real `tests/integration/test_git_annex_content_store.py` tests passed locally against git-annex.
-- The repository-location-independent dataset identity fix was applied and its focused test passed locally.
-- The user reported `just check` passing through branch commit `0231dfb851b1f62f1e8d4f5cc1fb959ec6ec0ec7`.
-- New Phase A characterization/audit changes after that commit are not yet locally validated on their exact head.
+- Real git-annex integration tests pass for content-key calculation/ingest, deduplication, presence, read, and verification.
+- Real Git integration tests pass for canonical tree identity, nested/unusual portable paths, modes/symlinks, changed-tree identity, and retained linear commit history.
+- Repository-location-independent `DatasetId` behavior is covered and passes.
+- Phase A semantic characterization is complete, including explicit multi-source evidence and export-layout-independent dataset identity tests.
+- The internal `Catalog` boundary excludes physical tree/materialization state and has a pure `MemoryCatalog` semantic fake.
+- Exact branch commit `5db183180de957d01bf472eb1eefdab213d358b8` passed `just check` locally: syntax, format, lint, type checking, import contracts, full tests, and coverage.
 
 ## Decisions under test
 
-- git-annex owns content identity/custody/integrity/logistics.
-- Git owns filesystem-tree revision identity.
+- git-annex owns content custody/integrity/logistics; annex keys and physical locations are infrastructure evidence, not dataset identity.
+- Git owns filesystem-tree revision identity; Git tree/commit IDs are not `DatasetId`.
 - Efloud owns artifact/source identity, inventories/coverage/absence, observations, semantic/source validation evidence, temporal resolution, semantic dataset identity, locks, and provenance explanation.
 - Public `Repository` remains the semantic facade; internal catalog/content/tree ownership is split.
 - DataLad is optional; DVC is downstream and never a core dependency.
@@ -33,19 +35,17 @@ Experimental clean-break rewrite delegating generic storage/tree/workflow infras
 
 ## Current state
 
-- Phase A semantic characterization is mapped in `docs/git-annex-redesign-gap-audit.md`.
-- Two previously implicit requirements now have focused tests: multi-source source/role evidence and independence of `DatasetId` from detached export layout.
-- Legacy-only CAS/tree/transport/derivation test families are classified for deletion or replacement rather than preservation.
-- Persisted concepts are classified as semantic keep, Git/git-annex-derived/replaced, or delete.
-- Phase A remains pending only the exact-head local validation recorded in `TODO.md`.
+- Phase A is complete and locally validated.
+- The initial real Git/git-annex infrastructure proof is complete for ingest/verify and tree/commit operations.
+- The narrow semantic `Catalog` and pure in-memory fake are implemented and locally validated.
+- `Repository` still directly owns the broad legacy metadata/blob abstractions; this is now the immediate dependency-cut target.
 
 ## Immediate gaps
 
-- Validate the exact branch head with the focused characterization tests and `just check`.
-- Add the minimal Git `TreeStore` and semantic `Catalog` boundaries required by the first replacement slice.
-- Finish real git-annex proof for get/drop/reacquire, URL delegation where appropriate, unusual filenames, corruption, and interruption/retry.
-- Do not change `ContentRef` or delete the legacy CAS until those boundaries are proven.
+- Route semantic repository persistence through `Catalog` and isolate legacy materialization/custom-tree calls.
+- Finish git-annex get/drop/reacquire, appropriate URL delegation, corruption, interruption/retry, and destructive-operation behavior.
+- Define the portable semantic-content ↔ annex-key mapping before changing `ContentRef` or deleting the filesystem CAS.
 
 ## Resume point
 
-Continue with `TODO.md`: validate Phase A on the exact head, then complete the minimal infrastructure ports and remaining Git/git-annex proof before the content-identity cutover.
+Continue with `TODO.md`: perform the first `Repository` dependency cut, then finish the remaining real git-annex proof before any content-persistence cutover.

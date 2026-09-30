@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess  # noqa: S404 - argv-only subprocesses are the git/git-annex integration boundary.
+import subprocess  # ruff: ignore[suspicious-subprocess-import] - argv-only subprocesses are the git/git-annex integration boundary.
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,7 +51,7 @@ def _run(
         msg = "git is not available on PATH"
         raise GitAnnexUnavailableError(msg)
     command = (git, *args)
-    completed = subprocess.run(  # noqa: S603 - no shell; argv is passed directly to Git.
+    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - no shell; argv is passed directly to Git.
         command,
         cwd=root,
         check=False,

@@ -6,7 +6,6 @@ import stat
 import threading
 from contextlib import contextmanager
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -16,7 +15,7 @@ from efloud.git_commands import run_git
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-    from typing import BinaryIO
+    from pathlib import Path
 
 pytestmark = [
     pytest.mark.integration,
@@ -41,20 +40,22 @@ def _http_file_server(root: Path) -> Iterator[str]:
 
 
 @contextmanager
-def _interruptible_http_file_server(root: Path) -> Iterator[tuple[str, Callable[[], None]]]:
+def _interruptible_http_payload_server(payload: bytes) -> Iterator[tuple[str, Callable[[], None]]]:
     state = {"interrupt": True}
 
     class InterruptingHandler(SimpleHTTPRequestHandler):
-        def copyfile(self, source: BinaryIO, outputfile: BinaryIO) -> None:
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            body = payload[:8] if state["interrupt"] else payload
+            self.wfile.write(body)
+            self.wfile.flush()
             if state["interrupt"]:
-                outputfile.write(source.read(8))
-                outputfile.flush()
                 self.close_connection = True
-                return
-            shutil.copyfileobj(source, outputfile)
 
-    handler = functools.partial(InterruptingHandler, directory=root.as_posix())
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), InterruptingHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
@@ -227,14 +228,10 @@ def test_annex_interrupted_web_get_can_be_retried_without_false_presence(tmp_pat
     run_git(primary.root, "config", "annex.security.allowed-ip-addresses", "127.0.0.1")
 
     payload = b"interrupted transfer payload" * 4096
-    web_root = tmp_path / "web"
-    web_root.mkdir()
-    (web_root / "payload.bin").write_bytes(payload)
-
     key = primary.ingest_bytes(payload)
     run_git(primary.root, "annex", "copy", "--to=backup", f"--key={key}")
 
-    with _interruptible_http_file_server(web_root) as (base_url, allow_complete_downloads):
+    with _interruptible_http_payload_server(payload) as (base_url, allow_complete_downloads):
         primary.register_url(key, f"{base_url}/payload.bin")
         primary.drop(key)
         assert not primary.has_content(key)

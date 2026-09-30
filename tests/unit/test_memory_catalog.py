@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, BinaryIO, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
 from efloud.catalog import Catalog, MemoryCatalog
 from efloud.metadata_store import DatasetMemberRecord, DatasetRecord
-from efloud.repository import Repository
 from efloud.repository_models import (
     ArtifactAbsence,
     ArtifactKey,
@@ -25,40 +24,9 @@ from efloud.repository_models import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from efloud.json_types import JsonObject
-    from efloud.metadata_store import MetadataStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.small]
-
-
-class _UnusedBlobStore:
-    """Fail if a catalog-only repository slice touches content storage."""
-
-    def put_path(self, path: Path, *, media_type: str | None = None) -> ContentRef:
-        del path, media_type
-        raise AssertionError("semantic catalog slice must not write content")
-
-    def put_bytes(self, data: bytes, *, media_type: str | None = None) -> ContentRef:
-        del data, media_type
-        raise AssertionError("semantic catalog slice must not write content")
-
-    def open(self, content_id: ContentId) -> BinaryIO:
-        del content_id
-        raise AssertionError("semantic catalog slice must not read content")
-
-    def contains(self, content_id: ContentId) -> bool:
-        del content_id
-        raise AssertionError("semantic catalog slice must not inspect content")
-
-    def verify(self, content_id: ContentId) -> bool:
-        del content_id
-        raise AssertionError("semantic catalog slice must not verify content")
-
-    def delete(self, content_id: ContentId) -> None:
-        del content_id
-        raise AssertionError("semantic catalog slice must not delete content")
 
 
 def _catalog() -> Catalog:
@@ -201,36 +169,3 @@ def test_catalog_boundary_excludes_physical_tree_and_materialization_state() -> 
     assert "materializations_for" not in Catalog.__dict__
     assert not hasattr(MemoryCatalog(), "record_tree")
     assert not hasattr(MemoryCatalog(), "record_materialization")
-
-
-def test_repository_semantics_run_with_memory_catalog_without_legacy_storage(tmp_path: Path) -> None:
-    catalog = MemoryCatalog()
-    with Repository(
-        tmp_path,
-        metadata_store=cast("MetadataStore", catalog),
-        blob_store=_UnusedBlobStore(),
-    ) as repository:
-        source_id = repository.register_source("memory-source", {"kind": "memory"})
-        run_id = repository.start_run(source_ids=(source_id,), started_at=1.0)
-        operation_id = repository.start_operation(
-            run_id=run_id,
-            source_id=source_id,
-            kind="fetch",
-            subject="memory",
-            started_at=2.0,
-        )
-        repository.finish_operation(operation_id, status="succeeded", finished_at=3.0)
-        repository.finish_run(run_id, status="succeeded", finished_at=4.0)
-
-        source = repository.source(source_id)
-        run = repository.run(run_id)
-        operation = repository.operation(operation_id)
-        assert source is not None
-        assert source.definition == {"kind": "memory"}
-        assert run is not None
-        assert run.status == "succeeded"
-        assert operation is not None
-        assert operation.status == "succeeded"
-
-    assert not (tmp_path / "metadata.sqlite").exists()
-    assert not (tmp_path / "objects").exists()

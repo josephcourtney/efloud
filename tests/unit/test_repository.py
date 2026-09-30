@@ -149,7 +149,7 @@ def test_metadata_failure_after_blob_put_leaves_unreachable_orphan(tmp_path: Pat
 
     with Repository(tmp_path) as repo:
         assert repo.blobs.contains(content_id)
-        assert repo.metadata.content(content_id) is None
+        assert repo.content(content_id) is None
         assert repo.observations_for("artifact:orphan") == ()
 
 

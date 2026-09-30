@@ -65,6 +65,13 @@ def _require_regular_file(path: Path) -> Path:
     return resolved
 
 
+def _require_remote_name(remote: str) -> str:
+    if not remote or "\n" in remote or "\r" in remote:
+        msg = "git-annex remote names must be non-empty single-line strings"
+        raise ValueError(msg)
+    return remote
+
+
 @dataclass(frozen=True, slots=True)
 class GitAnnexContentStore:
     """Content custody backed directly by one Git/git-annex repository."""
@@ -172,11 +179,22 @@ class GitAnnexContentStore:
         location = self._content_location(key)
         return location is not None and location.is_file()
 
-    def get(self, key: AnnexKey) -> None:
+    def register_url(self, key: AnnexKey, url: str) -> None:
+        """Delegate URL-location registration for an existing annex key."""
+        _run(self.root, "annex", "registerurl", str(key), url, "--remote=web")
+
+    def unregister_url(self, key: AnnexKey, url: str) -> None:
+        """Remove a previously registered web location for an annex key."""
+        _run(self.root, "annex", "unregisterurl", str(key), url)
+
+    def get(self, key: AnnexKey, *, remote: str | None = None) -> None:
         """Reacquire a known key from configured annex remotes when needed."""
         if self.has_content(key):
             return
-        _run(self.root, "annex", "get", f"--key={key}")
+        args = ["annex", "get", f"--key={key}"]
+        if remote is not None:
+            args.append(f"--from={_require_remote_name(remote)}")
+        _run(self.root, *args)
         if not self.has_content(key):
             msg = f"git-annex did not make reacquired content available for {key}"
             raise GitAnnexError(msg)

@@ -172,6 +172,24 @@ class GitAnnexContentStore:
         location = self._content_location(key)
         return location is not None and location.is_file()
 
+    def get(self, key: AnnexKey) -> None:
+        """Reacquire a known key from configured annex remotes when needed."""
+        if self.has_content(key):
+            return
+        _run(self.root, "annex", "get", f"--key={key}")
+        if not self.has_content(key):
+            msg = f"git-annex did not make reacquired content available for {key}"
+            raise GitAnnexError(msg)
+
+    def drop(self, key: AnnexKey) -> None:
+        """Drop local content only when git-annex verifies another safe copy."""
+        if not self.has_content(key):
+            return
+        _run(self.root, "annex", "drop", f"--key={key}")
+        if self.has_content(key):
+            msg = f"git-annex reported success but retained local content for {key}"
+            raise GitAnnexError(msg)
+
     def open(self, key: AnnexKey) -> BinaryIO:
         """Open locally present content without exposing its annex object path."""
         location = self._content_location(key)
@@ -180,7 +198,7 @@ class GitAnnexContentStore:
         return location.open("rb")
 
     def verify(self, key: AnnexKey) -> bool:
-        """Delegate byte-integrity verification to a full git-annex fsck."""
+        """Delegate byte-integrity verification to git-annex, ignoring copy policy."""
         if not self.has_content(key):
             return False
         completed = _run(

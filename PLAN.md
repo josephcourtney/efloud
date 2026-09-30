@@ -1,96 +1,73 @@
 # PLAN.md
 
-Purpose: define how the current design will be completed, including milestone ordering, dependencies, and contingent follow-on work. Current completion state belongs in `STATUS.md`; concrete execution tasks belong in `TODO.md`.
+Purpose: define the execution strategy for the experimental Git/git-annex redesign. `docs/adr/0011-delegate-generic-infrastructure.md` records the decision under test; `docs/git-annex-redesign-gap-audit.md` is the finite migration audit; `TODO.md` holds immediate tasks.
 
-`DESIGN.md` is authoritative for architecture, requirements, and invariants. ADR-0010 defines the clean-break public API and removal of alpha compatibility; ADR-0007, ADR-0008, and ADR-0009 remain authoritative for source revisions, dataset identity, detached exports, and maintenance except where ADR-0010 explicitly supersedes compatibility retention.
+## Strategy
 
-## Execution strategy
+Treat this branch as a clean pre-1.0 experiment. Preserve semantic behavior, not legacy implementation. Replace one infrastructure boundary at a time, prove the replacement with characterization/integration tests, then delete the superseded production code. Do not add compatibility shims, parallel configuration systems, or speculative generic abstractions.
 
-Treat the next API as a deliberate pre-1.0 break. Do not preserve an old caller while designing the new surface. First establish the small semantic API and the internal capabilities it requires, then migrate canonical execution to those capabilities, delete compatibility completely, and only afterward run durability/export/downstream acceptance against the reduced system.
+The public package boundary remains small: `Repository`, `Engine`, sources, sync request/result, dataset spec/dataset/manifest, public errors, and version. Internal catalog/content/tree implementations are not downstream API.
 
-### Milestone 1 — Establish the clean public boundary
+## Milestone A — Characterize semantics and classify legacy infrastructure
 
-Implement the contract in `docs/api.md` before broad compatibility deletion so canonical code has a stable migration target.
+Use the gap audit to map every current test and persistent field to a retained semantic requirement or a replaceable implementation detail.
 
-The target separates:
+Add missing characterization coverage for unchanged/changed observations, coverage-backed absence, partial inventory, interrupted acquisition, validation history, exact/latest/latest-before resolution, multi-source composition, deterministic/path-independent dataset identity, and frozen evidence stability.
 
-- `Repository` durable access from `Engine` acquisition orchestration;
-- repository/storage configuration from per-run `SyncRequest` intent;
-- open source/adapter identity from protocol-specific built-in source types;
-- one ordinary `SyncResult` from detailed planner/executor records;
-- `DatasetSpec`, `Dataset`, and `DatasetManifest` from selector/materializer implementation classes;
-- ordinary root-level API from advanced extension/internal types.
+Exit: all retained semantics are storage-backend-independent tests and every legacy subsystem has a migration owner.
 
-Repository creation/opening must make mode explicit and use one public repository type. Public low-level writer lifecycle primitives move behind internal capabilities. Public temporal parameters use timezone-aware datetimes.
+## Milestone B — Introduce narrow infrastructure ports
 
-Exit condition: examples for acquisition, read-only inspection, dataset resolution/freeze/export, maintenance, and an external source adapter can be expressed through the target API without compatibility names or private implementation details.
+Introduce only the ports required by the target model: semantic `Catalog`, annex-oriented `ContentStore`, Git-oriented `TreeStore`, source-semantic `SourceAdapter`, and semantic `Validator`.
 
-### Milestone 2 — Migrate canonical internals to the new contracts
+Refactor orchestration and dataset logic to depend on those ports. Keep the current backend only as temporary scaffolding until the git-annex slice passes.
 
-Move planner, executor, adapters, validators, collection acquisition, derived tasks, policies, queries, datasets, and maintenance onto the clean source/repository/result contracts.
+Exit: domain/resolution code does not depend directly on the filesystem CAS or custom tree implementation; source adapters do not own durable byte placement.
 
-Replace the closed `SourceKind` dispatch model with namespaced adapter identity and typed built-in sources. Split broad repository read/write capabilities so each component depends only on what it needs. Keep planner/executor detail available internally or from advanced submodules without making those records ordinary package-root concepts.
+## Milestone C — Prove Git/git-annex infrastructure
 
-Exit condition: canonical acquisition, derivation, validation, querying, datasets, and maintenance run without importing any compatibility, merged-manifest, mirror-state, old schema, or legacy source/config type.
+Implement centralized Git/git-annex command execution, repository initialization, cryptographic content-only key policy, ingest, presence, verification, URL registration/acquisition, get/drop, key inspection, and Git tree/commit operations.
 
-### Milestone 3 — Delete backwards compatibility completely
+Use real temporary repositories for integration tests and machine-readable output where available. Test retries/interruption, unusual filenames, duplicate bytes, content corruption, drop/reacquire, and dirty worktree recovery.
 
-Use `docs/compatibility-inventory.md` as a finite deletion inventory, not a support matrix.
+Exit: git-annex satisfies the content-custody contract and Git satisfies the filesystem-tree contract without leaking object paths or commit identity into semantic identity.
 
-Delete the compatibility package, deprecated sync/config/manifest/state/query presentation stack, mirror/output projections, adoption and alias helpers, TTL-cache compatibility, import aliases, historical schema migrations, old repository-opening paths, and compatibility-only tests/fixtures/docs.
+## Milestone D — Cut content identity and repository persistence over
 
-The maintained runtime opens only the clean-break schema. Unsupported older repository schemas fail clearly rather than migrating in place. BVP and other downstream callers migrate to the new API; they do not keep compatibility code alive.
+Redefine `ContentRef` around annex identity. Split the public `Repository` facade from an internal semantic catalog. Remove persisted fields that duplicate reliable Git/git-annex state. Preserve authoritative transaction ordering so semantic metadata never references content whose annex identity was not established.
 
-Exit condition: there is no maintained backwards-compatibility implementation and repository/package architecture checks prevent its reintroduction.
+Exit: all new observations/manifests use annex-backed content refs and repository semantic queries require no custom CAS paths.
 
-### Milestone 4 — Re-validate durability on the reduced mutation surface
+## Milestone E — Delete replaced transfer/tree/derivation machinery
 
-After compatibility deletion, re-audit writer coordination, initialization, content staging, validation, metadata commit, crash recovery, reachability, and cleanup against the actual remaining mutation paths.
+For each source, classify acquisition as native git-annex, special remote, or adapter-assisted temporary retrieval. Retain source-specific discovery/authentication semantics and delete generic retry/copy/cache/transport code that git-annex replaces.
 
-Do not broaden this milestone into historical retention/pruning. Safe cleanup removes only storage objects that are unreachable from surviving authoritative metadata.
+Replace custom tree identity with Git projections. Remove generic derivation DAG/execution from core; keep only transformations necessary to acquire, interpret, validate, normalize, or expose source data.
 
-Exit condition: destructive maintenance cannot race supported writers, and recovery/cleanup cannot invalidate or fabricate repository evidence.
+Exit: production has one content backend (git-annex), one filesystem-tree identity mechanism (Git), and no general workflow executor.
 
-### Milestone 5 — Close dataset and detached-export acceptance through the new API
+## Milestone F — Strengthen observation, validation, dataset, and lock semantics
 
-Exercise the complete resolve/freeze → export → reopen/verify workflow only through the target public API.
+Formalize inventory scope/coverage and explicit absence. Version validation evidence independently of byte integrity. Rebuild dataset resolution and canonical manifests around path-independent semantic membership. Adapt existing `efloud.toml`/lock machinery to record exact annex/Git/source/dataset evidence without making paths or Git commits semantic dataset identity.
 
-Include incomplete-coverage behavior, source-definition changes, missing/corrupt content, export collision/path safety, concurrent destination publication, and native Linux publication/CoW branches. Verify a generic consumer can use the detached manifest without Efloud internals or SQLite.
+Exit: exact/latest/latest-before resolution is deterministic across machines and every dataset member has an explanation chain to observation/coverage/validation evidence.
 
-Exit condition: reproducible handoff is domain-neutral, detached, and independent of compatibility representations.
+## Milestone G — Materialized views and external-tool handoff
 
-### Milestone 6 — Complete release verification
+Separate layout specifications from dataset identity. Materialize annexed content through one simple default layout first. Add optional DataLad integration only after plain Git/git-annex behavior is complete.
 
-Run the non-mutating quality gate, supported-Python matrix, packaging checks, architecture contracts, coverage comparison, repository-wide legacy-name scan, and remote CI against the committed checkout.
+Define the deterministic DVC handoff through `efloud.lock`; do not import DVC in core. Define explicit promotion provenance for generated outputs that become canonical Efloud data.
 
-The packaging contract should explicitly check the intended package-root exports and absence of removed compatibility modules.
+Exit: the same semantic dataset can have multiple layouts/distribution mechanisms, and downstream workflow tools consume a small deterministic lock boundary.
 
-Exit condition: the committed implementation matches `docs/api.md`, contains no accidental compatibility surface, and passes all required local and CI gates.
+## Milestone H — Migration, deletion, and acceptance
 
-### Milestone 7 — Validate the downstream BVP boundary
+Provide a one-shot, restartable migration for repositories that must be preserved. Migration code may read old state but must not keep old schemas/APIs alive in normal runtime behavior.
 
-Migrate and run the BVP acceptance fixture using only the clean public source/repository/dataset API and detached manifests.
+Delete the legacy CAS, custom tree hashing/state, generic transfer scheduler/cache, redundant materialization state, and generic derivation executor. Update DESIGN/API/storage/dataset/interoperability documentation only once the experiment has demonstrated the target contracts.
 
-Classify any failure first as either a generic Efloud capability gap or a BVP-specific interpretation requirement. Generic gaps may extend the clean API; BVP-specific semantics remain in BVP.
-
-Exit condition: BVP can implement its workflow without private SQLite, old manifests/tree state, compatibility projections, or legacy fanout/derived interfaces.
-
-## Contingent later milestones
-
-These remain outside the clean-break implementation unless a concrete requirement activates them.
-
-### Historical retention and pruning
-
-If storage pressure requires deletion of valid historical state, define explicit retention roots and policies first. Preserve retained datasets and transitive provenance and require dry-run impact reporting before destructive pruning.
-
-### Additional source adapters and plugin discovery
-
-Add a protocol adapter when a real source cannot be represented by existing built-ins. New adapters use namespaced adapter identity and normalized inventory/acquisition evidence without adding protocol-specific repository semantics. Plugin discovery may later become another way to populate the same registry; it must not change source or Engine semantics.
-
-### Advanced storage and distribution
-
-Recursive Merkle trees, mutable refs, replica/availability tracking, alternate blob stores, remote metadata stores, and distributed coordination remain behind repository semantics. The clean API must not encode local filesystem paths, SQLite, or POSIX locks as permanent semantic requirements.
+Exit: the definition of done in ADR-0011 and the gap audit is satisfied; applicable `just check`, type checking, architecture contracts, full tests/coverage, supported Python minors, and platform acceptance pass on the exact final commit.
 
 ## Verification policy
 
-Every milestone must preserve the architecture and invariants in `DESIGN.md` and relevant ADRs. Completion requires focused regression tests for changed repository invariants, explicit non-mutation tests for read mode and dry-run behavior, clean-schema initialization coverage, package/import contracts, and downstream fixtures that use generic public interfaces rather than private implementation details.
+Do not claim a milestone complete from mocked command tests alone when it depends on Git/git-annex behavior. Real OS/filesystem and temporary-repository integration tests are required where practical. DataLad and DVC remain absent from core test dependencies unless testing their optional/external interoperability boundaries.

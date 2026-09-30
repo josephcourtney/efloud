@@ -42,3 +42,4 @@ Each ADR should include:
 - `ADR-0008` — Dataset specification identity is distinct from frozen membership identity (`0008-dataset-specification-and-membership-identity.md`)
 - `ADR-0009` — Frozen snapshot membership, detached exports, and local maintenance (`0009-dataset-export-and-repository-maintenance.md`)
 - `ADR-0010` — Adopt a clean-break public API and remove alpha compatibility (`0010-clean-break-public-api.md`)
+- `ADR-0011` — Delegate generic storage and workflow infrastructure (`0011-delegate-generic-infrastructure.md`)

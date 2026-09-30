@@ -85,5 +85,5 @@ def test_engine_records_collection_result(tmp_path: Path, monkeypatch: pytest.Mo
         assert snapshot is not None
         assert snapshot.complete
         assert result.repository_run_id is not None
-        operation = repository.metadata.operations_for_run(result.repository_run_id)[0]
+        operation = repository.operations_for_run(result.repository_run_id)[0]
         assert operation.producer.producer_id == "efloud:collection"

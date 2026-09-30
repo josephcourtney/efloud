@@ -53,7 +53,7 @@ def test_producer_identity_and_lifecycle_transitions_are_explicit(tmp_path: Path
             producer=producer,
             started_at=2.0,
         )
-        operation = repo.metadata.operations_for_run(run_id)[0]
+        operation = repo.operations_for_run(run_id)[0]
         assert operation.status == "running"
         assert operation.producer == producer
 
@@ -63,7 +63,7 @@ def test_producer_identity_and_lifecycle_transitions_are_explicit(tmp_path: Path
         with pytest.raises(ValueError, match="Invalid terminal operation status"):
             repo.finish_operation(operation_id, status="success", finished_at=3.0)
         repo.finish_operation(operation_id, status="succeeded", finished_at=3.0)
-        operation = repo.metadata.operations_for_run(run_id)[0]
+        operation = repo.operations_for_run(run_id)[0]
         assert operation.status == "succeeded"
         with pytest.raises(ValueError, match="cannot transition"):
             repo.finish_operation(operation_id, status="failed", finished_at=4.0)
@@ -71,7 +71,7 @@ def test_producer_identity_and_lifecycle_transitions_are_explicit(tmp_path: Path
         with pytest.raises(ValueError, match="Invalid terminal run status"):
             repo.finish_run(run_id, status="success", finished_at=5.0)
         repo.finish_run(run_id, status="succeeded", finished_at=5.0)
-        run = repo.metadata.run(run_id)
+        run = repo.run(run_id)
         assert run is not None
         assert run.status == "succeeded"
         with pytest.raises(ValueError, match="cannot transition"):
@@ -230,7 +230,7 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
         assert second.payload == first.payload
         operation = next(
             operation
-            for operation in reopened.metadata.operations_for_run(second_run)
+            for operation in reopened.operations_for_run(second_run)
             if operation.kind == "derive-index"
         )
         assert operation.producer == ProducerRef("efloud:index:alpha", "3")

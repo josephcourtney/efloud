@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import functools
+import os
 import shutil
+import stat
 import threading
 from contextlib import contextmanager
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -14,7 +17,6 @@ from efloud.git_commands import run_git
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
 pytestmark = [
     pytest.mark.integration,
@@ -38,6 +40,13 @@ def _http_file_server(root: Path) -> Iterator[str]:
         server.server_close()
 
 
+def _annex_object_path(store: GitAnnexContentStore, key: object) -> Path:
+    completed = run_git(store.root, "annex", "contentlocation", str(key))
+    relative = completed.stdout.strip()
+    assert relative
+    return store.root / relative
+
+
 def test_annex_ingest_uses_content_only_key_and_preserves_source(tmp_path: Path) -> None:
     store = GitAnnexContentStore.initialize(tmp_path / "repository")
     first = tmp_path / "first.dat"
@@ -58,6 +67,22 @@ def test_annex_ingest_uses_content_only_key_and_preserves_source(tmp_path: Path)
         assert stream.read() == b"payload"
 
 
+def test_annex_ingest_path_handles_unusual_filename_without_affecting_identity(tmp_path: Path) -> None:
+    store = GitAnnexContentStore.initialize(tmp_path / "repository")
+    source_dir = tmp_path / "directory with spaces"
+    source_dir.mkdir()
+    source = source_dir / "--odd [name] #δ—file.bin"
+    source.write_bytes(b"portable payload")
+
+    path_key = store.ingest_path(source)
+    bytes_key = store.ingest_bytes(b"portable payload")
+
+    assert path_key == bytes_key
+    assert source.read_bytes() == b"portable payload"
+    assert store.has_content(path_key)
+    assert store.verify(path_key)
+
+
 def test_annex_ingest_bytes_deduplicates(tmp_path: Path) -> None:
     store = GitAnnexContentStore.initialize(tmp_path / "repository")
 
@@ -67,6 +92,23 @@ def test_annex_ingest_bytes_deduplicates(tmp_path: Path) -> None:
 
     assert store.has_content(first_key)
     assert store.verify(first_key)
+
+
+def test_annex_verify_detects_corrupted_local_content(tmp_path: Path) -> None:
+    store = GitAnnexContentStore.initialize(tmp_path / "repository")
+    key = store.ingest_bytes(b"expected content")
+    object_path = _annex_object_path(store, key)
+
+    original_mode = object_path.stat().st_mode
+    os.chmod(object_path, original_mode | stat.S_IWUSR)
+    try:
+        object_path.write_bytes(b"corrupted content")
+    finally:
+        if object_path.exists():
+            os.chmod(object_path, original_mode)
+
+    assert not store.verify(key)
+    assert str(key).startswith("SHA256-")
 
 
 def test_annex_drop_fails_closed_without_verified_other_copy(tmp_path: Path) -> None:

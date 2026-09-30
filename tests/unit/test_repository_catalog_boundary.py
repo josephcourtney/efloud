@@ -6,13 +6,13 @@ import pytest
 
 from efloud.catalog import MemoryCatalog
 from efloud.repository import Repository
-from efloud.repository_models import ContentId, ContentRef
 
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
     from efloud.metadata_store import MetadataStore
+    from efloud.repository_models import ContentId, ContentRef
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.medium]
 

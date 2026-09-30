@@ -79,7 +79,7 @@ def _record_and_assert_revision_evidence(
         payload=payload,
         observed_at=observed_at,
     )
-    operation = repository.metadata.operations_for_run(run_id)[0]
+    operation = repository.operations_for_run(run_id)[0]
 
     assert observation.metadata[_SOURCE_REVISION_KEY] == str(revision_id)
     assert snapshot.evidence[_SOURCE_REVISION_KEY] == str(revision_id)
@@ -92,7 +92,7 @@ def test_source_definition_revisions_pin_new_repository_evidence(tmp_path: Path)
 
     with Repository(tmp_path) as repository:
         source_id = repository.register_source("source-a", first_definition)
-        first_source = repository.metadata.source(source_id)
+        first_source = repository.source(source_id)
         assert first_source is not None
         first_revision_id = first_source.revision_id
 
@@ -105,13 +105,13 @@ def test_source_definition_revisions_pin_new_repository_evidence(tmp_path: Path)
         )
 
         repository.register_source(source_id, first_definition)
-        unchanged_source = repository.metadata.source(source_id)
+        unchanged_source = repository.source(source_id)
         assert unchanged_source is not None
         assert unchanged_source.revision_id == first_revision_id
         assert len(unchanged_source.revisions) == 1
 
         repository.register_source(source_id, second_definition)
-        second_source = repository.metadata.source(source_id)
+        second_source = repository.source(source_id)
         assert second_source is not None
         second_revision_id = second_source.revision_id
         assert second_revision_id != first_revision_id

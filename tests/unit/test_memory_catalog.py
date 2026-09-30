@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.catalog import Catalog, MemoryCatalog
+from efloud.catalog.memory import MemoryCatalog
+from efloud.catalog.protocol import Catalog
 from efloud.metadata_store import DatasetMemberRecord, DatasetRecord
 from efloud.repository_models import (
     ArtifactAbsence,

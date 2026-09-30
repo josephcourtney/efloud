@@ -155,7 +155,7 @@ def test_memory_catalog_keeps_snapshot_history_and_merges_dataset_specifications
 
     stored = catalog.dataset(first.dataset_id)
     assert stored is not None
-    assert stored.created_at == 10.0
+    assert stored.created_at == pytest.approx(10.0)
     assert len(stored.specifications) == 2
     definitions = [specification.definition for specification in stored.specifications]
     assert first.definition in definitions

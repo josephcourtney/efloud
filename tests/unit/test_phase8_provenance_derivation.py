@@ -229,9 +229,7 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
         assert second.observation.content_id == first.observation.content_id
         assert second.payload == first.payload
         operation = next(
-            operation
-            for operation in reopened.operations_for_run(second_run)
-            if operation.kind == "derive-index"
+            operation for operation in reopened.operations_for_run(second_run) if operation.kind == "derive-index"
         )
         assert operation.producer == ProducerRef("efloud:index:alpha", "3")
         reopened.finish_run(second_run, status="succeeded", finished_at=203.0)

@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - argv-only subprocesses are the Git integration boundary.
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
 
 class GitError(RuntimeError):

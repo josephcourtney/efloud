@@ -33,7 +33,7 @@ _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
 _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
 
 
-class MemoryCatalog:  # ruff: ignore[too-many-instance-attributes,too-many-public-methods] - complete semantic fake for the Catalog port.
+class MemoryCatalog:  # ruff: ignore[too-many-public-methods] - complete semantic fake for the Catalog port.
     """Pure in-memory semantic catalog for fast storage-independent tests."""
 
     def __init__(self) -> None:
@@ -217,7 +217,11 @@ class MemoryCatalog:  # ruff: ignore[too-many-instance-attributes,too-many-publi
     def observations_for(self, artifact_key: ArtifactKey) -> tuple[ArtifactObservation, ...]:
         return tuple(
             sorted(
-                (observation for observation in self._observations.values() if observation.artifact_key == artifact_key),
+                (
+                    observation
+                    for observation in self._observations.values()
+                    if observation.artifact_key == artifact_key
+                ),
                 key=lambda item: (item.observed_at, str(item.observation_id)),
             )
         )

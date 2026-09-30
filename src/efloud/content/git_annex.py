@@ -11,6 +11,7 @@ from efloud.content.protocol import AnnexKey
 from efloud.git_commands import GitCommandError, GitError, GitUnavailableError, run_git
 
 if TYPE_CHECKING:
+    import subprocess
     from typing import BinaryIO
 
 _DEFAULT_BACKEND = "SHA256"
@@ -42,7 +43,7 @@ def _run(
     root: Path,
     *args: str,
     check: bool = True,
-):
+) -> subprocess.CompletedProcess[str]:
     try:
         return run_git(root, *args, check=check)
     except GitUnavailableError as error:

@@ -17,17 +17,15 @@ if TYPE_CHECKING:
 _DEFAULT_BACKEND = "SHA256"
 _GIT_IDENTITY_NAME = "Efloud"
 _GIT_IDENTITY_EMAIL = "efloud@localhost.invalid"
-_REQUIRED_COMMANDS = frozenset(
-    {
-        "calckey",
-        "contentlocation",
-        "drop",
-        "fsck",
-        "get",
-        "registerurl",
-        "setkey",
-        "unregisterurl",
-    }
+_REQUIRED_COMMANDS = (
+    "calckey",
+    "contentlocation",
+    "drop",
+    "fsck",
+    "get",
+    "registerurl",
+    "setkey",
+    "unregisterurl",
 )
 
 
@@ -88,16 +86,13 @@ def _require_remote_name(remote: str) -> str:
     return remote
 
 
-def _listed_annex_commands(help_text: str) -> frozenset[str]:
-    commands: set[str] = set()
-    for line in help_text.splitlines():
-        if not line.startswith("  "):
-            continue
-        stripped = line.strip()
-        if not stripped:
-            continue
-        commands.add(stripped.split(maxsplit=1)[0])
-    return frozenset(commands)
+def _missing_annex_commands(root: Path, commands: tuple[str, ...]) -> tuple[str, ...]:
+    missing: list[str] = []
+    for command in commands:
+        result = _run(root, "annex", "help", command, check=False)
+        if result.returncode != 0:
+            missing.append(command)
+    return tuple(missing)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,9 +136,7 @@ class GitAnnexContentStore:
             msg = "git-annex returned an empty raw version"
             raise GitAnnexCapabilityError(msg)
 
-        help_result = _run(self.root, "annex", "help")
-        listed_commands = _listed_annex_commands(help_result.stdout)
-        missing = sorted(_REQUIRED_COMMANDS - listed_commands)
+        missing = _missing_annex_commands(self.root, _REQUIRED_COMMANDS)
         if missing:
             names = ", ".join(missing)
             msg = f"git-annex {version} lacks required command(s): {names}"

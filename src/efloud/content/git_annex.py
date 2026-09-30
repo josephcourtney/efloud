@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess  # ruff: ignore[suspicious-subprocess-import] - argv-only subprocesses are the git/git-annex integration boundary.
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from efloud.content.protocol import AnnexKey
+from efloud.git_commands import GitCommandError, GitError, GitUnavailableError, run_git
 
 if TYPE_CHECKING:
     from typing import BinaryIO
@@ -42,28 +42,18 @@ def _run(
     root: Path,
     *args: str,
     check: bool = True,
-) -> subprocess.CompletedProcess[str]:
-    if not root.is_dir():
-        msg = f"Git working directory does not exist: {root}"
-        raise GitAnnexError(msg)
-    git = shutil.which("git")
-    if git is None:
-        msg = "git is not available on PATH"
-        raise GitAnnexUnavailableError(msg)
-    command = (git, *args)
-    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - no shell; argv is passed directly to Git.
-        command,
-        cwd=root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if check and completed.returncode != 0:
-        if args[:2] == ("annex", "version") or "not a git command" in completed.stderr:
+):
+    try:
+        return run_git(root, *args, check=check)
+    except GitUnavailableError as error:
+        raise GitAnnexUnavailableError(str(error)) from error
+    except GitCommandError as error:
+        if args[:2] == ("annex", "version") or "not a git command" in error.stderr:
             msg = "git-annex is not available through git"
-            raise GitAnnexUnavailableError(msg)
-        raise GitAnnexCommandError(command, completed.returncode, completed.stderr)
-    return completed
+            raise GitAnnexUnavailableError(msg) from error
+        raise GitAnnexCommandError(error.command, error.returncode, error.stderr) from error
+    except GitError as error:
+        raise GitAnnexError(str(error)) from error
 
 
 def _require_regular_file(path: Path) -> Path:

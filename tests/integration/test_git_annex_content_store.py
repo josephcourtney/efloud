@@ -79,6 +79,9 @@ def test_annex_drop_and_reacquire_preserve_key_identity(tmp_path: Path) -> None:
     assert primary.has_content(key)
     assert primary.verify(key)
     with primary.open(key) as stream:
-        assert stream.read() == b"portable payload"
+        recovered_bytes = stream.read()
+    assert recovered_bytes == b"portable payload"
 
-    assert key == backup.calculate_key(tmp_path / "recovered.dat") if False else key
+    recovered = tmp_path / "recovered.dat"
+    recovered.write_bytes(recovered_bytes)
+    assert primary.calculate_key(recovered) == key

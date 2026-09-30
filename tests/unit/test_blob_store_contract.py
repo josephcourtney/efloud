@@ -104,7 +104,7 @@ def test_repository_and_dataset_work_with_pathless_blob_store(tmp_path: Path) ->
         with repo.open_content(observation.content_id) as stream:
             assert stream.read() == b"payload"
 
-        persisted = repo.metadata.content(observation.content_id)
+        persisted = repo.content(observation.content_id)
         assert persisted is not None
         assert persisted.content_id == observation.content_id
         assert persisted.byte_size == len(b"payload")

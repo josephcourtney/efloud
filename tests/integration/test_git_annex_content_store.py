@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import functools
 import shutil
+import threading
+from contextlib import contextmanager
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud.content.git_annex import GitAnnexCommandError, GitAnnexContentStore
+from efloud.content.git_annex import GitAnnexCommandError, GitAnnexContentStore, GitAnnexError
 from efloud.git_commands import run_git
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 pytestmark = [
@@ -16,6 +21,21 @@ pytestmark = [
     pytest.mark.medium,
     pytest.mark.skipif(shutil.which("git-annex") is None, reason="git-annex is not installed"),
 ]
+
+
+@contextmanager
+def _http_file_server(root: Path) -> Iterator[str]:
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=root.as_posix())
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address[:2]
+        yield f"http://{host}:{port}"
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
 
 def test_annex_ingest_uses_content_only_key_and_preserves_source(tmp_path: Path) -> None:
@@ -85,3 +105,43 @@ def test_annex_drop_and_reacquire_preserve_key_identity(tmp_path: Path) -> None:
     recovered = tmp_path / "recovered.dat"
     recovered.write_bytes(recovered_bytes)
     assert primary.calculate_key(recovered) == key
+
+
+def test_annex_registered_web_url_reacquires_same_key(tmp_path: Path) -> None:
+    primary = GitAnnexContentStore.initialize(tmp_path / "primary", description="primary")
+    backup = GitAnnexContentStore.initialize(tmp_path / "backup", description="backup")
+    run_git(primary.root, "remote", "add", "backup", backup.root.as_posix())
+    run_git(backup.root, "remote", "add", "primary", primary.root.as_posix())
+    run_git(primary.root, "config", "annex.security.allowed-ip-addresses", "127.0.0.1")
+
+    payload = b"payload from registered URL"
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    served = web_root / "payload.bin"
+    served.write_bytes(payload)
+
+    key = primary.ingest_bytes(payload)
+    run_git(primary.root, "annex", "copy", "--to=backup", f"--key={key}")
+
+    with _http_file_server(web_root) as base_url:
+        url = f"{base_url}/payload.bin"
+        primary.register_url(key, url)
+        primary.drop(key)
+        assert not primary.has_content(key)
+
+        primary.get(key, remote="web")
+        assert primary.has_content(key)
+        assert primary.verify(key)
+        with primary.open(key) as stream:
+            recovered_bytes = stream.read()
+        assert recovered_bytes == payload
+
+        recovered = tmp_path / "recovered-from-web.dat"
+        recovered.write_bytes(recovered_bytes)
+        assert primary.calculate_key(recovered) == key
+
+        primary.unregister_url(key, url)
+        primary.drop(key)
+        assert not primary.has_content(key)
+        with pytest.raises(GitAnnexError):
+            primary.get(key, remote="web")

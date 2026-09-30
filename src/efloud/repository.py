@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
+    from efloud.catalog.protocol import Catalog
     from efloud.derivation import DerivationKey
     from efloud.inventory import AbsenceEvidence
     from efloud.json_types import JsonObject
@@ -76,7 +77,9 @@ class Repository:
         self.root.mkdir(parents=True, exist_ok=True)
         self._writer_lease = WriterLease(self.root)
         try:
-            self.metadata = metadata_store or SQLiteMetadataStore(self.root / "metadata.sqlite")
+            metadata = metadata_store or SQLiteMetadataStore(self.root / "metadata.sqlite")
+            self.catalog: Catalog = metadata
+            self._legacy_metadata = metadata
             self.blobs = blob_store or FilesystemBlobStore(self.root / "objects")
         except BaseException:
             self._writer_lease.close()
@@ -97,27 +100,27 @@ class Repository:
 
     def close(self) -> None:
         try:
-            self.metadata.close()
+            self.catalog.close()
         finally:
             self._writer_lease.close()
 
     def source(self, source_id: SourceId | str) -> SourceRecord | None:
-        return self.metadata.source(SourceId(str(source_id)))
+        return self.catalog.source(SourceId(str(source_id)))
 
     def sources(self) -> tuple[SourceRecord, ...]:
-        return self.metadata.sources()
+        return self.catalog.sources()
 
     def run(self, run_id: RunId | str) -> RunRecord | None:
-        return self.metadata.run(RunId(str(run_id)))
+        return self.catalog.run(RunId(str(run_id)))
 
     def recent_runs(self, *, limit: int = 50) -> tuple[RunRecord, ...]:
-        return self.metadata.recent_runs(limit=limit)
+        return self.catalog.recent_runs(limit=limit)
 
     def operation(self, operation_id: OperationId | str) -> OperationRecord | None:
-        return self.metadata.operation(OperationId(str(operation_id)))
+        return self.catalog.operation(OperationId(str(operation_id)))
 
     def operations_for_run(self, run_id: RunId | str) -> tuple[OperationRecord, ...]:
-        return self.metadata.operations_for_run(RunId(str(run_id)))
+        return self.catalog.operations_for_run(RunId(str(run_id)))
 
     def operations_for_source(
         self,
@@ -125,25 +128,25 @@ class Repository:
         *,
         limit: int = 50,
     ) -> tuple[OperationRecord, ...]:
-        return self.metadata.operations_for_source(SourceId(str(source_id)), limit=limit)
+        return self.catalog.operations_for_source(SourceId(str(source_id)), limit=limit)
 
     def materializations_for(self, content_id: ContentId | str) -> tuple[MaterializationRecord, ...]:
-        return self.metadata.materializations_for(ContentId(str(content_id)))
+        return self._legacy_metadata.materializations_for(ContentId(str(content_id)))
 
     def register_source(self, source_id: SourceId | str, definition: JsonObject) -> SourceId:
         self._writer_lease.require_active()
         normalized = SourceId(str(source_id))
-        existing = self.metadata.source(normalized)
+        existing = self.catalog.source(normalized)
         payload = source_definition_history_payload(
             normalized,
             definition,
             existing=existing.revisions if existing is not None else (),
         )
-        self.metadata.register_source(normalized, payload)
+        self.catalog.register_source(normalized, payload)
         return normalized
 
     def _source_revision_id(self, source_id: SourceId) -> str:
-        source = self.metadata.source(source_id)
+        source = self.catalog.source(source_id)
         if source is None:
             msg = f"Unknown repository source: {source_id}"
             raise KeyError(msg)
@@ -169,12 +172,12 @@ class Repository:
             started_at=started,
             source_ids=normalized_source_ids,
         )
-        self.metadata.start_run(run_id, started_at=started, metadata=metadata or {})
+        self.catalog.start_run(run_id, started_at=started, metadata=metadata or {})
         return run_id
 
     def finish_run(self, run_id: RunId, *, status: str, finished_at: float | None = None) -> None:
         self._writer_lease.require_active()
-        run = self.metadata.run(run_id)
+        run = self.catalog.run(run_id)
         if run is None:
             msg = f"Unknown run: {run_id}"
             raise KeyError(msg)
@@ -187,7 +190,7 @@ class Repository:
         if running_operations:
             msg = f"Run {run_id} cannot finish while operations are still running."
             raise ValueError(msg)
-        self.metadata.finish_run(
+        self.catalog.finish_run(
             run_id,
             finished_at=time.time() if finished_at is None else finished_at,
             status=_canonical_terminal_status(status, operation=False),
@@ -205,7 +208,7 @@ class Repository:
         producer: ProducerRef | None = None,
     ) -> OperationId:
         self._writer_lease.require_active()
-        run = self.metadata.run(run_id)
+        run = self.catalog.run(run_id)
         if run is None:
             msg = f"Unknown run: {run_id}"
             raise KeyError(msg)
@@ -218,7 +221,7 @@ class Repository:
         operation_parameters["producer"] = (producer or _default_producer(kind)).to_dict()
         if normalized_source_id is not None:
             operation_parameters[_SOURCE_REVISION_KEY] = self._source_revision_id(normalized_source_id)
-        self.metadata.start_operation(
+        self.catalog.start_operation(
             operation_id,
             run_id=run_id,
             source_id=normalized_source_id,
@@ -245,7 +248,7 @@ class Repository:
         if operation.status != "running":
             msg = f"Operation {operation_id} cannot transition from {operation.status!r}."
             raise ValueError(msg)
-        self.metadata.finish_operation(
+        self.catalog.finish_operation(
             operation_id,
             finished_at=time.time() if finished_at is None else finished_at,
             status=_canonical_terminal_status(status, operation=True),
@@ -256,14 +259,14 @@ class Repository:
         """Store immutable bytes and register content identity without creating an observation."""
         self._writer_lease.require_active()
         content = self.blobs.put_bytes(data, media_type=media_type)
-        self.metadata.record_content(content)
+        self.catalog.record_content(content)
         return content
 
     def store_path_content(self, path: Path, *, media_type: str | None = None) -> ContentRef:
         """Store immutable file bytes without advancing any logical artifact or source."""
         self._writer_lease.require_active()
         content = self.blobs.put_path(path, media_type=media_type)
-        self.metadata.record_content(content)
+        self.catalog.record_content(content)
         return content
 
     def ingest_bytes(
@@ -337,7 +340,7 @@ class Repository:
             inputs=inputs,
         )
         if materialization_kind is not None:
-            self.metadata.record_materialization(
+            self._legacy_metadata.record_materialization(
                 content_id=content.content_id,
                 kind=materialization_kind,
                 path=path.resolve().as_posix(),
@@ -365,7 +368,7 @@ class Repository:
     ) -> ArtifactObservation:
         self._writer_lease.require_active()
         normalized_content_id = ContentId(str(content_id))
-        content = self.metadata.content(normalized_content_id)
+        content = self.catalog.content(normalized_content_id)
         if content is None:
             msg = f"Unknown repository content: {content_id}"
             raise KeyError(msg)
@@ -388,7 +391,7 @@ class Repository:
             inputs=inputs,
         )
         if materialization_kind is not None and materialization_path is not None:
-            self.metadata.record_materialization(
+            self._legacy_metadata.record_materialization(
                 content_id=content.content_id,
                 kind=materialization_kind,
                 path=materialization_path.resolve().as_posix(),
@@ -503,7 +506,7 @@ class Repository:
         observation_id: ObservationId | str,
     ) -> tuple[ProvenanceEdge, ...]:
         """Return direct provenance inputs for an output observation."""
-        return self.metadata.provenance_inputs(ObservationId(str(observation_id)))
+        return self.catalog.provenance_inputs(ObservationId(str(observation_id)))
 
     def _record_content_observation(
         self,
@@ -549,7 +552,7 @@ class Repository:
         edges = tuple(
             ProvenanceEdge(output_observation_id=observation_id, input_observation_id=input_id) for input_id in inputs
         )
-        self.metadata.record_observation_bundle(
+        self.catalog.record_observation_bundle(
             content=content,
             observation=observation,
             provenance_edges=edges,
@@ -598,7 +601,7 @@ class Repository:
             upstream_locator=resolved_locator,
             metadata=self._source_evidence(payload, evidence.source_id),
         )
-        self.metadata.record_absence(absence)
+        self.catalog.record_absence(absence)
         return absence
 
     def latest_state(
@@ -607,13 +610,13 @@ class Repository:
         *,
         before: float | None = None,
     ) -> ArtifactState | None:
-        return self.metadata.latest_state(ArtifactKey(str(artifact_key)), before=before)
+        return self.catalog.latest_state(ArtifactKey(str(artifact_key)), before=before)
 
     def observation(self, observation_id: ObservationId | str) -> ArtifactObservation | None:
-        return self.metadata.observation(ObservationId(str(observation_id)))
+        return self.catalog.observation(ObservationId(str(observation_id)))
 
     def observations_for(self, artifact_key: ArtifactKey | str) -> tuple[ArtifactObservation, ...]:
-        return self.metadata.observations_for(ArtifactKey(str(artifact_key)))
+        return self.catalog.observations_for(ArtifactKey(str(artifact_key)))
 
     def latest_observation(
         self,
@@ -621,13 +624,13 @@ class Repository:
         *,
         before: float | None = None,
     ) -> ArtifactObservation | None:
-        return self.metadata.latest_observation(ArtifactKey(str(artifact_key)), before=before)
+        return self.catalog.latest_observation(ArtifactKey(str(artifact_key)), before=before)
 
     def content(self, content_id: ContentId | str) -> ContentRef | None:
-        return self.metadata.content(ContentId(str(content_id)))
+        return self.catalog.content(ContentId(str(content_id)))
 
     def artifact_keys(self) -> tuple[ArtifactKey, ...]:
-        return self.metadata.artifact_keys()
+        return self.catalog.artifact_keys()
 
     def open_content(self, content_id: ContentId | str) -> BinaryIO:
         return self.blobs.open(ContentId(str(content_id)))
@@ -640,7 +643,7 @@ class Repository:
 
     def record_validation(self, result: ValidationResult) -> None:
         self._writer_lease.require_active()
-        self.metadata.record_validation(result)
+        self.catalog.record_validation(result)
 
     def validation(
         self,
@@ -648,10 +651,10 @@ class Repository:
         validator: str,
         validator_version: str,
     ) -> ValidationResult | None:
-        return self.metadata.validation(ContentId(str(content_id)), validator, validator_version)
+        return self.catalog.validation(ContentId(str(content_id)), validator, validator_version)
 
     def validations_for(self, content_id: ContentId | str) -> tuple[ValidationResult, ...]:
-        return self.metadata.validations_for(ContentId(str(content_id)))
+        return self.catalog.validations_for(ContentId(str(content_id)))
 
     def record_tree_snapshot(
         self,
@@ -668,7 +671,7 @@ class Repository:
         ordered = tuple(sorted(entries, key=lambda entry: entry.relative_path))
         tree_id = TreeId(stable_id("tree", [entry.identity_payload() for entry in ordered]))
         observed = time.time() if observed_at is None else observed_at
-        self.metadata.record_tree(tree_id, ordered, created_at=observed)
+        self._legacy_metadata.record_tree(tree_id, ordered, created_at=observed)
         normalized_source_id = SourceId(str(source_id))
         normalized_scope = tuple(sorted(scope))
         evidence_payload = self._source_evidence(evidence or {}, normalized_source_id)
@@ -704,7 +707,7 @@ class Repository:
             scope=normalized_scope,
             evidence=evidence_payload,
         )
-        self.metadata.record_source_snapshot(snapshot)
+        self.catalog.record_source_snapshot(snapshot)
         return snapshot
 
     def record_source_snapshot(
@@ -752,17 +755,17 @@ class Repository:
             scope=normalized_scope,
             evidence=evidence_payload,
         )
-        self.metadata.record_source_snapshot(snapshot)
+        self.catalog.record_source_snapshot(snapshot)
         return snapshot
 
     def tree_entries(self, tree_id: TreeId | str) -> tuple[TreeEntry, ...]:
-        return self.metadata.tree_entries(TreeId(str(tree_id)))
+        return self._legacy_metadata.tree_entries(TreeId(str(tree_id)))
 
     def source_snapshot(self, snapshot_id: SnapshotId | str) -> SourceSnapshot | None:
-        return self.metadata.source_snapshot(SnapshotId(str(snapshot_id)))
+        return self.catalog.source_snapshot(SnapshotId(str(snapshot_id)))
 
     def latest_source_snapshot(self, source_id: SourceId | str) -> SourceSnapshot | None:
-        return self.metadata.latest_source_snapshot(SourceId(str(source_id)))
+        return self.catalog.latest_source_snapshot(SourceId(str(source_id)))
 
     def source_snapshots_for(
         self,
@@ -770,7 +773,7 @@ class Repository:
         *,
         limit: int | None = 50,
     ) -> tuple[SourceSnapshot, ...]:
-        return self.metadata.source_snapshots_for(SourceId(str(source_id)), limit=limit)
+        return self.catalog.source_snapshots_for(SourceId(str(source_id)), limit=limit)
 
     def resolve_dataset(
         self,
@@ -781,14 +784,14 @@ class Repository:
         self._writer_lease.require_active()
         manifest = resolve_dataset(self, definition, created_at=created_at)
         record = manifest.to_record()
-        existing = self.metadata.dataset(manifest.dataset_id)
+        existing = self.catalog.dataset(manifest.dataset_id)
         if existing is not None:
             record = record.with_specifications(existing.specifications)
-        self.metadata.record_dataset(record)
+        self.catalog.record_dataset(record)
         return ImmutableDataset(self, manifest)
 
     def dataset(self, dataset_id: DatasetId | str) -> ImmutableDataset:
-        record = self.metadata.dataset(DatasetId(str(dataset_id)))
+        record = self.catalog.dataset(DatasetId(str(dataset_id)))
         if record is None:
             msg = f"Unknown dataset: {dataset_id}"
             raise KeyError(msg)
@@ -798,7 +801,7 @@ class Repository:
         self,
         dataset_id: DatasetId | str,
     ) -> tuple[DatasetSpecification, ...]:
-        record = self.metadata.dataset(DatasetId(str(dataset_id)))
+        record = self.catalog.dataset(DatasetId(str(dataset_id)))
         if record is None:
             msg = f"Unknown dataset: {dataset_id}"
             raise KeyError(msg)

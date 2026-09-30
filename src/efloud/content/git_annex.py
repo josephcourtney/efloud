@@ -17,6 +17,18 @@ if TYPE_CHECKING:
 _DEFAULT_BACKEND = "SHA256"
 _GIT_IDENTITY_NAME = "Efloud"
 _GIT_IDENTITY_EMAIL = "efloud@localhost.invalid"
+_REQUIRED_COMMANDS = frozenset(
+    {
+        "calckey",
+        "contentlocation",
+        "drop",
+        "fsck",
+        "get",
+        "registerurl",
+        "setkey",
+        "unregisterurl",
+    }
+)
 
 
 class GitAnnexError(RuntimeError):
@@ -25,6 +37,10 @@ class GitAnnexError(RuntimeError):
 
 class GitAnnexUnavailableError(GitAnnexError):
     """Git or git-annex is not available to the current process."""
+
+
+class GitAnnexCapabilityError(GitAnnexError):
+    """Installed git-annex lacks a command required by Efloud."""
 
 
 class GitAnnexCommandError(GitAnnexError):
@@ -72,6 +88,18 @@ def _require_remote_name(remote: str) -> str:
     return remote
 
 
+def _listed_annex_commands(help_text: str) -> frozenset[str]:
+    commands: set[str] = set()
+    for line in help_text.splitlines():
+        if not line.startswith("  "):
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        commands.add(stripped.split(maxsplit=1)[0])
+    return frozenset(commands)
+
+
 @dataclass(frozen=True, slots=True)
 class GitAnnexContentStore:
     """Content custody backed directly by one Git/git-annex repository."""
@@ -105,9 +133,22 @@ class GitAnnexContentStore:
         _run(resolved, "annex", "init", description)
         return cls(resolved, backend=backend)
 
-    def check_available(self) -> None:
-        """Fail explicitly if the repository cannot execute git-annex."""
-        _run(self.root, "annex", "version")
+    def check_available(self) -> str:
+        """Return the raw git-annex version after probing required commands."""
+        version_result = _run(self.root, "annex", "version", "--raw")
+        version = version_result.stdout.strip()
+        if not version:
+            msg = "git-annex returned an empty raw version"
+            raise GitAnnexCapabilityError(msg)
+
+        help_result = _run(self.root, "annex", "help")
+        listed_commands = _listed_annex_commands(help_result.stdout)
+        missing = sorted(_REQUIRED_COMMANDS - listed_commands)
+        if missing:
+            names = ", ".join(missing)
+            msg = f"git-annex {version} lacks required command(s): {names}"
+            raise GitAnnexCapabilityError(msg)
+        return version
 
     def calculate_key(self, path: Path) -> AnnexKey:
         """Calculate the configured annex key without ingesting bytes."""
@@ -233,6 +274,7 @@ class GitAnnexContentStore:
 
 
 __all__ = [
+    "GitAnnexCapabilityError",
     "GitAnnexCommandError",
     "GitAnnexContentStore",
     "GitAnnexError",

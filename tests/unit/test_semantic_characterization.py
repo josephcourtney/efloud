@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from efloud.dataset_export import export_dataset_manifest
-from efloud.datasets import DatasetDefinition, DatasetSelection, ExactObservation
+from efloud.datasets import DatasetDefinition, DatasetSelection, ExactObservation, ImmutableDataset
 from efloud.repository import Repository
 
 if TYPE_CHECKING:
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
 
-def _resolve_two_source_dataset(repository: Repository):
+def _resolve_two_source_dataset(repository: Repository) -> ImmutableDataset:
     left = repository.register_source("left", {"kind": "test", "role": "left"})
     right = repository.register_source("right", {"kind": "test", "role": "right"})
     run = repository.start_run(source_ids=(left, right), started_at=100.0)
@@ -68,17 +68,23 @@ def test_multi_source_dataset_preserves_source_and_role_evidence(tmp_path: Path)
             ("artifact:left", "left-role"),
             ("artifact:right", "right-role"),
         ]
-        assert [
-            str(repository.observation(member.observation_id).source_id)  # type: ignore[union-attr]
-            for member in members
-        ] == ["left", "right"]
+        source_ids: list[str] = []
+        for member in members:
+            observation = repository.observation(member.observation_id)
+            assert observation is not None
+            source_ids.append(str(observation.source_id))
+        assert source_ids == ["left", "right"]
 
         detached = export_dataset_manifest(dataset)
         assert [member.observation["source_id"] for member in detached.members] == ["left", "right"]
-        assert [member.source_revision["definition"]["role"] for member in detached.members] == [  # type: ignore[index]
-            "left",
-            "right",
-        ]
+        source_roles: list[object] = []
+        for member in detached.members:
+            revision = member.source_revision
+            assert revision is not None
+            definition = revision["definition"]
+            assert isinstance(definition, dict)
+            source_roles.append(definition["role"])
+        assert source_roles == ["left", "right"]
 
 
 def test_dataset_identity_is_independent_of_detached_export_layout(tmp_path: Path) -> None:

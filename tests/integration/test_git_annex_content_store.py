@@ -16,6 +16,7 @@ from efloud.git_commands import run_git
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from typing import BinaryIO
 
 pytestmark = [
     pytest.mark.integration,
@@ -44,14 +45,13 @@ def _interruptible_http_file_server(root: Path) -> Iterator[tuple[str, Callable[
     state = {"interrupt": True}
 
     class InterruptingHandler(SimpleHTTPRequestHandler):
-        def copyfile(self, source: object, outputfile: object) -> None:
+        def copyfile(self, source: BinaryIO, outputfile: BinaryIO) -> None:
             if state["interrupt"]:
-                chunk = source.read(8)  # type: ignore[attr-defined]
-                outputfile.write(chunk)  # type: ignore[attr-defined]
-                outputfile.flush()  # type: ignore[attr-defined]
+                outputfile.write(source.read(8))
+                outputfile.flush()
                 self.close_connection = True
                 return
-            shutil.copyfileobj(source, outputfile)  # type: ignore[arg-type]
+            shutil.copyfileobj(source, outputfile)
 
     handler = functools.partial(InterruptingHandler, directory=root.as_posix())
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)

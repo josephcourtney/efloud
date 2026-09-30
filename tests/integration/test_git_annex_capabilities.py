@@ -32,7 +32,10 @@ def test_annex_capability_probe_reports_missing_command_with_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = GitAnnexContentStore.initialize(tmp_path / "repository")
-    monkeypatch.setattr(git_annex, "_REQUIRED_COMMANDS", frozenset({"efloud-impossible-command"}))
+    monkeypatch.setattr(git_annex, "_REQUIRED_COMMANDS", ("efloud-impossible-command",))
 
-    with pytest.raises(GitAnnexCapabilityError, match=r"git-annex .* lacks required command.*efloud-impossible-command"):
+    with pytest.raises(
+        GitAnnexCapabilityError,
+        match=r"git-annex .* lacks required command.*efloud-impossible-command",
+    ):
         store.check_available()

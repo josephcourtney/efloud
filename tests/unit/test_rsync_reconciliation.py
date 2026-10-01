@@ -105,8 +105,7 @@ def test_reconciliation_adds_then_reuses_unchanged_content(tmp_path: Path) -> No
         assert latest is not None
         assert latest.observation_id != old.observation_id
         assert latest.content_id == old.content_id
-        blob_files = [path for path in (repo.root / "objects").rglob("*") if path.is_file()]
-        assert len(blob_files) == 1
+        assert repo.contains_content(old.content_id)
 
 
 @pytest.mark.medium

@@ -41,14 +41,15 @@ Milestone D of the experimental clean-break rewrite: complete git-annex-aware ma
 - The exact clean branch head passed `just check` after the cutover and read-only custody fixes.
 - The first CAS-specific test migration is complete: obsolete blob-store contract tests and filesystem-layout assertions were removed or converted to semantic content assertions; reflink export permissions were corrected so cloned handoff files are independently writable.
 - The filesystem CAS implementation has now been deleted. Maintenance enumerates annex custody through the ContentStore and performs key-level drops only after semantic reachability checks.
+- Key reacquisition and URL registration now use git-annex directly; integration coverage proves that corruption/drop/reacquisition preserves the semantic `ContentId`.
 - The narrow semantic `Catalog` and pure in-memory fake are implemented and locally validated.
 - `Repository` still directly owns the broad legacy metadata/blob abstractions; this is now the immediate dependency-cut target.
 
 ## Immediate gaps
 
 - Route the remaining semantic repository persistence through `Catalog` and isolate legacy materialization/custom-tree calls.
-- Finish git-annex get/reacquire, appropriate URL delegation, corruption, interruption/retry, and destructive-operation failure behavior.
-- Locally run the current branch after this maintenance cutover; the GitHub edits in this tranche have not yet been locally verified here.
+- Finish git-annex interruption/retry and any remaining unusual-filename behavior proof.
+- Locally run the current branch after this tranche; the GitHub edits in this tranche have not yet been locally verified here.
 
 ## Resume point
 

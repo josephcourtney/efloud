@@ -531,8 +531,12 @@ open(custody_key)
 has_content(custody_key)
 verify(custody_key)
 present_keys()
+register_url(custody_key, url)
+get(custody_key)
 drop_key(custody_key)  # maintenance only
 ```
+
+URL registration is also infrastructure state. Efloud may register a URL against an already-known cryptographic key and later ask git-annex to `get` that key. The URL is never semantic content identity: registration does not establish successful acquisition, and a catalog record is written only after custody is locally present and verified. `get` uses git-annex's incomplete-transfer recovery facility so a retry may resume an interrupted download rather than requiring Efloud to implement a second transfer protocol.
 
 The annex key is persisted as infrastructure evidence needed to recover the bytes,
 but it is never part of `ContentId`, artifact identity, dataset identity, or detached

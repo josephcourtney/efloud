@@ -5,7 +5,6 @@ Purpose: ephemeral, execution-level tasks for the experimental Git/git-annex red
 ## 1. Finish the Git tree cutover
 
 - [ ] Delete the now-unreachable `SQLiteMetadataStore.record_tree()` / `tree_entries()` implementation and its obsolete tree-model imports.
-- [ ] Add a schema-level assertion that clean repositories no longer create `tree_snapshots` or `tree_entries` tables.
 - [ ] Verify the schema-4 tree cutover with the complete local quality gate.
 
 Acceptance: Git is the only durable tree representation; SQLite stores only the Git tree identity on source snapshots and no custom tree rows remain.

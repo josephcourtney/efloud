@@ -4,7 +4,7 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Phase B of the experimental clean-break rewrite: cut `Repository` onto the proven internal `Catalog`, `ContentStore`, and `TreeStore` boundaries while leaving legacy tree/materialization behavior explicitly isolated until replacement.
+Milestone D of the experimental clean-break rewrite: cut Repository content custody and content identity over to git-annex while leaving custom tree/materialization and the remaining broad legacy metadata dependencies explicitly isolated until replacement.
 
 ## Baseline
 
@@ -37,14 +37,15 @@ Phase B of the experimental clean-break rewrite: cut `Repository` onto the prove
 
 - Phase A is complete and locally validated.
 - The initial real Git/git-annex infrastructure proof is complete for ingest/verify and tree/commit operations.
+- Repository content custody has now been cut over in production code to the internal git-annex ContentStore; real repository reopen/persistence coverage has been added but this branch head has not yet been locally verified.
 - The narrow semantic `Catalog` and pure in-memory fake are implemented and locally validated.
 - `Repository` still directly owns the broad legacy metadata/blob abstractions; this is now the immediate dependency-cut target.
 
 ## Immediate gaps
 
-- Route semantic repository persistence through `Catalog` and isolate legacy materialization/custom-tree calls.
+- Route the remaining semantic repository persistence through `Catalog` and isolate legacy materialization/custom-tree calls.
 - Finish git-annex get/drop/reacquire, appropriate URL delegation, corruption, interruption/retry, and destructive-operation behavior.
-- Define the portable semantic-content ↔ annex-key mapping before changing `ContentRef` or deleting the filesystem CAS.
+- Rewrite/remove CAS-specific tests and maintenance after the real Repository cutover is locally verified.
 
 ## Resume point
 

@@ -1,9 +1,12 @@
+import hashlib
+import io
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 from efloud.catalog.memory import MemoryCatalog
+from efloud.content.protocol import AnnexKey
 from efloud.datasets import DatasetDefinition, ExactObservation, Latest, LatestAll, LatestBefore
 from efloud.inventory import AbsenceEvidence
 from efloud.json_types import json_mapping_or_none
@@ -11,12 +14,69 @@ from efloud.repository import Repository
 from efloud.repository_models import (
     ArtifactAbsence,
     ContentId,
+    ContentRef,
     SourceId,
     TreeEntry,
     ValidationResult,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
+
+
+class _MemoryContentStore:
+    """Small in-process content store for storage-independent repository tests."""
+
+    def __init__(self) -> None:
+        self._content: dict[AnnexKey, bytes] = {}
+
+    @staticmethod
+    def _key(data: bytes) -> AnnexKey:
+        return AnnexKey(f"test-sha256:{hashlib.sha256(data).hexdigest()}")
+
+    def ingest_path(self, path: Path) -> AnnexKey:
+        return self.ingest_bytes(path.read_bytes())
+
+    def ingest_bytes(self, data: bytes) -> AnnexKey:
+        key = self._key(data)
+        self._content[key] = bytes(data)
+        return key
+
+    def content_ref(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef:
+        data = self._content[key]
+        return ContentRef(
+            content_id=ContentId(f"sha256:{hashlib.sha256(data).hexdigest()}"),
+            byte_size=len(data),
+            custody_key=str(key),
+            media_type=media_type,
+        )
+
+    def has_content(self, key: AnnexKey) -> bool:
+        return key in self._content
+
+    def open(self, key: AnnexKey) -> io.BytesIO:
+        return io.BytesIO(self._content[key])
+
+    def verify(self, key: AnnexKey) -> bool:
+        data = self._content.get(key)
+        return data is not None and self._key(data) == key
+
+    def present_keys(self) -> tuple[AnnexKey, ...]:
+        return tuple(sorted(self._content, key=str))
+
+    def custody_mtime(self, key: AnnexKey) -> float:
+        if key not in self._content:
+            raise KeyError(key)
+        return 0.0
+
+    def drop_key(self, key: AnnexKey) -> None:
+        self._content.pop(key, None)
+
+    def register_url(self, key: AnnexKey, url: str) -> None:
+        del key, url
+
+    def get(self, key: AnnexKey) -> None:
+        if key not in self._content:
+            raise KeyError(key)
 
 
 def _run(repo: Repository):
@@ -54,7 +114,7 @@ def test_content_dedup_and_observation_history(tmp_path: Path) -> None:
 
 
 def test_semantic_repository_slice_accepts_memory_catalog(tmp_path: Path) -> None:
-    with Repository(tmp_path, metadata_store=MemoryCatalog()) as repo:
+    with Repository(tmp_path, metadata_store=MemoryCatalog(), content_store=_MemoryContentStore()) as repo:
         source, run, operation = _run(repo)
         observation = repo.ingest_bytes(
             "artifact:a",
@@ -70,10 +130,11 @@ def test_semantic_repository_slice_accepts_memory_catalog(tmp_path: Path) -> Non
         assert repo.observation(observation.observation_id) == observation
         assert repo.content(observation.content_id) is not None
         assert repo.latest_observation("artifact:a") == observation
+        assert repo.verify_content(observation.content_id)
 
 
 def test_memory_catalog_repository_uses_git_tree_store(tmp_path: Path) -> None:
-    with Repository(tmp_path, metadata_store=MemoryCatalog()) as repo:
+    with Repository(tmp_path, metadata_store=MemoryCatalog(), content_store=_MemoryContentStore()) as repo:
         source, run, _operation = _run(repo)
         snapshot = repo.record_tree_snapshot(
             source_id=source,
@@ -162,7 +223,7 @@ def test_validation_requires_known_content(tmp_path: Path) -> None:
         repo.record_validation(
             ValidationResult(
                 content_id=ContentId("sha256:" + "0" * 64),
-                validator="test",
+                validator="test:validator",
                 validator_version="1",
                 checked_at=1.0,
                 status="passed",

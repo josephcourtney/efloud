@@ -29,7 +29,9 @@ class GitCommandError(GitError):
         self.stderr = stderr
 
 
-def _git_command(root: Path, args: tuple[str, ...], env: Mapping[str, str] | None) -> tuple[tuple[str, ...], dict[str, str]]:
+def _git_command(
+    root: Path, args: tuple[str, ...], env: Mapping[str, str] | None
+) -> tuple[tuple[str, ...], dict[str, str]]:
     if not root.is_dir():
         msg = f"Git working directory does not exist: {root}"
         raise GitError(msg)

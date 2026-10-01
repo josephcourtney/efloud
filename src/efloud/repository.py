@@ -34,7 +34,6 @@ from efloud.repository_models import (
 )
 from efloud.sqlite_metadata import SQLiteMetadataStore
 from efloud.tree.git import GitTreeStore
-from efloud.tree.protocol import TreeStore
 from efloud.tree.snapshot import read_tree_snapshot, write_tree_snapshot
 from efloud.writer_coordination import WriterLease
 
@@ -49,6 +48,7 @@ if TYPE_CHECKING:
     from efloud.json_types import JsonObject
     from efloud.metadata_store import MaterializationRecord, OperationRecord, RunRecord, SourceRecord
     from efloud.repository_models import DatasetSpecification
+    from efloud.tree.protocol import TreeStore
 
 _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
 _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})

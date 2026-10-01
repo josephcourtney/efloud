@@ -92,9 +92,7 @@ def test_read_only_repository_reads_git_tree_snapshot_without_mutation(tmp_path:
     before = _tree_state(tmp_path)
 
     with ReadOnlyRepository(tmp_path) as repository:
-        assert repository.tree_entries(tree_id) == (
-            TreeEntry("dir", "directory", metadata={"marker": "kept"}),
-        )
+        assert repository.tree_entries(tree_id) == (TreeEntry("dir", "directory", metadata={"marker": "kept"}),)
 
     assert _tree_state(tmp_path) == before
 

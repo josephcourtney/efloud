@@ -102,7 +102,9 @@ def read_tree_snapshot(store: TreeStore, tree_id: str) -> tuple[TreeEntry, ...]:
         msg = f"Git tree {tree_id} has an invalid Efloud tree manifest"
         raise TypeError(msg)
 
-    entries = tuple(sorted((_decode_tree_entry(value, tree_id=tree_id) for value in decoded), key=lambda e: e.relative_path))
+    entries = tuple(
+        sorted((_decode_tree_entry(value, tree_id=tree_id) for value in decoded), key=lambda e: e.relative_path)
+    )
     if len({entry.relative_path for entry in entries}) != len(entries):
         msg = f"Git tree {tree_id} contains duplicate semantic paths"
         raise ValueError(msg)

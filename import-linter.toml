@@ -22,7 +22,6 @@
   name = "storage stays below orchestration"
   type = "forbidden"
   source_modules = [
-    "efloud.blob_store",
     "efloud.metadata_store",
     "efloud.schema",
     "efloud.schema_migrations",

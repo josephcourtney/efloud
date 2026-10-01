@@ -4,7 +4,7 @@ import sqlite3
 from typing import TYPE_CHECKING, BinaryIO, Self
 
 from efloud.content.git_annex import GitAnnexContentStore
-from efloud.content.protocol import AnnexKey
+from efloud.content.protocol import AnnexKey, ContentReader
 from efloud.datasets import DatasetManifest, ImmutableDataset
 from efloud.repository_models import (
     ArtifactKey,
@@ -65,12 +65,28 @@ class ReadOnlySQLiteMetadataStore(SQLiteMetadataStore):
             raise RuntimeError(msg)
 
 
+class ReadOnlyGitAnnexContentStore:
+    """Read-only view of git-annex custody operations."""
+
+    def __init__(self, store: GitAnnexContentStore) -> None:
+        self._store = store
+
+    def has_content(self, key: AnnexKey) -> bool:
+        return self._store.has_content(key)
+
+    def open(self, key: AnnexKey) -> BinaryIO:
+        return self._store.open(key)
+
+    def verify(self, key: AnnexKey) -> bool:
+        return self._store.verify(key)
+
+
 class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the repository's read capability surface.
     """Non-mutating view of an existing efloud repository.
 
     Construction does not create directories, initialize schemas, or run schema
-    migrations. The SQLite database is opened with ``mode=ro`` and the blob
-    store rejects all mutation operations.
+    migrations. The SQLite database is opened with ``mode=ro`` and content custody is exposed only
+    through its read-only content-reader port.
     """
 
     def __init__(self, root: Path) -> None:
@@ -79,8 +95,9 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
             msg = f"Repository root is not a directory: {self.root}"
             raise FileNotFoundError(msg)
         self.metadata = ReadOnlySQLiteMetadataStore(self.root / "metadata.sqlite")
-        self.content_store = GitAnnexContentStore(self.root)
-        self.content_store.check_available()
+        store = GitAnnexContentStore(self.root)
+        store.check_available()
+        self.content_store: ContentReader = ReadOnlyGitAnnexContentStore(store)
 
     def __enter__(self) -> Self:
         """Return this repository for context-manager use."""

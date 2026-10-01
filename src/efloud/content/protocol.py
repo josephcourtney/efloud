@@ -36,6 +36,8 @@ class ContentReader(Protocol):
 
     def verify(self, key: AnnexKey) -> bool: ...
 
+    def present_keys(self) -> tuple[AnnexKey, ...]: ...
+
 
 class ContentStore(ContentReader, Protocol):
     """Narrow content-custody port; semantic identity remains outside the store."""
@@ -51,6 +53,10 @@ class ContentStore(ContentReader, Protocol):
     def open(self, key: AnnexKey) -> BinaryIO: ...
 
     def verify(self, key: AnnexKey) -> bool: ...
+
+    def present_keys(self) -> tuple[AnnexKey, ...]: ...
+
+    def drop_key(self, key: AnnexKey) -> None: ...
 
 
 __all__ = ["AnnexKey", "ContentReader", "ContentStore"]

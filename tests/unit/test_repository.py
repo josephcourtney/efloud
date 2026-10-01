@@ -19,6 +19,7 @@ from efloud.repository_models import (
     TreeEntry,
     ValidationResult,
 )
+from efloud.tree.protocol import GitCommitId, GitTreeEntry, GitTreeId, TreeBlob
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 
@@ -79,6 +80,41 @@ class _MemoryContentStore:
             raise KeyError(key)
 
 
+class _MemoryTreeStore:
+    """Small in-process tree store for catalog-boundary repository tests."""
+
+    def __init__(self) -> None:
+        self._blobs: dict[str, bytes] = {}
+        self._trees: dict[str, tuple[GitTreeEntry, ...]] = {}
+
+    def write_tree(self, entries: tuple[TreeBlob, ...]) -> GitTreeId:
+        listed: list[GitTreeEntry] = []
+        digest = hashlib.sha256()
+        for entry in entries:
+            object_id = hashlib.sha256(entry.data).hexdigest()
+            self._blobs[object_id] = bytes(entry.data)
+            listed.append(GitTreeEntry(entry.relative_path, entry.mode, "blob", object_id))
+            digest.update(entry.relative_path.encode())
+            digest.update(b"\0")
+            digest.update(entry.mode.encode())
+            digest.update(b"\0")
+            digest.update(object_id.encode())
+            digest.update(b"\0")
+        tree_id = GitTreeId(digest.hexdigest())
+        self._trees[str(tree_id)] = tuple(listed)
+        return tree_id
+
+    def list_tree(self, treeish: GitTreeId | GitCommitId | str) -> tuple[GitTreeEntry, ...]:
+        return self._trees[str(treeish)]
+
+    def read_blob(self, object_id: str) -> bytes:
+        return self._blobs[object_id]
+
+    def commit_tree(self, tree: GitTreeId, *, ref: str, message: str) -> GitCommitId:
+        digest = hashlib.sha256(f"{tree}\0{ref}\0{message}".encode()).hexdigest()
+        return GitCommitId(digest)
+
+
 def _run(repo: Repository):
     source = repo.register_source(SourceId("test-source"), {"kind": "test"})
     run = repo.start_run(source_ids=(source,), started_at=100.0)
@@ -114,7 +150,12 @@ def test_content_dedup_and_observation_history(tmp_path: Path) -> None:
 
 
 def test_semantic_repository_slice_accepts_memory_catalog(tmp_path: Path) -> None:
-    with Repository(tmp_path, metadata_store=MemoryCatalog(), content_store=_MemoryContentStore()) as repo:
+    with Repository(
+        tmp_path,
+        metadata_store=MemoryCatalog(),
+        content_store=_MemoryContentStore(),
+        tree_store=_MemoryTreeStore(),
+    ) as repo:
         source, run, operation = _run(repo)
         observation = repo.ingest_bytes(
             "artifact:a",
@@ -133,8 +174,13 @@ def test_semantic_repository_slice_accepts_memory_catalog(tmp_path: Path) -> Non
         assert repo.verify_content(observation.content_id)
 
 
-def test_memory_catalog_repository_uses_git_tree_store(tmp_path: Path) -> None:
-    with Repository(tmp_path, metadata_store=MemoryCatalog(), content_store=_MemoryContentStore()) as repo:
+def test_memory_catalog_repository_uses_injected_tree_store(tmp_path: Path) -> None:
+    with Repository(
+        tmp_path,
+        metadata_store=MemoryCatalog(),
+        content_store=_MemoryContentStore(),
+        tree_store=_MemoryTreeStore(),
+    ) as repo:
         source, run, _operation = _run(repo)
         snapshot = repo.record_tree_snapshot(
             source_id=source,
@@ -223,7 +269,7 @@ def test_validation_requires_known_content(tmp_path: Path) -> None:
         repo.record_validation(
             ValidationResult(
                 content_id=ContentId("sha256:" + "0" * 64),
-                validator="test:validator",
+                validator="test",
                 validator_version="1",
                 checked_at=1.0,
                 status="passed",

@@ -118,10 +118,11 @@ class Repository:
 
     def _legacy_state(self) -> _LegacyRepositoryState:
         """Return the temporary physical-state capability used during the migration."""
-        if not isinstance(self.catalog, _LegacyRepositoryState):
+        state = cast(_LegacyRepositoryState, self.catalog)
+        if not hasattr(state, "record_materialization") or not hasattr(state, "record_tree"):
             msg = "This repository backend does not provide legacy materialization/tree state."
             raise TypeError(msg)
-        return cast(_LegacyRepositoryState, self.catalog)
+        return state
 
     def source(self, source_id: SourceId | str) -> SourceRecord | None:
         return self.catalog.source(SourceId(str(source_id)))

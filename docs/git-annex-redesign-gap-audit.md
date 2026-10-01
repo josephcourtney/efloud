@@ -30,6 +30,7 @@ The experiment should replace infrastructure around those semantics rather than 
 | source inventory semantics | adapters + inventory/reconciliation | Efloud | retain and narrow |
 | generic HTTP/rsync transfer | `transport/`, protocol runtime/retry/cache code | git-annex where practical | delete after source-specific gaps are classified |
 | source-specific authenticated/API retrieval | adapters | Efloud-assisted temporary retrieval -> git-annex ingest | retain only where required |
+| upstream Git repository history | not first-class | `GitSource` + Git source adapter; native refs/commits/blobs remain source evidence while exact file bytes enter `ContentStore` | add |
 | semantic metadata | SQLite metadata/repository records | Efloud catalog | retain, shrink to unique semantics |
 | public durable facade | `Repository` | `Repository` facade over catalog + content/tree infrastructure | retain public boundary; split internals |
 | generic derivation DAG/execution | `derivation.py`, executor paths | DVC/downstream | remove from core |
@@ -134,6 +135,140 @@ SQLite remains a semantic catalog, not a second content/tree/workflow implementa
 - `efloud.toml`: retained as editable intent and continues to round-trip the same semantic models as Python APIs.
 - `efloud.lock`: retained as canonical exact resolved state and extended with Git/git-annex evidence without making either tool's repository identity the Efloud dataset identity.
 
+## Git repositories as first-class temporal sources
+
+Git has two independent roles in the redesign and they must not be conflated:
+
+1. Git is Efloud infrastructure for filesystem-tree/history evidence produced by Efloud itself.
+2. A remote or local Git repository may also be an external data source observed by Efloud.
+
+The second role is modeled through the ordinary source/observation system. A Git repository is not a parallel repository ontology and its commit, tree, or blob IDs do not become Efloud artifact, content, observation, or dataset IDs.
+
+### Declarative source
+
+Add a first-class `GitSource` whose declaration contains only source intent, for example:
+
+```python
+GitSource(
+    id="project-x",
+    remote="https://example.org/project-x.git",
+    refs=("refs/heads/main",),
+    paths=("data/**",),
+)
+```
+
+The source definition must identify the remote and selected refs/path scope deterministically. Execution state such as clone location, fetch state, and temporary worktrees belongs to the adapter/runtime rather than the declarative source.
+
+### Logical artifact identity
+
+By default, one selected repository-relative path is one logical artifact:
+
+```text
+ArtifactKey = source:<source-id>:path:<repository-relative-path>
+```
+
+The path identifies the upstream logical file, not Efloud storage. A file's bytes may change many times while its `ArtifactKey` remains stable.
+
+Rename detection must not silently redefine identity. Git rename detection is heuristic, so a rename is conservatively modeled as absence of the old path plus appearance of the new path. An adapter or domain-specific provider may record an explicit provenance relationship when stronger identity evidence exists.
+
+### Native revision evidence and observation time
+
+Importing Git history exposes source states that predate the moment Efloud learned about them. Efloud must therefore keep epistemic observation time separate from source-native revision evidence:
+
+- `observed_at`: when Efloud obtained the evidence;
+- `source_revision`: upstream commit object ID;
+- `source_blob`: upstream blob object ID for a content-bearing file state;
+- `source_time`: upstream commit time, retained as source-provided metadata rather than Efloud observation time;
+- parent revision IDs: retained where needed to preserve the upstream revision DAG.
+
+Historical commits discovered during one fetch must not receive fabricated old `observed_at` values. Commit timestamps also must not be treated as an authoritative total ordering of Git history; ancestry is the native ordering evidence.
+
+The catalog may use a focused source-revision record or equivalent internal representation for commit/parent/ref evidence. This is advanced source evidence and does not belong at the package root.
+
+### Acquisition and history import
+
+A Git source adapter should:
+
+```text
+fetch selected refs into a managed Git cache
+        ↓
+record observed ref -> commit mappings
+        ↓
+walk newly discovered reachable revisions
+        ↓
+identify selected-path state transitions
+        ↓
+extract exact blob bytes
+        ↓
+ingest bytes through ContentStore / git-annex
+        ↓
+record ordinary Efloud observations or absences
+```
+
+The managed Git clone/bare repository is a disposable acquisition cache. Its filesystem path and object layout are not semantic state. Deleting that cache must not invalidate already-recorded Efloud artifact history.
+
+For each changed file state, the blob bytes are ingested through the same `ContentStore` used by REST, rsync, local files, and other adapters. Therefore identical bytes obtained from Git and another source resolve to the same `ContentRef`; the Git blob ID remains source-native provenance/change evidence rather than a second content identity.
+
+A deletion at an imported commit becomes ordinary absence evidence when the adapter has sufficient commit-tree/path-scope coverage to establish it. Unchanged commits need not duplicate content observations merely because another commit exists; Efloud records meaningful state/evidence transitions while preserving enough source-revision evidence to explain the history.
+
+### Ref movement, rewritten history, and repeated fetches
+
+Repeated acquisition must be incremental and idempotent:
+
+- already-known native revisions do not create duplicate semantic observations;
+- newly reachable commits append history;
+- a branch/tag moving to a new commit creates new ref-observation evidence;
+- force-pushes and rebases never rewrite or delete Efloud's previously recorded observations;
+- revisions that later become unreachable upstream remain historical evidence that Efloud actually obtained earlier.
+
+### Unified artifact history
+
+Git-backed files must be queryable through the same public artifact-history surface as REST responses and rsync files. Conceptually:
+
+```text
+Repository.history(ArtifactKey(...))
+    -> content observation
+    -> content observation
+    -> absence observation
+    -> content observation
+```
+
+Git-originated records carry richer native revision evidence, but callers should not need a separate Git-specific history API merely to ask which exact contents a logical artifact has had. Git-aware callers may additionally inspect ancestry/ref evidence rather than flattening the native DAG by timestamp.
+
+### Identity boundaries
+
+The following identities remain distinct:
+
+```text
+ArtifactKey          Efloud logical source artifact
+ContentRef           exact bytes, backed by git-annex
+ObservationId        Efloud historical evidence
+upstream commit OID  source-native revision evidence
+upstream blob OID    source-native content/change evidence
+Git tree/commit      optional Efloud projection/history evidence
+DatasetId            immutable semantic dataset membership
+```
+
+No upstream Git OID and no Efloud projection commit participates in `DatasetId` unless explicitly represented as semantic source evidence by the dataset specification.
+
+### Git-source acceptance criteria
+
+The Git source implementation is acceptable when:
+
+1. a Git repository and ref/path scope can be declared as a normal `Source`;
+2. one repository-relative file path is exposed as a stable `ArtifactKey` across content changes;
+3. distinct historical file contents become ordinary annex-backed `ContentRef`s;
+4. identical bytes obtained through Git and REST/rsync/local acquisition receive the same Efloud content identity;
+5. deletion and reappearance produce the same absence/content history states used by other source types;
+6. historical commits imported later preserve actual Efloud `observed_at` time separately from source commit time;
+7. Git ancestry/ref evidence is retained without treating commit timestamps as total history order;
+8. repeated fetches are idempotent and append only newly discovered evidence;
+9. force-pushed or rebased upstream history does not rewrite previously recorded Efloud evidence;
+10. removing the managed Git acquisition cache does not invalidate recorded artifact history;
+11. heuristic rename detection does not silently change `ArtifactKey` identity;
+12. ordinary artifact-history queries expose Git file versions through the same semantic record types as REST and rsync history;
+13. upstream commit/tree/blob IDs never become `DatasetId` or replace `ContentRef`.
+
 ## Phase A acceptance criteria — characterization and boundaries
 
 Phase A is complete when:
@@ -199,3 +334,20 @@ Do not yet:
 5. Cut `Repository` over to the new content backend before deleting the filesystem CAS.
 
 This ordering keeps the experiment falsifiable: if git-annex cannot satisfy the content-custody contract cleanly, the branch can stop before semantic identities or repository persistence are rewritten.
+
+## Git-source implementation slice
+
+Implement `GitSource` only after annex-backed content identity, the catalog boundary, and inventory/absence coverage semantics are stable enough that Git history can exercise them rather than creating a second model.
+
+1. Add declarative `GitSource` with remote, selected refs, and path scope; include it in `efloud.toml` round-tripping through the same source model used by the Python API.
+2. Add a namespaced Git source adapter using the existing centralized Git command boundary.
+3. Fetch into a managed bare/disposable cache whose path is operational state, not semantic identity.
+4. Persist observed ref tips and focused source-native revision evidence (commit ID, parents, source time) needed to explain imported history.
+5. Walk only newly discovered reachable revisions and derive selected-path state transitions without relying on rename heuristics for identity.
+6. Extract changed blob bytes and ingest them through `ContentStore`; never expose the managed Git object database as Efloud content custody.
+7. Translate deletions/reappearances into ordinary absence/content evidence under commit/path coverage rules.
+8. Make repeated fetches idempotent and preserve evidence across force-pushes, rebases, ref deletion, and cache recreation.
+9. Extend the ordinary artifact-history query so Git file histories return the same observation/absence record types used by REST and rsync sources, with optional native revision evidence attached.
+10. Add real-Git integration tests covering linear history, merges, branch movement, deletion/reappearance, force-push, repeated fetch, identical cross-source bytes, unusual paths, and cache deletion.
+
+This slice should precede any work that treats dataset resolution as finished, because a historical Git source is a strong acceptance test that `ArtifactKey`, observation time, source-native revision evidence, absence, and `ContentRef` are truly protocol-independent.

@@ -11,14 +11,14 @@ Purpose: ephemeral, execution-level tasks for the experimental Git/git-annex red
 
 Acceptance: ordinary semantic repository behavior depends on `Catalog`; the remaining legacy metadata dependency is limited to functionality already classified for replacement/deletion.
 
-## 2. Complete the Git/git-annex proof
+## 2. Complete the remaining Git/git-annex proof
 
 - [ ] Detect the tested Git/git-annex capabilities needed by Efloud; define a minimum version only if concrete incompatibility requires one.
-- [ ] Implement/test content get/drop and drop/reacquire without changing Efloud semantic identity.
+- [ ] Implement/test content get/reacquire without changing Efloud semantic identity.
 - [ ] Determine which ordinary URL registration/acquisition operations can be delegated cleanly to git-annex and test only those supported paths.
 - [ ] Cover unusual filenames, interruption/retry, corruption, and destructive-operation failure behavior on real filesystem primitives.
 
-Acceptance: real integration tests prove Git/git-annex can satisfy the target content contract before `ContentRef` or repository persistence is cut over.
+Acceptance: the remaining Git/git-annex behaviors required by Efloud are proven against the supported real implementation.
 
 ## 3. Finish the remaining git-annex behavior proof
 

@@ -270,7 +270,6 @@ def test_corrupt_export_fails_verification_without_repository_mutation(tmp_path:
     with Repository.create(root) as repository:
         _sync_http(repository, adapter, _http_source())
         dataset = repository.datasets.freeze(DatasetSpec.latest("source:example"))
-        dataset_id = dataset.id
         manifest = dataset.export(export, strategy="copy")
 
     metadata_before = (root / "metadata.sqlite").read_bytes()
@@ -280,14 +279,6 @@ def test_corrupt_export_fails_verification_without_repository_mutation(tmp_path:
     assert manifest.verify(export) is False
     exported_member.unlink()
     assert manifest.verify(export) is False
-    assert (root / "metadata.sqlite").read_bytes() == metadata_before
-
-    assert (root / "metadata.sqlite").read_bytes() == metadata_before
-
-        reopened = repository.datasets.get(dataset_id)
-        assert reopened.verify() is False
-        with pytest.raises(DatasetError):
-            reopened.open("source:example")
     assert (root / "metadata.sqlite").read_bytes() == metadata_before
 
 

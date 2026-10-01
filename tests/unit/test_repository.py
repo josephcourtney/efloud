@@ -1,4 +1,3 @@
-import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -11,8 +10,6 @@ from efloud.repository import Repository
 from efloud.repository_models import (
     ArtifactAbsence,
     ContentId,
-    OperationId,
-    RunId,
     SourceId,
     TreeEntry,
     ValidationResult,

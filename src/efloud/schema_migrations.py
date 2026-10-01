@@ -102,27 +102,13 @@ CREATE TABLE IF NOT EXISTS materializations (
     metadata_json TEXT NOT NULL,
     PRIMARY KEY (content_id, kind, path)
 );
-CREATE TABLE IF NOT EXISTS tree_snapshots (
-    tree_id TEXT PRIMARY KEY,
-    created_at REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS tree_entries (
-    tree_id TEXT NOT NULL REFERENCES tree_snapshots(tree_id) ON DELETE CASCADE,
-    relative_path TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    content_id TEXT REFERENCES content_objects(content_id),
-    byte_size INTEGER,
-    target TEXT,
-    metadata_json TEXT NOT NULL,
-    PRIMARY KEY (tree_id, relative_path)
-);
 CREATE TABLE IF NOT EXISTS source_snapshots (
     snapshot_id TEXT PRIMARY KEY,
     source_id TEXT NOT NULL REFERENCES sources(source_id),
     run_id TEXT NOT NULL REFERENCES runs(run_id),
     observed_at REAL NOT NULL,
     complete INTEGER NOT NULL CHECK (complete IN (0, 1)),
-    tree_id TEXT REFERENCES tree_snapshots(tree_id),
+    tree_id TEXT,
     scope_json TEXT NOT NULL,
     evidence_json TEXT NOT NULL
 );

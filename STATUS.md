@@ -4,7 +4,7 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Milestone D of the experimental clean-break rewrite: complete git-annex-aware maintenance after the Repository content-custody cutover.
+Milestone E of the experimental clean-break rewrite: delete replaced transfer/tree/derivation machinery after completing the first Repository-to-Catalog dependency cut.
 
 ## Baseline
 
@@ -43,14 +43,16 @@ Milestone D of the experimental clean-break rewrite: complete git-annex-aware ma
 - The filesystem CAS implementation has now been deleted. Maintenance enumerates annex custody through the ContentStore and performs key-level drops only after semantic reachability checks.
 - Key reacquisition and URL registration now use git-annex directly; integration coverage proves that corruption/drop/reacquisition preserves the semantic `ContentId`.
 - The narrow semantic `Catalog` and pure in-memory fake are implemented and locally validated.
-- `Repository` still directly owns the broad legacy metadata/blob abstractions; this is now the immediate dependency-cut target.
+- The first Repository dependency cut is complete: semantic persistence is typed against `Catalog`, while materialization/custom-tree operations are isolated behind an explicitly temporary legacy capability.
 
 ## Immediate gaps
 
-- Route the remaining semantic repository persistence through `Catalog` and isolate legacy materialization/custom-tree calls.
+- Delete or replace the remaining generic transfer/cache/transport machinery where git-annex can own the behavior.
+- Replace custom tree persistence/identity with the Git tree boundary.
+- Remove generic derivation execution from core while preserving semantic derived-artifact provenance.
 - Finish git-annex interruption/retry and any remaining unusual-filename behavior proof.
 - Locally run the current branch after this tranche; the GitHub edits in this tranche have not yet been locally verified here.
 
 ## Resume point
 
-Continue with `TODO.md`: perform the first `Repository` dependency cut, then finish the remaining real git-annex proof before any content-persistence cutover.
+Continue with `TODO.md`: inspect the remaining transfer/tree/derivation machinery and delete the first replaceable slice; keep the temporary legacy materialization/tree capability isolated until its replacement is ready.

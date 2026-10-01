@@ -596,8 +596,8 @@ Materialization/export must:
 6. atomically publish where supported.
 
 Preferred immutable materialization is native reflink/clone when supported, with
-copy as universal fallback. Hardlinks are not a normal user strategy because they
-could mutate authoritative filesystem-CAS bytes. Explicit symlink export may point
+copy as universal fallback. Hardlinks are not a normal user strategy because they can couple a consumer's writes
+to repository-owned materialized content. Explicit symlink export may point
 only into private exported content, not authoritative CAS.
 
 Deleting a materialized view never affects repository correctness.

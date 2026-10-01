@@ -263,6 +263,20 @@ class GitAnnexContentStore:
         """Remove locally held content after Efloud has established semantic reachability safety."""
         _run(self.root, "annex", "dropkey", "--force", str(key))
 
+    def register_url(self, key: AnnexKey, url: str) -> None:
+        """Register an external URL as a source from which git-annex may retrieve a key."""
+        if not url or any(char.isspace() for char in url):
+            msg = "git-annex source URLs must be non-empty and contain no whitespace"
+            raise ValueError(msg)
+        _run(self.root, "annex", "registerurl", str(key), url)
+
+    def get(self, key: AnnexKey) -> None:
+        """Reacquire a key through git-annex's configured remotes or registered URLs."""
+        _run(self.root, "annex", "get", "--key", str(key))
+        if not self.has_content(key):
+            msg = f"git-annex reported success without retaining content for {key}"
+            raise GitAnnexError(msg)
+
     def verify(self, key: AnnexKey) -> bool:
         """Verify locally present SHA-256 content without mutating annex state."""
         location = self._content_location(key)

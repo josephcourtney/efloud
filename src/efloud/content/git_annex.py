@@ -272,7 +272,7 @@ class GitAnnexContentStore:
 
     def get(self, key: AnnexKey) -> None:
         """Reacquire a key through git-annex's configured remotes or registered URLs."""
-        _run(self.root, "annex", "get", "--incomplete", "--key", str(key))
+        _run(self.root, "annex", "get", "--incomplete", f"--key={key}")
         if not self.has_content(key):
             msg = f"git-annex reported success without retaining content for {key}"
             raise GitAnnexError(msg)

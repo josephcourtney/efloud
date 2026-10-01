@@ -12,36 +12,35 @@ if TYPE_CHECKING:
     from typing import BinaryIO
 
     from efloud.metadata_store import MetadataStore
-    from efloud.repository_models import ContentId, ContentRef
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.medium]
 
 
-class _UnusedBlobStore:
+class _UnusedContentStore:
     """Fail if a catalog-only repository slice touches content storage."""
 
-    def put_path(self, path: Path, *, media_type: str | None = None) -> ContentRef:
-        del path, media_type
+    def ingest_path(self, path: Path):
+        del path
         raise AssertionError
 
-    def put_bytes(self, data: bytes, *, media_type: str | None = None) -> ContentRef:
-        del data, media_type
+    def ingest_bytes(self, data: bytes):
+        del data
         raise AssertionError
 
-    def open(self, content_id: ContentId) -> BinaryIO:
-        del content_id
+    def content_ref(self, key, *, media_type: str | None = None):
+        del key, media_type
         raise AssertionError
 
-    def contains(self, content_id: ContentId) -> bool:
-        del content_id
+    def has_content(self, key) -> bool:
+        del key
         raise AssertionError
 
-    def verify(self, content_id: ContentId) -> bool:
-        del content_id
+    def open(self, key):
+        del key
         raise AssertionError
 
-    def delete(self, content_id: ContentId) -> None:
-        del content_id
+    def verify(self, key) -> bool:
+        del key
         raise AssertionError
 
 
@@ -50,7 +49,7 @@ def test_repository_semantics_run_with_memory_catalog_without_legacy_storage(tmp
     with Repository(
         tmp_path,
         metadata_store=cast("MetadataStore", catalog),
-        blob_store=_UnusedBlobStore(),
+        content_store=_UnusedContentStore(),
     ) as repository:
         source_id = repository.register_source("memory-source", {"kind": "memory"})
         run_id = repository.start_run(source_ids=(source_id,), started_at=1.0)

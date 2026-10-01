@@ -4,7 +4,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Self
 
-from efloud.blob_store import FilesystemBlobStore
+from efloud.content.git_annex import GitAnnexContentStore
+from efloud.content.protocol import AnnexKey
 from efloud.datasets import DatasetManifest, ImmutableDataset
 from efloud.repository_models import (
     ArtifactKey,
@@ -65,35 +66,6 @@ class ReadOnlySQLiteMetadataStore(SQLiteMetadataStore):
             raise RuntimeError(msg)
 
 
-@dataclass(frozen=True, slots=True)
-class ReadOnlyFilesystemBlobStore(FilesystemBlobStore):
-    """Filesystem CAS reader that cannot create, replace, or delete content."""
-
-    def __post_init__(self) -> None:
-        """Resolve and validate the existing object-store root."""
-        root = self.root.resolve(strict=True)
-        if not root.is_dir():
-            msg = f"Repository object store is not a directory: {root}"
-            raise FileNotFoundError(msg)
-        object.__setattr__(self, "root", root)
-
-    @staticmethod
-    def _write_error() -> PermissionError:
-        return PermissionError("Read-only repository cannot mutate content")
-
-    def put_path(self, path: Path, *, media_type: str | None = None) -> ContentRef:
-        del path, media_type
-        raise self._write_error()
-
-    def put_bytes(self, data: bytes, *, media_type: str | None = None) -> ContentRef:
-        del data, media_type
-        raise self._write_error()
-
-    def delete(self, content_id: ContentId) -> None:
-        del content_id
-        raise self._write_error()
-
-
 class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the repository's read capability surface.
     """Non-mutating view of an existing efloud repository.
 
@@ -108,7 +80,8 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
             msg = f"Repository root is not a directory: {self.root}"
             raise FileNotFoundError(msg)
         self.metadata = ReadOnlySQLiteMetadataStore(self.root / "metadata.sqlite")
-        self.blobs = ReadOnlyFilesystemBlobStore(self.root / "objects")
+        self.content_store = GitAnnexContentStore(self.root)
+        self.content_store.check_available()
 
     def __enter__(self) -> Self:
         """Return this repository for context-manager use."""
@@ -190,13 +163,18 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         return self.metadata.artifact_keys()
 
     def open_content(self, content_id: ContentId | str) -> BinaryIO:
-        return self.blobs.open(ContentId(str(content_id)))
+        content = self.metadata.content(ContentId(str(content_id)))
+        if content is None:
+            raise KeyError(f"Unknown repository content: {content_id}")
+        return self.content_store.open(AnnexKey(content.custody_key))
 
     def contains_content(self, content_id: ContentId | str) -> bool:
-        return self.blobs.contains(ContentId(str(content_id)))
+        content = self.metadata.content(ContentId(str(content_id)))
+        return content is not None and self.content_store.has_content(AnnexKey(content.custody_key))
 
     def verify_content(self, content_id: ContentId | str) -> bool:
-        return self.blobs.verify(ContentId(str(content_id)))
+        content = self.metadata.content(ContentId(str(content_id)))
+        return content is not None and self.content_store.verify(AnnexKey(content.custody_key))
 
     def validation(
         self,

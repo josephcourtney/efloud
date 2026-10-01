@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, BinaryIO, Self
+from typing import TYPE_CHECKING, BinaryIO, Protocol, Self, cast
 
 from efloud.content.git_annex import GitAnnexContentStore
 from efloud.content.protocol import AnnexKey, ContentStore
+from efloud.catalog.protocol import Catalog
 from efloud.datasets import DatasetDefinition, DatasetManifest, ImmutableDataset, resolve_dataset
 from efloud.metadata_envelopes import source_definition_history_payload
 from efloud.repository_models import (
@@ -40,15 +41,26 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
-    from efloud.catalog.protocol import Catalog
     from efloud.derivation import DerivationKey
     from efloud.inventory import AbsenceEvidence
     from efloud.json_types import JsonObject
-    from efloud.metadata_store import MaterializationRecord, MetadataStore, OperationRecord, RunRecord, SourceRecord
+    from efloud.metadata_store import MaterializationRecord, OperationRecord, RunRecord, SourceRecord
     from efloud.repository_models import DatasetSpecification
 
 _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
 _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
+
+class _LegacyRepositoryState(Protocol):
+    """Temporary capability for physical materialization and custom-tree state."""
+
+    def record_materialization(self, *, content_id: ContentId, kind: str, path: str, metadata: JsonObject) -> None: ...
+
+    def materializations_for(self, content_id: ContentId) -> tuple[MaterializationRecord, ...]: ...
+
+    def record_tree(self, tree_id: TreeId, entries: Iterable[TreeEntry], *, created_at: float) -> None: ...
+
+    def tree_entries(self, tree_id: TreeId) -> tuple[TreeEntry, ...]: ...
+
 _SOURCE_REVISION_KEY = "source_definition_revision_id"
 
 
@@ -71,7 +83,7 @@ class Repository:
         self,
         root: Path,
         *,
-        metadata_store: MetadataStore | None = None,
+        metadata_store: Catalog | None = None,
         content_store: ContentStore | None = None,
     ) -> None:
         self.root = root.resolve()
@@ -79,8 +91,7 @@ class Repository:
         self._writer_lease = WriterLease(self.root)
         try:
             metadata = metadata_store or SQLiteMetadataStore(self.root / "metadata.sqlite")
-            self.catalog: Catalog = metadata
-            self._legacy_metadata = metadata
+            self.catalog = metadata
             self.content_store: ContentStore = content_store or GitAnnexContentStore.open_or_initialize(self.root)
         except BaseException:
             self._writer_lease.close()
@@ -104,6 +115,13 @@ class Repository:
             self.catalog.close()
         finally:
             self._writer_lease.close()
+
+    def _legacy_state(self) -> _LegacyRepositoryState:
+        """Return the temporary physical-state capability used during the migration."""
+        if not isinstance(self.catalog, _LegacyRepositoryState):
+            msg = "This repository backend does not provide legacy materialization/tree state."
+            raise TypeError(msg)
+        return cast(_LegacyRepositoryState, self.catalog)
 
     def source(self, source_id: SourceId | str) -> SourceRecord | None:
         return self.catalog.source(SourceId(str(source_id)))
@@ -132,7 +150,7 @@ class Repository:
         return self.catalog.operations_for_source(SourceId(str(source_id)), limit=limit)
 
     def materializations_for(self, content_id: ContentId | str) -> tuple[MaterializationRecord, ...]:
-        return self._legacy_metadata.materializations_for(ContentId(str(content_id)))
+        return self._legacy_state().materializations_for(ContentId(str(content_id)))
 
     def register_source(self, source_id: SourceId | str, definition: JsonObject) -> SourceId:
         self._writer_lease.require_active()
@@ -348,7 +366,7 @@ class Repository:
             inputs=inputs,
         )
         if materialization_kind is not None:
-            self._legacy_metadata.record_materialization(
+            self._legacy_state().record_materialization(
                 content_id=content.content_id,
                 kind=materialization_kind,
                 path=path.resolve().as_posix(),
@@ -685,7 +703,7 @@ class Repository:
         ordered = tuple(sorted(entries, key=lambda entry: entry.relative_path))
         tree_id = TreeId(stable_id("tree", [entry.identity_payload() for entry in ordered]))
         observed = time.time() if observed_at is None else observed_at
-        self._legacy_metadata.record_tree(tree_id, ordered, created_at=observed)
+        self._legacy_state().record_tree(tree_id, ordered, created_at=observed)
         normalized_source_id = SourceId(str(source_id))
         normalized_scope = tuple(sorted(scope))
         evidence_payload = self._source_evidence(evidence or {}, normalized_source_id)
@@ -773,7 +791,7 @@ class Repository:
         return snapshot
 
     def tree_entries(self, tree_id: TreeId | str) -> tuple[TreeEntry, ...]:
-        return self._legacy_metadata.tree_entries(TreeId(str(tree_id)))
+        return self._legacy_state().tree_entries(TreeId(str(tree_id)))
 
     def source_snapshot(self, snapshot_id: SnapshotId | str) -> SourceSnapshot | None:
         return self.catalog.source_snapshot(SnapshotId(str(snapshot_id)))

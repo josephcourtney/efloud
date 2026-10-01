@@ -503,6 +503,8 @@ and deliberate maintenance reports.
 The ordinary public service does not expose arbitrary CRUD or physical storage
 placement.
 
+Semantic persistence is typed against the internal `Catalog` port. The current SQLite implementation also carries the temporary physical-state capability used for materialization records and the pre-Git-tree snapshot representation. Those operations are explicitly outside `Catalog` and are isolated behind a private repository capability; they are replacement targets, not part of the semantic persistence contract.
+
 ## Metadata store
 
 The default metadata implementation is SQLite. Universal structure belongs in

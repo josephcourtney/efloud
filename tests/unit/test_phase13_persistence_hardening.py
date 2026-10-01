@@ -200,3 +200,26 @@ def test_nonempty_unversioned_database_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Unsupported unversioned efloud metadata database"):
         Repository(tmp_path)
+
+
+def test_clean_schema_has_no_custom_tree_tables(tmp_path: Path) -> None:
+    with Repository(tmp_path):
+        pass
+
+    connection = sqlite3.connect(tmp_path / "metadata.sqlite")
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(source_snapshots)")}
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        connection.close()
+
+    assert version == 4
+    assert "tree_snapshots" not in tables
+    assert "tree_entries" not in tables
+    assert "tree_id" in columns

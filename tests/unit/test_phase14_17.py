@@ -370,7 +370,7 @@ def test_cleanup_commits_metadata_removal_before_failed_annex_drop(
 
     with ReadOnlyRepository(tmp_path) as repository:
         assert repository.content(content.content_id) is None
-        assert repository.contains_content(content.content_id)
+        assert not repository.contains_content(content.content_id)
     issues = maintenance.fsck().issues
     assert any(issue.code == "orphan-custody" for issue in issues)
     assert not any(issue.code == "missing-content" for issue in issues)

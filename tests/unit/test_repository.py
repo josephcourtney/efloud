@@ -121,8 +121,6 @@ def test_latest_before_dataset_selection(tmp_path: Path) -> None:
         assert latest.artifact("artifact:a").observation_id != old.observation_id
 
 
-
-
 def test_validation_requires_known_content(tmp_path: Path) -> None:
     with Repository(tmp_path) as repo, pytest.raises(sqlite3.IntegrityError):
         repo.record_validation(

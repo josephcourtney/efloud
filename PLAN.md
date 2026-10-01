@@ -34,9 +34,19 @@ Exit: git-annex satisfies the content-custody contract and Git satisfies the fil
 
 ## Milestone D — Cut content identity and repository persistence over
 
-Redefine `ContentRef` around annex identity. Split the public `Repository` facade from an internal semantic catalog. Remove persisted fields that duplicate reliable Git/git-annex state. Preserve authoritative transaction ordering so semantic metadata never references content whose annex identity was not established.
+Redefine `ContentRef` to carry semantic content identity plus an opaque annex custody key. The custody key is persisted as infrastructure evidence, never as a filesystem path or dataset identity. Route Repository byte ingest/open/presence/verification through `ContentStore`, and route durable semantic records through `Catalog`.
 
-Exit: all new observations/manifests use annex-backed content refs and repository semantic queries require no custom CAS paths.
+Implementation sequence:
+1. establish the semantic `ContentRef` ↔ annex-key mapping using git-annex `examinekey`;
+2. cut Repository ingest, standalone content staging, reopen, open, presence, and verification over to git-annex;
+3. cut read-only access over to the same annex custody boundary;
+4. add real repository integration coverage for deduplication, reopen, custody-key persistence, and integrity verification;
+5. remove remaining production assumptions that `content_objects.storage_key` is a filesystem locator;
+6. only after the real integration slice passes, delete the filesystem CAS and rewrite tests that assert CAS paths/counts.
+
+The cutover must preserve the transaction ordering: annex custody must be established before semantic catalog records can reference the content. A failed catalog write may leave unreferenced annex content, but must never create an authoritative reference to unavailable content.
+
+Exit: all new observations and repository content operations use annex-backed content refs; no production semantic query requires a custom CAS path; detached dataset identity remains independent of the annex key.
 
 ## Milestone E — Delete replaced transfer/tree/derivation machinery
 

@@ -248,7 +248,10 @@ class GitAnnexContentStore:
             return False
         examined = _run(
             self.root,
-            "annex", "examinekey", str(key), "--format=" + "${backend}" + "\t" + "${bytesize}" + "\t" + "${keyname}",
+            "annex",
+            "examinekey",
+            str(key),
+            "--format=" + "${backend}" + "\t" + "${bytesize}" + "\t" + "${keyname}",
         )
         backend, byte_size, key_name = examined.stdout.rstrip("\n").split("\t", 2)
         if backend != self.backend or backend != "SHA256" or not byte_size.isdigit():
@@ -260,7 +263,6 @@ class GitAnnexContentStore:
                 digest.update(chunk)
                 size += len(chunk)
         return size == int(byte_size) and digest.hexdigest() == key_name
-
 
 
 __all__ = [

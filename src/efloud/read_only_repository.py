@@ -80,6 +80,9 @@ class ReadOnlyGitAnnexContentStore:
     def verify(self, key: AnnexKey) -> bool:
         return self._store.verify(key)
 
+    def present_keys(self) -> tuple[AnnexKey, ...]:
+        return self._store.present_keys()
+
 
 class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the repository's read capability surface.
     """Non-mutating view of an existing efloud repository.

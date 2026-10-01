@@ -81,7 +81,6 @@ def test_present_keys_and_drop_key_are_custody_operations(tmp_path: Path) -> Non
     assert not store.has_content(key)
 
 
-
 def test_registered_url_reacquires_dropped_and_corrupt_content(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     source_dir = tmp_path / "source"

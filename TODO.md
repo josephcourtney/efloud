@@ -14,16 +14,17 @@ Acceptance: ordinary semantic repository behavior depends on `Catalog`; the rema
 ## 2. Complete the remaining Git/git-annex proof
 
 - [ ] Detect the tested Git/git-annex capabilities needed by Efloud; define a minimum version only if concrete incompatibility requires one.
-- [ ] Implement/test content get/reacquire without changing Efloud semantic identity.
-- [ ] Determine which ordinary URL registration/acquisition operations can be delegated cleanly to git-annex and test only those supported paths.
-- [ ] Cover unusual filenames, interruption/retry, corruption, and destructive-operation failure behavior on real filesystem primitives.
+- [x] Implement/test content get/reacquire without changing Efloud semantic identity.
+- [x] Determine which ordinary URL registration/acquisition operations can be delegated cleanly to git-annex and test only those supported paths.
+- [ ] Cover unusual filenames and interruption/retry on real filesystem primitives.
+- [x] Cover corruption and destructive-operation failure behavior on real filesystem primitives.
 
 Acceptance: the remaining Git/git-annex behaviors required by Efloud are proven against the supported real implementation.
 
 ## 3. Finish the remaining git-annex behavior proof
 
-- [ ] Cover get/reacquire and URL-backed acquisition through the real git-annex boundary.
-- [ ] Cover interruption/retry and destructive-operation failure behavior on real filesystem primitives.
+- [x] Cover get/reacquire and URL-backed acquisition through the real git-annex boundary.
+- [ ] Cover interruption/retry and unusual filenames on real filesystem primitives.
 - [ ] Remove any remaining tests or documentation that describe the deleted filesystem CAS.
 
 Acceptance: the remaining content-custody behaviors are proven against real git-annex, and no production or test contract refers to the deleted filesystem CAS.

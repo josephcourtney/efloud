@@ -72,18 +72,20 @@ def test_semantic_repository_slice_accepts_memory_catalog(tmp_path: Path) -> Non
         assert repo.latest_observation("artifact:a") == observation
 
 
-def test_memory_catalog_repository_rejects_legacy_tree_access(tmp_path: Path) -> None:
+def test_memory_catalog_repository_uses_git_tree_store(tmp_path: Path) -> None:
     with Repository(tmp_path, metadata_store=MemoryCatalog()) as repo:
         source, run, _operation = _run(repo)
-        with pytest.raises(TypeError, match="legacy materialization/tree"):
-            repo.record_tree_snapshot(
-                source_id=source,
-                run_id=run,
-                entries=(),
-                complete=True,
-                scope=(),
-                observed_at=101.0,
-            )
+        snapshot = repo.record_tree_snapshot(
+            source_id=source,
+            run_id=run,
+            entries=(),
+            complete=True,
+            scope=(),
+            observed_at=101.0,
+        )
+        assert snapshot.tree_id is not None
+        assert repo.tree_entries(snapshot.tree_id) == ()
+        assert repo.latest_source_snapshot(source) == snapshot
 
 
 def test_repository_survives_reopen(tmp_path: Path) -> None:

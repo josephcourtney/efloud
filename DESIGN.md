@@ -530,6 +530,8 @@ annex key         -> ContentRef(content_id, byte_size, custody_key)
 open(custody_key)
 has_content(custody_key)
 verify(custody_key)
+present_keys()
+drop_key(custody_key)  # maintenance only
 ```
 
 The annex key is persisted as infrastructure evidence needed to recover the bytes,
@@ -611,13 +613,41 @@ datasets. Physical storage locations are optional implementation diagnostics.
 
 # Maintenance, Retention, And Recovery
 
-Retention and cleanup operate on repository references, not arbitrary filesystem
-paths. Content is collectible only when no retained observation, dataset, tree,
-validation/provenance/materialization requirement, or other protected record needs
-it.
+Maintenance has two distinct authorities:
 
-Safe cleanup is reachability-based, supports a grace period, fails closed on
-invalid metadata, and defaults to dry-run/reporting before deletion.
+1. Efloud's catalog determines **semantic reachability**. A content object is
+   retained when observations, datasets, trees, validations, provenance,
+   materializations, or other protected records reach its `ContentId`.
+2. git-annex determines **physical custody**. Efloud enumerates locally present
+   annex keys and maps each key back to its `ContentId`; it never scans or mutates
+   `.git/annex/objects` directly.
+
+`fsck` audits both layers. It reports missing custody, custody-key mismatches,
+corrupt or incorrectly sized content, semantically unreferenced catalog content,
+and annex custody that has no corresponding catalog record. It does not run
+git-annex repair commands as part of an audit.
+
+Cleanup is fail-closed. Before destructive work it validates SQLite integrity,
+foreign-key integrity, semantic metadata, and every reachable content object's
+custody and integrity. Unreferenced catalog content and orphan annex custody are
+then eligible for cleanup subject to the grace period.
+
+For destructive cleanup, Efloud commits removal of an unreferenced catalog record
+before asking git-annex to drop its custody. Thus interruption can leave orphan
+custody, which is recoverable by a later cleanup pass, but cannot leave an
+authoritative catalog reference to missing bytes. Annex-only orphan custody can be
+dropped directly once its key is valid and semantic reachability is established to
+be absent. The destructive operation uses git-annex's key-level drop mechanism
+rather than deleting annex object paths directly.
+
+The cleanup grace period is evaluated against the local annex object's custody
+timestamp. That timestamp is maintenance metadata only; it never contributes to
+content, artifact, dataset, or manifest identity.
+
+git-annex itself normally retains content that is no longer referenced by files in
+Git history as unused data. Efloud does not use `git annex unused` as its semantic
+reachability algorithm: Efloud observations and datasets are the authoritative
+semantic roots. The two notions of "unused" are therefore deliberately distinct.
 
 Writer coordination is a backend capability. The default local repository uses an
 exclusive process/root lease in addition to SQLite transactions where needed.

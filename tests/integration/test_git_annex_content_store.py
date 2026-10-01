@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from efloud.content.git_annex import GitAnnexContentStore
+from efloud.git_commands import run_git
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -95,8 +96,6 @@ def test_registered_url_reacquires_dropped_and_corrupt_content(tmp_path: Path) -
     thread.start()
     try:
         port = server.server_address[1]
-        from efloud.git_commands import run_git
-
         run_git(
             repository,
             "config",

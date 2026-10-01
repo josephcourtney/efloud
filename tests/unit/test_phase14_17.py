@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import efloud.materialization as materialization_module
+from efloud.content.git_annex import GitAnnexContentStore
 from efloud.dataset_constraints import DatasetConstraintError, DatasetConstraints
 from efloud.dataset_export import DetachedDatasetManifest, export_dataset_manifest, import_dataset_manifest
 from efloud.dataset_selectors import ExactSourceSnapshot, LatestCompleteSourceSnapshot, SourceSelection
@@ -347,6 +348,31 @@ def test_cleanup_unreferenced_rows_and_closed_writer_guard(tmp_path: Path) -> No
     candidates = maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False)
     assert candidates[0].content_id == content.content_id
     assert maintenance.fsck().ok
+
+
+def test_cleanup_commits_metadata_removal_before_failed_annex_drop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with Repository(tmp_path) as repository:
+        path = tmp_path / "unused-input"
+        path.write_bytes(b"unused")
+        content = repository.store_path_content(path)
+    maintenance = RepositoryMaintenance(tmp_path)
+
+    def fail_drop(self: GitAnnexContentStore, key: object) -> None:
+        del self, key
+        raise RuntimeError("drop failed")
+
+    monkeypatch.setattr(GitAnnexContentStore, "drop_key", fail_drop)
+    with pytest.raises(RuntimeError, match="drop failed"):
+        maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False)
+
+    with ReadOnlyRepository(tmp_path) as repository:
+        assert repository.content(content.content_id) is None
+        assert repository.contains_content(content.content_id)
+    issues = maintenance.fsck().issues
+    assert any(issue.code == "orphan-custody" for issue in issues)
+    assert not any(issue.code == "missing-content" for issue in issues)
 
 
 def test_layout_collisions_and_symlink_escape_are_rejected(tmp_path: Path) -> None:

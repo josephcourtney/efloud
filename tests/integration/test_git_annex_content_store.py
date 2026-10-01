@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import functools
 import shutil
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING
 
 import pytest
@@ -71,3 +74,56 @@ def test_present_keys_and_drop_key_are_custody_operations(tmp_path: Path) -> Non
     store.drop_key(key)
     assert key not in store.present_keys()
     assert not store.has_content(key)
+
+
+def test_registered_url_reacquires_dropped_and_corrupt_content(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    payload = b"reacquire this content"
+    source = source_dir / "payload.bin"
+    source.write_bytes(payload)
+
+    store = GitAnnexContentStore.initialize(repository)
+    key = store.ingest_path(source)
+    identity = store.content_ref(key)
+
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(source_dir))
+
+    class QuietHandler(handler.func):  # type: ignore[misc]
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        from efloud.git_commands import run_git
+
+        run_git(
+            repository,
+            "config",
+            "annex.security.allowed-ip-addresses",
+            f"[127.0.0.1]:{port}",
+        )
+        store.register_url(key, f"http://127.0.0.1:{port}/payload.bin")
+
+        location = store._content_location(key)
+        assert location is not None
+        location.write_bytes(b"corrupted")
+        assert not store.verify(key)
+
+        store.drop_key(key)
+        assert not store.has_content(key)
+        store.get(key)
+
+        assert store.has_content(key)
+        assert store.verify(key)
+        assert store.content_ref(key) == identity
+        with store.open(key) as stream:
+            assert stream.read() == payload
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

@@ -361,7 +361,8 @@ def test_cleanup_commits_metadata_removal_before_failed_annex_drop(
 
     def fail_drop(self: GitAnnexContentStore, key: object) -> None:
         del self, key
-        raise RuntimeError("drop failed")
+        msg = "drop failed"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(GitAnnexContentStore, "drop_key", fail_drop)
     with pytest.raises(RuntimeError, match="drop failed"):

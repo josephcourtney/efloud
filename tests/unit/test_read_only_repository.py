@@ -71,8 +71,7 @@ def test_read_only_repository_reads_dataset_without_mutating_store(tmp_path: Pat
         assert repository.verify_content(observation.content_id)
         with dataset.open("artifact:a") as stream:
             assert stream.read() == b"hello"
-        with pytest.raises(PermissionError, match="Read-only repository"):
-            repository.blobs.put_bytes(b"no")
+        assert not hasattr(repository.content_store, "ingest_bytes")
 
     assert _tree_state(tmp_path) == before
 

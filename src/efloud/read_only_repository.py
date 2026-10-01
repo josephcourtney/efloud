@@ -86,6 +86,9 @@ class ReadOnlyGitAnnexContentStore:
     def present_keys(self) -> tuple[AnnexKey, ...]:
         return self._store.present_keys()
 
+    def custody_mtime(self, key: AnnexKey) -> float:
+        return self._store.custody_mtime(key)
+
 
 class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the repository's read capability surface.
     """Non-mutating view of an existing efloud repository.

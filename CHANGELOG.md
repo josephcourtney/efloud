@@ -12,8 +12,8 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Changed
 
+- Replace custom SQLite tree identity/storage with canonical semantic tree manifests retained in Git object history; source snapshots now persist the Git tree object ID directly, and schema 4 removes the `tree_snapshots` and `tree_entries` tables.
 - Replaced filesystem-CAS maintenance with git-annex custody enumeration and key-level cleanup; deleted the superseded filesystem blob store.
-
 - Cut Repository content custody over to the internal git-annex ContentStore on the experimental redesign branch; semantic ContentRef identity remains path-independent while opaque annex custody keys are retained as infrastructure evidence.
 - Close dataset/export acceptance through the clean public API: verify resolve-versus-freeze semantics, frozen historical evidence, incomplete-snapshot behavior, detached handoff, missing/corrupt content, safe exclusive publication, and a standard-library-only manifest consumer.
 - Exercise explicit Linux reflink export on a reflink-enabled XFS CI filesystem and atomic `renameat2(RENAME_NOREPLACE)` publication; document detached dataset manifest v1 as a repository-independent contract.
@@ -30,6 +30,7 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Fixed
 
+- Retain Git-backed source-tree snapshots through a dedicated Efloud Git ref so ordinary Git garbage collection cannot prune tree objects referenced by repository metadata.
 - Ignore declared adapter-version constraints for sources explicitly unselected by a selective project plan while continuing to fail closed for selected version mismatches.
 - Require an active repository writer lease before standalone byte content staging can mutate the content-addressed store.
 - Make destructive cleanup fail closed on SQLite/foreign-key failures, semantic tree/dataset/source/snapshot corruption, and missing or corrupt reachable content while preserving validation-only and provenance history.
@@ -120,84 +121,43 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Added
 
-- Add macOS rsync indexing telemetry for temporary-file activity and active TCP connection state during long-running transfers.
+- Add an import surface smoke test.
+- Add GitHub Actions CI across Python 3.11-3.14 with required coverage.
+- Add an integration test that runs the example sync and asserts `STATE.json` and manifest creation.
+- Add supported Python 3.11-3.14 metadata and classifiers.
+- Add release metadata and API references.
 
 ### Changed
 
-- Emit periodic indexing heartbeats while rsync is receiving the file list and reduce the file-list stall warning threshold from 300 seconds to 30 seconds.
-- Normalize canonical paths consistently with `resolve()` plus `normpath()`.
+- Align generated package metadata with the repository source of truth.
 
 ### Fixed
 
-- Surface elapsed, idle, and optional file-count progress while rsync is still building a remote file list.
+- Make the HTTP cache test deterministic across repeat runs and symlinked macOS temp paths.
 
-## [0.0.7] - 2026-04-02
-
-### Fixed
-
-- Allow terminal SIGINT to reach child rsync processes so `bvp sync` can be interrupted normally with Ctrl-C.
-
-## [0.0.6] - 2026-04-02
+## [0.0.8] - 2026-04-07
 
 ### Added
 
-- Add compact shard-level runtime progress for `pdb_mmcif` path synchronization.
-
-### Fixed
-
-- Suppress per-shard transport chatter in normal `pdb_mmcif` output while retaining detailed debug diagnostics.
-
-## [0.0.5] - 2026-04-02
-
-### Added
-
-- Add rsync transfer progress with handled-file fractions, transferred-file counts, cumulative bytes, throughput, and idle timing.
-- Add mirror-state file/directory counts and manifest integrity counts for percentage-based downstream scans.
-- Add `pdb_mmcif` remote-bucket discovery so nonexistent shards are skipped before transfer.
+- Add configurable HTTP transport for REST and binary downloads.
+- Add retry handling, HTTP cache configuration, per-host concurrency/rate limits, global concurrency limits, and conditional GET support.
+- Add robust JSON response validation with byte limits and generic paginated REST helpers.
+- Add streaming HTTP downloads with partial-file cleanup and optional size/SHA256 integrity checks.
+- Add rsync `--itemize-changes` parsing and filtered recursive synchronization.
+- Add deterministic fan-out specs from REST fields, declarative task contracts with dependency-aware topological scheduling, and bounded task execution.
+- Add derived artifacts with dependency tracking and failure propagation semantics.
+- Add richer manifest/reporting for derived outputs and failed sources.
 
 ### Changed
 
-- Disable rsync compression and copy-links for the `pdb_mmcif` runtime profile while preserving archive/itemize semantics.
-- Report rsync heartbeat timeouts as remaining-time countdowns.
+- Route file materialization through the transport layer rather than direct source writes.
+- Retry retryable HTTP/REST failures with bounded exponential backoff and `Retry-After` support.
+- Keep atomic replacement and partial-file cleanup at acquisition boundaries.
 
-### Fixed
-
-- Prefer transfer markers over earlier file-list text when classifying rsync failure phases.
-- Treat missing remote `pdb_mmcif` bucket directories as skipped shards instead of source-fatal errors.
-- Use the divided-structure PDB rsync root consistently, including legacy configuration canonicalization.
-
-## [0.0.3] - 2026-04-01
+## [0.0.7] - 2026-04-07
 
 ### Added
 
-- Add first-class rsync daemon port configuration.
-
-### Changed
-
-- Add rsync connection preflight diagnostics, bounded transient-failure retries, retry countdowns, and active-phase heartbeat output.
-- Record rsync retry metadata and attempt history in manifests and normalized summaries.
-
-### Removed
-
-- Remove obsolete check-command behavior tied to the retired `efloud.app` and `efloud.cli.root` layout.
-
-### Fixed
-
-- Retry transient rsync socket/connect failures before marking mirror operations failed.
-- Make path-scoped rsync diagnostics display the actual remote subtree being synchronized.
-
-## [0.0.1] - 2026-04-01
-
-### Changed
-
-- Add bounded retries for transient rsync transport failures and expose retry/request counts through normalized summaries.
-
-### Fixed
-
-- Avoid treating intermittent rsync daemon connection timeouts as immediate mirror-operation failures.
-
-## [0.0.0] - 2026-02-23
-
-### Added
-
-- Initial release.
+- Add initial HTTP source materialization, REST discovery, fan-out downloads, rsync sources, manifest generation, and config parsing.
+- Add adapter-level conditional requests and checksum verification.
+- Add initial fixture and smoke tests.

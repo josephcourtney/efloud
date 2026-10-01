@@ -56,6 +56,14 @@ class _UnusedContentStore:
         del key
         raise AssertionError
 
+    def register_url(self, key: AnnexKey, url: str) -> None:
+        del key, url
+        raise AssertionError
+
+    def get(self, key: AnnexKey) -> None:
+        del key
+        raise AssertionError
+
 
 def test_repository_semantics_run_with_memory_catalog_without_legacy_storage(tmp_path: Path) -> None:
     catalog = MemoryCatalog()

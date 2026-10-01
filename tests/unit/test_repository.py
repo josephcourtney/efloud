@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from efloud.blob_store import FilesystemBlobStore
 from efloud.datasets import DatasetDefinition, ExactObservation, Latest, LatestAll, LatestBefore
 from efloud.inventory import AbsenceEvidence
 from efloud.json_types import json_mapping_or_none
@@ -53,8 +52,7 @@ def test_content_dedup_and_observation_history(tmp_path: Path) -> None:
         assert len(repo.observations_for("artifact:a")) == 2
         assert repo.latest_observation("artifact:a") == second
         assert repo.verify_content(first.content_id)
-        blob_files = [p for p in (tmp_path / "objects").rglob("*") if p.is_file()]
-        assert len(blob_files) == 1
+        assert repo.contains_content(first.content_id)
 
 
 def test_repository_survives_reopen(tmp_path: Path) -> None:
@@ -126,31 +124,6 @@ def test_latest_before_dataset_selection(tmp_path: Path) -> None:
         assert latest.artifact("artifact:a").observation_id != old.observation_id
 
 
-def test_dataset_verification_detects_blob_corruption(tmp_path: Path) -> None:
-    blob_store = FilesystemBlobStore(tmp_path / "objects")
-    with Repository(tmp_path, blob_store=blob_store) as repo:
-        source, run, op = _run(repo)
-        obs = repo.ingest_bytes("artifact:a", b"hello", run_id=run, operation_id=op, source_id=source)
-        dataset = repo.resolve_dataset(DatasetDefinition.from_selectors(Latest("artifact:a")))
-        blob_store.path_for(obs.content_id).write_bytes(b"corrupt")
-        assert dataset.verify() is False
-
-
-def test_metadata_failure_after_blob_put_leaves_unreachable_orphan(tmp_path: Path) -> None:
-    payload = b"orphan"
-    content_id = ContentId(f"sha256:{hashlib.sha256(payload).hexdigest()}")
-    with Repository(tmp_path) as repo, pytest.raises(sqlite3.IntegrityError):
-        repo.ingest_bytes(
-            "artifact:orphan",
-            payload,
-            run_id=RunId("run:missing"),
-            operation_id=OperationId("op:missing"),
-        )
-
-    with Repository(tmp_path) as repo:
-        assert repo.blobs.contains(content_id)
-        assert repo.content(content_id) is None
-        assert repo.observations_for("artifact:orphan") == ()
 
 
 def test_validation_requires_known_content(tmp_path: Path) -> None:

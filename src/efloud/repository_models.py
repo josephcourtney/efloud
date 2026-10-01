@@ -98,10 +98,15 @@ class ContentRef:
 
     content_id: ContentId
     byte_size: int
+    custody_key: str
     media_type: str | None = None
 
     def to_dict(self) -> JsonObject:
-        payload: JsonObject = {"content_id": str(self.content_id), "byte_size": self.byte_size}
+        payload: JsonObject = {
+            "content_id": str(self.content_id),
+            "byte_size": self.byte_size,
+            "custody_key": self.custody_key,
+        }
         if self.media_type is not None:
             payload["media_type"] = self.media_type
         return payload

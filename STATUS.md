@@ -4,7 +4,7 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Milestone D of the experimental clean-break rewrite: cut Repository content custody and content identity over to git-annex while leaving custom tree/materialization and the remaining broad legacy metadata dependencies explicitly isolated until replacement.
+Milestone D of the experimental clean-break rewrite: complete git-annex-aware maintenance after the Repository content-custody cutover.
 
 ## Baseline
 
@@ -38,16 +38,17 @@ Milestone D of the experimental clean-break rewrite: cut Repository content cust
 - Phase A is complete and locally validated.
 - The initial real Git/git-annex infrastructure proof is complete for ingest/verify and tree/commit operations.
 - Repository content custody has now been cut over in production code to the internal git-annex ContentStore; real repository reopen/persistence coverage is present.
+- The exact clean branch head passed `just check` after the cutover and read-only custody fixes.
 - The first CAS-specific test migration is complete: obsolete blob-store contract tests and filesystem-layout assertions were removed or converted to semantic content assertions; reflink export permissions were corrected so cloned handoff files are independently writable.
+- The filesystem CAS implementation has now been deleted. Maintenance enumerates annex custody through the ContentStore and performs key-level drops only after semantic reachability checks.
 - The narrow semantic `Catalog` and pure in-memory fake are implemented and locally validated.
 - `Repository` still directly owns the broad legacy metadata/blob abstractions; this is now the immediate dependency-cut target.
 
 ## Immediate gaps
 
 - Route the remaining semantic repository persistence through `Catalog` and isolate legacy materialization/custom-tree calls.
-- Finish git-annex get/drop/reacquire, appropriate URL delegation, corruption, interruption/retry, and destructive-operation behavior.
-- Redesign repository maintenance so fsck/cleanup operate through git-annex custody rather than the removed filesystem CAS layout.
-- Locally run the current branch after the test migration; the GitHub edits in this tranche have not been locally verified here.
+- Finish git-annex get/reacquire, appropriate URL delegation, corruption, interruption/retry, and destructive-operation failure behavior.
+- Locally run the current branch after this maintenance cutover; the GitHub edits in this tranche have not yet been locally verified here.
 
 ## Resume point
 

@@ -47,7 +47,7 @@ class CleanupCandidate:
 
 
 class RepositoryMaintenance:
-    """Maintenance service for the default local SQLite/filesystem repository."""
+    """Maintenance service for the default local SQLite/git-annex repository."""
 
     def __init__(self, root: Path) -> None:
         self.root = root.resolve(strict=True)

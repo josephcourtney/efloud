@@ -68,7 +68,7 @@ Catalog                      ContentStore
 ```
 
 `Repository` is the durable semantic boundary. `Engine` owns acquisition
-orchestration. Neither SQLite nor filesystem CAS layout is part of the ordinary
+orchestration. Neither SQLite nor git-annex's object layout is part of the ordinary
 public API.
 
 Responsibility boundaries are:
@@ -642,7 +642,7 @@ needed, is another registry population mechanism.
 
 ## Alternate/remote storage
 
-Alternate blob stores and metadata stores remain behind repository semantics.
+Alternate content-custody backends and metadata stores remain behind repository semantics.
 `Repository.open/create` must not encode local filesystem or SQLite as universal
 requirements.
 

@@ -56,7 +56,7 @@ def test_memory_catalog_tracks_observation_absence_provenance_and_validation() -
         parameters=_producer_parameters(),
     )
 
-    first_content = ContentRef(ContentId(f"sha256:{'a' * 64}"), 1)
+    first_content = ContentRef(ContentId(f"sha256:{'a' * 64}"), 1, "test:a")
     first = ArtifactObservation(
         ObservationId("obs:1"),
         artifact_key,
@@ -68,7 +68,7 @@ def test_memory_catalog_tracks_observation_absence_provenance_and_validation() -
     )
     catalog.record_observation_bundle(content=first_content, observation=first)
 
-    second_content = ContentRef(ContentId(f"sha256:{'b' * 64}"), 1)
+    second_content = ContentRef(ContentId(f"sha256:{'b' * 64}"), 1, "test:b")
     second = ArtifactObservation(
         ObservationId("obs:2"),
         artifact_key,

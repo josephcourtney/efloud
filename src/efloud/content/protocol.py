@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from efloud.repository_models import ContentRef
+
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
@@ -31,6 +33,8 @@ class ContentStore(Protocol):
     def ingest_path(self, path: Path) -> AnnexKey: ...
 
     def ingest_bytes(self, data: bytes) -> AnnexKey: ...
+
+    def content_ref(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef: ...
 
     def has_content(self, key: AnnexKey) -> bool: ...
 

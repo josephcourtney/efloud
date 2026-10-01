@@ -78,6 +78,8 @@ class TreeStore(Protocol):
 
     def list_tree(self, treeish: GitTreeId | GitCommitId | str) -> tuple[GitTreeEntry, ...]: ...
 
+    def read_blob(self, object_id: str) -> bytes: ...
+
     def commit_tree(
         self,
         tree: GitTreeId,

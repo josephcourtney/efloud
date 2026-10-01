@@ -54,7 +54,9 @@ Exit: all new observations and repository content operations use annex-backed co
 
 For each source, classify acquisition as native git-annex, special remote, or adapter-assisted temporary retrieval. Retain source-specific discovery/authentication semantics and delete generic retry/copy/cache/transport code that git-annex replaces.
 
-Replace custom tree identity with Git projections. Remove generic derivation DAG/execution from core; keep only transformations necessary to acquire, interpret, validate, normalize, or expose source data.
+The tree cutover routes source-tree snapshots through `GitTreeStore`: canonical semantic `TreeEntry` data is stored in a Git tree projection, the Git tree object ID is the snapshot tree revision identity, and a dedicated Efloud Git ref retains every projection against garbage collection. SQLite schema 4 stores only that tree object ID on `source_snapshots`; the former custom tree tables are removed. The remaining dead SQLite tree methods are deletion-only cleanup.
+
+Remove generic derivation DAG/execution from core; keep only transformations necessary to acquire, interpret, validate, normalize, or expose source data.
 
 Exit: production has one content backend (git-annex), one filesystem-tree identity mechanism (Git), and no general workflow executor.
 

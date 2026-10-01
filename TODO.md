@@ -4,9 +4,9 @@ Purpose: ephemeral, execution-level tasks for the experimental Git/git-annex red
 
 ## 1. Cut `Repository` to the narrow infrastructure ports
 
-- [ ] Route semantic source/run/operation/content-description/observation/absence/provenance/validation/snapshot/dataset persistence through `Catalog` rather than the broad legacy metadata protocol.
-- [ ] Isolate the remaining materialization-path and custom-tree calls behind an explicitly temporary legacy metadata capability.
-- [ ] Prove at least one repository semantic slice against the pure `MemoryCatalog` so storage-independent behavior no longer requires SQLite/custom tree state.
+- [x] Route semantic source/run/operation/content-description/observation/absence/provenance/validation/snapshot/dataset persistence through `Catalog` rather than the broad legacy metadata protocol.
+- [x] Isolate the remaining materialization-path and custom-tree calls behind an explicitly temporary legacy metadata capability.
+- [x] Prove a repository semantic slice against the pure `MemoryCatalog` so storage-independent behavior no longer requires SQLite/custom tree state.
 - [ ] Keep `ContentStore`, `TreeStore`, and `Catalog` internal; do not expose writer/storage implementation details from the package root.
 
 Acceptance: ordinary semantic repository behavior depends on `Catalog`; the remaining legacy metadata dependency is limited to functionality already classified for replacement/deletion.

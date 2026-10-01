@@ -418,7 +418,7 @@ class Repository:
             inputs=inputs,
         )
         if materialization_kind is not None and materialization_path is not None:
-            self._legacy_metadata.record_materialization(
+            self._legacy_state().record_materialization(
                 content_id=content.content_id,
                 kind=materialization_kind,
                 path=materialization_path.resolve().as_posix(),

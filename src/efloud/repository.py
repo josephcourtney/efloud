@@ -257,11 +257,7 @@ class Repository:
         )
 
     def _content_ref_for_key(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef:
-        store = self.content_store
-        if not isinstance(store, GitAnnexContentStore):
-            msg = "Custom content stores must provide Git-annex-backed ContentRef semantics."
-            raise TypeError(msg)
-        return store.content_ref(key, media_type=media_type)
+        return self.content_store.content_ref(key, media_type=media_type)
 
     def store_bytes_content(self, data: bytes, *, media_type: str | None = None) -> ContentRef:
         """Store immutable bytes and register content identity without creating an observation."""

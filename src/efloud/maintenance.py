@@ -8,10 +8,10 @@ import sqlite3
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from efloud.dataset_selectors import snapshot_observations
-from efloud.read_only_repository import ReadOnlyRepository
 from efloud.content.git_annex import GitAnnexContentStore
 from efloud.content.protocol import AnnexKey
+from efloud.dataset_selectors import snapshot_observations
+from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_models import ContentId, stable_id
 from efloud.schema import CURRENT_SCHEMA_VERSION
 from efloud.writer_coordination import WriterLease
@@ -111,7 +111,9 @@ class RepositoryMaintenance:
                 present = self._present_custody(repository)
                 present_by_id = {str(content_id): custody_key for content_id, custody_key in present}
                 known_rows = tuple(
-                    connection.execute("SELECT content_id, byte_size, storage_key FROM content_objects ORDER BY content_id")
+                    connection.execute(
+                        "SELECT content_id, byte_size, storage_key FROM content_objects ORDER BY content_id"
+                    )
                 )
                 known = {str(row[0]) for row in known_rows}
                 for row in known_rows:
@@ -142,7 +144,6 @@ class RepositoryMaintenance:
             )
         finally:
             connection.close()
-
 
     @staticmethod
     def _semantic_issues(connection: sqlite3.Connection, repository: ReadOnlyRepository) -> list[AuditIssue]:
@@ -259,7 +260,10 @@ class RepositoryMaintenance:
                 summary = ", ".join(f"{issue.code}:{issue.subject}" for issue in blockers)
                 msg = f"Cleanup refused: repository audit failed ({summary})"
                 raise ValueError(msg)
-            known = {str(row[0]): str(row[2]) for row in connection.execute("SELECT content_id, byte_size, storage_key FROM content_objects")}
+            known = {
+                str(row[0]): str(row[2])
+                for row in connection.execute("SELECT content_id, byte_size, storage_key FROM content_objects")
+            }
             candidates = tuple(
                 CleanupCandidate(
                     str(content_id),

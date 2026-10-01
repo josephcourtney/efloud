@@ -32,6 +32,9 @@ def test_git_tree_is_canonical_and_preserves_portable_paths(tmp_path: Path) -> N
         ("nested/with space.txt", "100644", "blob"),
         ("unicode/δ.bin", "100755", "blob"),
     ]
+    assert store.read_blob(listed[0].object_id) == b"nested/with space.txt"
+    assert store.read_blob(listed[1].object_id) == b"alpha"
+    assert store.read_blob(listed[2].object_id) == b"beta"
 
     changed = store.write_tree((
         TreeBlob("nested/with space.txt", b"changed"),

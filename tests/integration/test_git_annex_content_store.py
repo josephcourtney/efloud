@@ -110,7 +110,11 @@ def test_registered_url_reacquires_dropped_and_corrupt_content(tmp_path: Path) -
 
         location = store._content_location(key)
         assert location is not None
-        location.write_bytes(b"corrupted")
+        location.chmod(0o644)
+        try:
+            location.write_bytes(b"corrupted")
+        finally:
+            location.chmod(0o444)
         assert not store.verify(key)
 
         store.drop_key(key)

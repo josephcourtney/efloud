@@ -316,6 +316,22 @@ os._exit(0)
         assert repository.verify_content(observation.content_id)
 
 
+def test_cleanup_removes_orphan_annex_custody(tmp_path: Path) -> None:
+    with Repository(tmp_path) as repository:
+        store = repository.content_store
+        key = store.ingest_bytes(b"orphan")
+        assert store.has_content(key)
+    maintenance = RepositoryMaintenance(tmp_path)
+    report = maintenance.fsck()
+    assert any(issue.code == "orphan-custody" and issue.subject == str(key) for issue in report.issues)
+    candidates = maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False)
+    assert len(candidates) == 1
+    assert candidates[0].reason == "orphan-custody"
+    with Repository(tmp_path) as repository:
+        assert not repository.content_store.has_content(key)
+    assert maintenance.fsck().ok
+
+
 def test_cleanup_unreferenced_rows_and_closed_writer_guard(tmp_path: Path) -> None:
     repository = Repository(tmp_path)
     path = tmp_path / "unused-input"

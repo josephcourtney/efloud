@@ -6,6 +6,7 @@ import ctypes
 import fcntl
 import os
 import shutil
+import stat
 import sys
 import tempfile
 import unicodedata
@@ -168,6 +169,7 @@ class DatasetMaterializer:
                     if strategy == "reflink":
                         raise
                 else:
+                    target.chmod(target.stat().st_mode | stat.S_IWUSR)
                     return
             with target.open("xb") as output:
                 shutil.copyfileobj(stream, output)

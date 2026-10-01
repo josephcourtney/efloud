@@ -5,13 +5,16 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from efloud.catalog import MemoryCatalog
+from efloud.content.protocol import AnnexKey
 from efloud.repository import Repository
+from efloud.repository_models import ContentRef
 
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
     from efloud.metadata_store import MetadataStore
+    from efloud.repository_models import ContentRef
 
 pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.medium]
 
@@ -19,27 +22,27 @@ pytestmark = [pytest.mark.unit, pytest.mark.regression, pytest.mark.medium]
 class _UnusedContentStore:
     """Fail if a catalog-only repository slice touches content storage."""
 
-    def ingest_path(self, path: Path):
+    def ingest_path(self, path: Path) -> AnnexKey:
         del path
         raise AssertionError
 
-    def ingest_bytes(self, data: bytes):
+    def ingest_bytes(self, data: bytes) -> AnnexKey:
         del data
         raise AssertionError
 
-    def content_ref(self, key, *, media_type: str | None = None):
+    def content_ref(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef:
         del key, media_type
         raise AssertionError
 
-    def has_content(self, key) -> bool:
+    def has_content(self, key: AnnexKey) -> bool:
         del key
         raise AssertionError
 
-    def open(self, key):
+    def open(self, key: AnnexKey) -> BinaryIO:
         del key
         raise AssertionError
 
-    def verify(self, key) -> bool:
+    def verify(self, key: AnnexKey) -> bool:
         del key
         raise AssertionError
 

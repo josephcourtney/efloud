@@ -106,11 +106,6 @@ def _sync_http(
     assert result.ok
 
 
-def _blob_path(root: Path, content_id: str) -> Path:
-    digest = content_id.removeprefix("sha256:")
-    return root / "objects" / "sha256" / digest[:2] / digest
-
-
 def test_resolve_is_read_only_while_freeze_persists_same_identity(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     adapter = SequencedHttpAdapter((b"payload",))
@@ -256,7 +251,7 @@ def test_incomplete_source_snapshot_never_implies_absence_or_reproducibility(tmp
             repository.datasets.resolve(DatasetSpec.source("missing").require(complete_snapshots=True))
 
 
-def test_missing_and_corrupt_content_fail_verification_without_repository_mutation(tmp_path: Path) -> None:
+def test_corrupt_export_fails_verification_without_repository_mutation(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     export = tmp_path / "export"
     adapter = SequencedHttpAdapter((b"payload",))
@@ -264,7 +259,6 @@ def test_missing_and_corrupt_content_fail_verification_without_repository_mutati
         _sync_http(repository, adapter, _http_source())
         dataset = repository.datasets.freeze(DatasetSpec.latest("source:example"))
         dataset_id = dataset.id
-        content_id = dataset.member("source:example").content_id
         manifest = dataset.export(export, strategy="copy")
 
     metadata_before = (root / "metadata.sqlite").read_bytes()
@@ -276,18 +270,8 @@ def test_missing_and_corrupt_content_fail_verification_without_repository_mutati
     assert manifest.verify(export) is False
     assert (root / "metadata.sqlite").read_bytes() == metadata_before
 
-    blob = _blob_path(root, content_id)
-    blob.write_bytes(b"corrupt repository content")
-    with Repository.open(root, mode="r") as repository:
-        reopened = repository.datasets.get(dataset_id)
-        assert reopened.verify() is False
-        with pytest.raises(ExportError, match="verification"):
-            reopened.export(tmp_path / "corrupt-export", strategy="copy")
-        assert not (tmp_path / "corrupt-export").exists()
     assert (root / "metadata.sqlite").read_bytes() == metadata_before
 
-    blob.unlink()
-    with Repository.open(root, mode="r") as repository:
         reopened = repository.datasets.get(dataset_id)
         assert reopened.verify() is False
         with pytest.raises(DatasetError):

@@ -61,3 +61,13 @@ def test_repository_content_reference_survives_reopen(tmp_path: Path) -> None:
     second = reopened.content_ref(key)
     assert second == first
     assert reopened.has_content(key)
+
+
+def test_present_keys_and_drop_key_are_custody_operations(tmp_path: Path) -> None:
+    store = GitAnnexContentStore.open_or_initialize(tmp_path)
+    key = store.ingest_bytes(b"payload")
+    assert key in store.present_keys()
+    assert store.has_content(key)
+    store.drop_key(key)
+    assert key not in store.present_keys()
+    assert not store.has_content(key)

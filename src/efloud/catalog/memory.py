@@ -175,7 +175,9 @@ class MemoryCatalog:  # ruff: ignore[too-many-public-methods] - complete semanti
 
     def record_content(self, content: ContentRef) -> None:
         existing = self._contents.get(content.content_id)
-        if existing is not None and existing.byte_size != content.byte_size:
+        if existing is not None and (
+            existing.byte_size != content.byte_size or existing.custody_key != content.custody_key
+        ):
             msg = f"Conflicting content record for {content.content_id}"
             raise ValueError(msg)
         if existing is None:

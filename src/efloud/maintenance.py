@@ -276,13 +276,13 @@ class RepositoryMaintenance:
                     if now - self._custody_mtime(candidate.custody_key) >= grace_period
                 )
             if not dry_run:
-                with connection:
-                    for candidate in candidates:
-                        if candidate.reason == "unreferenced-content":
+                for candidate in candidates:
+                    if candidate.reason == "unreferenced-content":
+                        with connection:
                             connection.execute(
                                 "DELETE FROM content_objects WHERE content_id = ?", (candidate.content_id,)
                             )
-                        GitAnnexContentStore(self.root).drop_key(AnnexKey(candidate.custody_key))
+                    GitAnnexContentStore(self.root).drop_key(AnnexKey(candidate.custody_key))
             return candidates
         finally:
             connection.close()

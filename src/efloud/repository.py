@@ -3,7 +3,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, BinaryIO, Self
 
-from efloud.blob_store import BlobStore, FilesystemBlobStore
+from efloud.content.git_annex import GitAnnexContentStore
+from efloud.content.protocol import AnnexKey, ContentStore
 from efloud.datasets import DatasetDefinition, DatasetManifest, ImmutableDataset, resolve_dataset
 from efloud.metadata_envelopes import source_definition_history_payload
 from efloud.repository_models import (
@@ -71,7 +72,7 @@ class Repository:
         root: Path,
         *,
         metadata_store: MetadataStore | None = None,
-        blob_store: BlobStore | None = None,
+        content_store: ContentStore | None = None,
     ) -> None:
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -80,7 +81,7 @@ class Repository:
             metadata = metadata_store or SQLiteMetadataStore(self.root / "metadata.sqlite")
             self.catalog: Catalog = metadata
             self._legacy_metadata = metadata
-            self.blobs = blob_store or FilesystemBlobStore(self.root / "objects")
+            self.content_store: ContentStore = content_store or GitAnnexContentStore.open_or_initialize(self.root)
         except BaseException:
             self._writer_lease.close()
             raise
@@ -255,17 +256,26 @@ class Repository:
             details=details or {},
         )
 
+    def _content_ref_for_key(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef:
+        store = self.content_store
+        if not isinstance(store, GitAnnexContentStore):
+            msg = "Custom content stores must provide Git-annex-backed ContentRef semantics."
+            raise TypeError(msg)
+        return store.content_ref(key, media_type=media_type)
+
     def store_bytes_content(self, data: bytes, *, media_type: str | None = None) -> ContentRef:
         """Store immutable bytes and register content identity without creating an observation."""
         self._writer_lease.require_active()
-        content = self.blobs.put_bytes(data, media_type=media_type)
+        key = self.content_store.ingest_bytes(data)
+        content = self._content_ref_for_key(key, media_type=media_type)
         self.catalog.record_content(content)
         return content
 
     def store_path_content(self, path: Path, *, media_type: str | None = None) -> ContentRef:
         """Store immutable file bytes without advancing any logical artifact or source."""
         self._writer_lease.require_active()
-        content = self.blobs.put_path(path, media_type=media_type)
+        key = self.content_store.ingest_path(path)
+        content = self._content_ref_for_key(key, media_type=media_type)
         self.catalog.record_content(content)
         return content
 
@@ -287,7 +297,8 @@ class Repository:
         inputs: Iterable[ObservationId] = (),
     ) -> ArtifactObservation:
         self._writer_lease.require_active()
-        content = self.blobs.put_bytes(data, media_type=media_type)
+        key = self.content_store.ingest_bytes(data)
+        content = self._content_ref_for_key(key, media_type=media_type)
         return self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
             content=content,
@@ -323,7 +334,8 @@ class Repository:
         materialization_kind: str | None = None,
     ) -> ArtifactObservation:
         self._writer_lease.require_active()
-        content = self.blobs.put_path(path, media_type=media_type)
+        key = self.content_store.ingest_path(path)
+        content = self._content_ref_for_key(key, media_type=media_type)
         observation = self._record_content_observation(
             artifact_key=ArtifactKey(str(artifact_key)),
             content=content,
@@ -372,7 +384,7 @@ class Repository:
         if content is None:
             msg = f"Unknown repository content: {content_id}"
             raise KeyError(msg)
-        if not self.blobs.contains(normalized_content_id):
+        if not self.content_store.has_content(AnnexKey(content.custody_key)):
             msg = f"Repository blob is unavailable: {content_id}"
             raise FileNotFoundError(msg)
         observation = self._record_content_observation(
@@ -633,13 +645,18 @@ class Repository:
         return self.catalog.artifact_keys()
 
     def open_content(self, content_id: ContentId | str) -> BinaryIO:
-        return self.blobs.open(ContentId(str(content_id)))
+        content = self.catalog.content(ContentId(str(content_id)))
+        if content is None:
+            raise KeyError(f"Unknown repository content: {content_id}")
+        return self.content_store.open(AnnexKey(content.custody_key))
 
     def contains_content(self, content_id: ContentId | str) -> bool:
-        return self.blobs.contains(ContentId(str(content_id)))
+        content = self.catalog.content(ContentId(str(content_id)))
+        return content is not None and self.content_store.has_content(AnnexKey(content.custody_key))
 
     def verify_content(self, content_id: ContentId | str) -> bool:
-        return self.blobs.verify(ContentId(str(content_id)))
+        content = self.catalog.content(ContentId(str(content_id)))
+        return content is not None and self.content_store.verify(AnnexKey(content.custody_key))
 
     def record_validation(self, result: ValidationResult) -> None:
         self._writer_lease.require_active()

@@ -4,7 +4,7 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Milestone E of the experimental clean-break rewrite: finish deletion of the replaced custom tree persistence, then continue into transfer/derivation removal.
+Milestone E of the experimental clean-break rewrite: delete generic acquisition/runtime and derivation machinery now that content custody, Catalog persistence, and tree identity have been cut over.
 
 ## Baseline
 
@@ -12,7 +12,7 @@ Milestone E of the experimental clean-break rewrite: finish deletion of the repl
 - Starting main commit: `53023cf9482e7a2cfca20a0f71f5cb05483ba1b8`.
 - Current main already contains declarative `efloud.toml` and canonical lock/signing work; that boundary is being reused.
 - The experiment has internal `ContentStore`, `TreeStore`, and `Catalog` ports; none are package-root API.
-- The legacy filesystem CAS is deleted. Generic transfer/runtime code, obsolete SQLite tree methods, and derivation execution remain replacement/deletion targets.
+- The legacy filesystem CAS and custom SQLite tree persistence are deleted. Generic acquisition/runtime code and derivation execution remain replacement/deletion targets.
 
 ## Verified evidence
 
@@ -45,15 +45,17 @@ Milestone E of the experimental clean-break rewrite: finish deletion of the repl
 - Read-only repositories decode the same Git tree projection without mutating repository state.
 - Clean schema version 4 removes `tree_snapshots` and `tree_entries`; `source_snapshots.tree_id` records the Git tree identity directly.
 - Maintenance validates referenced Git tree projections instead of recomputing the deleted custom Efloud tree hash.
-- The old SQLite `record_tree()` / `tree_entries()` methods are unreachable but still need physical deletion from `sqlite_metadata.py`.
+- The unreachable SQLite `record_tree()` / `tree_entries()` implementation and obsolete `TreeEntry` import have now been physically deleted; this post-verification cleanup still needs a local quality-gate run.
+- Acquisition classification for the next cut is explicit: byte-preserving HTTP is a git-annex-native candidate; REST normalization, rsync enumeration/scope/absence, local stable-read pinning, and collection/provider behavior remain adapter-assisted semantic boundaries rather than generic custody implementations.
 
 ## Immediate gaps
 
-- Delete the unreachable SQLite tree methods/imports.
+- Locally verify the post-cutover SQLite cleanup.
 - Finish git-annex interruption/retry behavior proof.
-- Classify each built-in acquisition path and delete generic transfer/cache/transport machinery superseded by git-annex.
+- Cut byte-preserving HTTP acquisition to the annex URL/key boundary and delete redundant HTTP cache/retry/custody machinery.
+- Reduce rsync/local/collection acquisition to the smallest adapter-assisted retrieval semantics that git-annex cannot replace.
 - Remove generic derivation execution from core while preserving the minimal derived-artifact provenance model.
 
 ## Resume point
 
-Continue with `TODO.md`: delete the remaining SQLite tree implementation, then inspect the concrete transfer/runtime dependency graph before deleting acquisition infrastructure.
+Run the local gate for the SQLite cleanup. Then start the acquisition/runtime tranche with byte-preserving `HttpSource`, because it is the clearest source whose byte custody can move directly to git-annex without changing source interpretation semantics.

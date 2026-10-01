@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from efloud.json_types import json_object_or_none
 from efloud.repository_models import ContentId, TreeEntry, canonical_json_bytes
 from efloud.tree.protocol import GitTreeId, TreeBlob
 
@@ -44,13 +45,14 @@ def read_tree_snapshot(store: TreeStore, tree_id: str) -> tuple[TreeEntry, ...]:
     if len(listed) != 1 or listed[0].relative_path != _MANIFEST_PATH or listed[0].object_type != "blob":
         msg = f"Git tree {tree_id} is not an Efloud tree snapshot"
         raise ValueError(msg)
-    decoded = json.loads(store.read_blob(listed[0].object_id))
+    decoded: object = json.loads(store.read_blob(listed[0].object_id))
     if not isinstance(decoded, list):
         msg = f"Git tree {tree_id} has an invalid Efloud tree manifest"
         raise ValueError(msg)
     entries: list[TreeEntry] = []
-    for raw in decoded:
-        if not isinstance(raw, dict):
+    for value in decoded:
+        raw = json_object_or_none(value)
+        if raw is None:
             msg = f"Git tree {tree_id} contains a non-object tree entry"
             raise ValueError(msg)
         relative_path = raw.get("relative_path")
@@ -58,7 +60,7 @@ def read_tree_snapshot(store: TreeStore, tree_id: str) -> tuple[TreeEntry, ...]:
         content_id = raw.get("content_id")
         byte_size = raw.get("byte_size")
         target = raw.get("target")
-        metadata = raw.get("metadata", {})
+        metadata = json_object_or_none(raw.get("metadata", {}))
         if not isinstance(relative_path, str) or not isinstance(kind, str):
             msg = f"Git tree {tree_id} contains an invalid tree entry identity"
             raise ValueError(msg)
@@ -71,7 +73,7 @@ def read_tree_snapshot(store: TreeStore, tree_id: str) -> tuple[TreeEntry, ...]:
         if target is not None and not isinstance(target, str):
             msg = f"Git tree {tree_id} contains an invalid symlink target"
             raise ValueError(msg)
-        if not isinstance(metadata, dict) or not all(isinstance(key, str) for key in metadata):
+        if metadata is None:
             msg = f"Git tree {tree_id} contains invalid entry metadata"
             raise ValueError(msg)
         entries.append(

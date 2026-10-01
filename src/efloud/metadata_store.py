@@ -34,8 +34,6 @@ if TYPE_CHECKING:
         SourceDefinitionRevisionId,
         SourceId,
         SourceSnapshot,
-        TreeEntry,
-        TreeId,
         ValidationResult,
     )
 
@@ -262,10 +260,6 @@ class MetadataStore(Protocol):  # ruff: ignore[too-many-public-methods] - semant
     def content(self, content_id: ContentId) -> ContentRef | None: ...
 
     def artifact_keys(self) -> tuple[ArtifactKey, ...]: ...
-
-    def record_tree(self, tree_id: TreeId, entries: Iterable[TreeEntry], *, created_at: float) -> None: ...
-
-    def tree_entries(self, tree_id: TreeId) -> tuple[TreeEntry, ...]: ...
 
     def record_source_snapshot(self, snapshot: SourceSnapshot) -> None: ...
 

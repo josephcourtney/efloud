@@ -43,11 +43,11 @@ Implementation sequence:
 4. add real repository integration coverage for deduplication, reopen, custody-key persistence, and integrity verification;
 5. remove remaining production assumptions that `content_objects.storage_key` is a filesystem locator;
 6. delete or rewrite tests that assert the removed filesystem CAS contract; replace them with semantic custody assertions;
-7. redesign repository maintenance around git-annex custody rather than scanning `objects/sha256` paths.
+7. redesign repository maintenance around git-annex custody rather than scanning `objects/sha256` paths; **complete**.
 
 The cutover must preserve the transaction ordering: annex custody must be established before semantic catalog records can reference the content. A failed catalog write may leave unreferenced annex content, but must never create an authoritative reference to unavailable content.
 
-Exit: all new observations and repository content operations use annex-backed content refs; no production semantic query requires a custom CAS path; detached dataset identity remains independent of the annex key.
+Exit: all new observations and repository content operations use annex-backed content refs; no production semantic query requires a custom CAS path; detached dataset identity remains independent of the annex key; maintenance audits and cleans through git-annex custody.
 
 ## Milestone E — Delete replaced transfer/tree/derivation machinery
 

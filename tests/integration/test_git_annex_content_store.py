@@ -25,13 +25,17 @@ def test_annex_ingest_uses_content_only_key_and_preserves_source(tmp_path: Path)
     store = GitAnnexContentStore.initialize(tmp_path / "repository")
     first = tmp_path / "first.dat"
     second = tmp_path / "different-name.bin"
+    unusual = tmp_path / "directory with spaces" / "ümlaut-file.bin"
+    unusual.parent.mkdir()
     first.write_bytes(b"payload")
     second.write_bytes(b"payload")
+    unusual.write_bytes(b"payload")
 
     first_key = store.ingest_path(first)
     second_key = store.ingest_path(second)
+    unusual_key = store.ingest_path(unusual)
 
-    assert first_key == second_key
+    assert first_key == second_key == unusual_key
     assert str(first_key).startswith("SHA256-")
     content = store.content_ref(first_key, media_type="application/octet-stream")
     assert str(content.content_id).startswith("sha256:")

@@ -93,6 +93,18 @@ def _http_source(*, role: str | None = None, tags: tuple[str, ...] = ()) -> Http
     )
 
 
+def _make_tree_writable(root: Path) -> None:
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            continue
+        mode = path.stat().st_mode
+        if path.is_dir():
+            path.chmod(mode | 0o700)
+        else:
+            path.chmod(mode | 0o600)
+    root.chmod(root.stat().st_mode | 0o700)
+
+
 def _sync_http(
     repository: Repository,
     adapter: SequencedHttpAdapter,
@@ -152,6 +164,7 @@ def test_freeze_export_manifest_reopens_and_verifies_after_repository_is_gone(tm
 
     assert (export / "dataset-manifest.json").read_bytes() == serialized
     shutil.copytree(export, elsewhere)
+    _make_tree_writable(root)
     shutil.rmtree(root)
     reopened = DatasetManifest.from_bytes(serialized)
     assert reopened.dataset_id == dataset_id

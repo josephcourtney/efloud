@@ -31,6 +31,7 @@ from efloud.materialization import DatasetMaterializer
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository import Repository
 from efloud.repository_models import TreeEntry, ValidationResult
+from efloud.schema import CURRENT_SCHEMA_VERSION
 from efloud.sqlite_metadata import SQLiteMetadataStore
 from efloud.writer_coordination import RepositoryBusyError
 
@@ -511,7 +512,7 @@ def test_cleanup_rejects_unknown_schema_and_dangling_metadata(tmp_path: Path) ->
     with pytest.raises(RuntimeError, match="schema"):
         maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)
     with closing(sqlite3.connect(tmp_path / "metadata.sqlite")) as connection, connection:
-        connection.execute("PRAGMA user_version = 3")
+        connection.execute(f"PRAGMA user_version = {CURRENT_SCHEMA_VERSION}")
         connection.execute("UPDATE observations SET source_id = 'unknown'")
     with pytest.raises(ValueError, match="dangling"):
         maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)

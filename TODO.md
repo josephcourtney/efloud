@@ -2,29 +2,26 @@
 
 Purpose: ephemeral, execution-level tasks for the experimental Git/git-annex redesign. Completed items are removed rather than retained as history.
 
-## 1. Cut `Repository` to the narrow infrastructure ports
+## 1. Finish the Git tree cutover
 
-- [x] Route semantic source/run/operation/content-description/observation/absence/provenance/validation/snapshot/dataset persistence through `Catalog` rather than the broad legacy metadata protocol.
-- [x] Isolate the remaining materialization-path and custom-tree calls behind an explicitly temporary legacy metadata capability.
-- [x] Prove a repository semantic slice against the pure `MemoryCatalog` so storage-independent behavior no longer requires SQLite/custom tree state.
-- [ ] Keep `ContentStore`, `TreeStore`, and `Catalog` internal; do not expose writer/storage implementation details from the package root.
+- [ ] Delete the now-unreachable `SQLiteMetadataStore.record_tree()` / `tree_entries()` implementation and its obsolete tree-model imports.
+- [ ] Add a schema-level assertion that clean repositories no longer create `tree_snapshots` or `tree_entries` tables.
+- [ ] Verify the schema-4 tree cutover with the complete local quality gate.
 
-Acceptance: ordinary semantic repository behavior depends on `Catalog`; the remaining legacy metadata dependency is limited to functionality already classified for replacement/deletion.
+Acceptance: Git is the only durable tree representation; SQLite stores only the Git tree identity on source snapshots and no custom tree rows remain.
 
 ## 2. Complete the remaining Git/git-annex proof
 
 - [ ] Detect the tested Git/git-annex capabilities needed by Efloud; define a minimum version only if concrete incompatibility requires one.
-- [x] Implement/test content get/reacquire without changing Efloud semantic identity.
-- [x] Determine which ordinary URL registration/acquisition operations can be delegated cleanly to git-annex and test only those supported paths.
-- [ ] Cover unusual filenames and interruption/retry on real filesystem primitives.
-- [x] Cover corruption and destructive-operation failure behavior on real filesystem primitives.
+- [ ] Cover interruption/retry on real filesystem primitives.
+- [ ] Remove any remaining tests or documentation that describe the deleted filesystem CAS.
 
 Acceptance: the remaining Git/git-annex behaviors required by Efloud are proven against the supported real implementation.
 
-## 3. Finish the remaining git-annex behavior proof
+## 3. Delete replaced execution machinery
 
-- [x] Cover get/reacquire and URL-backed acquisition through the real git-annex boundary.
-- [ ] Cover interruption/retry and unusual filenames on real filesystem primitives.
-- [ ] Remove any remaining tests or documentation that describe the deleted filesystem CAS.
+- [ ] Classify each built-in source acquisition path as native git-annex, special-remote, or adapter-assisted temporary retrieval.
+- [ ] Delete generic transfer/cache/retry machinery superseded by git-annex while preserving source-specific discovery/authentication.
+- [ ] Remove generic derivation execution from core while retaining the minimal provenance representation required for consumer-supplied transformations.
 
-Acceptance: the remaining content-custody behaviors are proven against real git-annex, and no production or test contract refers to the deleted filesystem CAS.
+Acceptance: production has one content backend, one tree identity mechanism, and no general workflow executor owned by Efloud.

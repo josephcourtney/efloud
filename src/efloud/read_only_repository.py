@@ -25,6 +25,8 @@ from efloud.repository_models import (
 from efloud.repository_models import RunId as RepositoryRunId
 from efloud.schema import CURRENT_SCHEMA_VERSION
 from efloud.sqlite_metadata import SQLiteMetadataStore
+from efloud.tree.git import GitTreeStore
+from efloud.tree.snapshot import read_tree_snapshot
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -107,6 +109,8 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         store = GitAnnexContentStore(self.root)
         store.check_available()
         self.content_store: ContentReader = ReadOnlyGitAnnexContentStore(store)
+        self.tree_store = GitTreeStore(self.root)
+        self.tree_store.check_available()
 
     def __enter__(self) -> Self:
         """Return this repository for context-manager use."""
@@ -214,7 +218,7 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
         return self.metadata.validations_for(ContentId(str(content_id)))
 
     def tree_entries(self, tree_id: TreeId | str) -> tuple[TreeEntry, ...]:
-        return self.metadata.tree_entries(TreeId(str(tree_id)))
+        return read_tree_snapshot(self.tree_store, str(tree_id))
 
     def source_snapshot(self, snapshot_id: SnapshotId | str) -> SourceSnapshot | None:
         return self.metadata.source_snapshot(SnapshotId(str(snapshot_id)))

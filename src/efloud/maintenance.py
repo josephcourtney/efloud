@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING
 
 from efloud.dataset_selectors import snapshot_observations
 from efloud.read_only_repository import ReadOnlyRepository
-from efloud.repository_models import stable_id
+from efloud.content.git_annex import GitAnnexContentStore
+from efloud.content.protocol import AnnexKey
+from efloud.repository_models import ContentId, stable_id
 from efloud.schema import CURRENT_SCHEMA_VERSION
 from efloud.writer_coordination import WriterLease
 
@@ -42,7 +44,7 @@ class AuditReport:
 @dataclass(frozen=True, slots=True, order=True)
 class CleanupCandidate:
     content_id: str
-    path: str
+    custody_key: str
     reason: str
 
 
@@ -83,8 +85,16 @@ class RepositoryMaintenance:
             roots.setdefault(row[0], set()).add("provenance")
         return roots
 
+    def _present_custody(self, repository: ReadOnlyRepository) -> tuple[tuple[ContentId, str], ...]:
+        """Enumerate locally present annex custody and its semantic content identity."""
+        result: list[tuple[ContentId, str]] = []
+        for key in repository.content_store.present_keys():
+            content = repository.content_store.content_ref(key)
+            result.append((content.content_id, str(key)))
+        return tuple(sorted(result, key=lambda item: (str(item[0]), item[1])))
+
     def fsck(self) -> AuditReport:
-        """Inspect every historical content reference without migration or repair."""
+        """Audit semantic metadata and git-annex custody without repairing either."""
         connection = self._connect()
         try:
             connection.execute("BEGIN")
@@ -99,12 +109,21 @@ class RepositoryMaintenance:
             )
             roots = self._reachability(connection)
             with ReadOnlyRepository(self.root) as repository:
-                for row in connection.execute("SELECT content_id, byte_size FROM content_objects ORDER BY content_id"):
+                present = self._present_custody(repository)
+                present_by_id = {str(content_id): custody_key for content_id, custody_key in present}
+                known_rows = tuple(
+                    connection.execute("SELECT content_id, byte_size, storage_key FROM content_objects ORDER BY content_id")
+                )
+                known = {str(row[0]) for row in known_rows}
+                for row in known_rows:
                     content_id = row[0]
+                    custody_key = row[2]
                     if not repository.contains_content(content_id):
-                        issues.append(AuditIssue("missing-blob", content_id))
+                        issues.append(AuditIssue("missing-content", content_id))
+                    elif present_by_id.get(content_id) != custody_key:
+                        issues.append(AuditIssue("custody-mismatch", content_id))
                     elif not repository.verify_content(content_id):
-                        issues.append(AuditIssue("corrupt-blob", content_id))
+                        issues.append(AuditIssue("corrupt-content", content_id))
                     else:
                         with repository.open_content(content_id) as stream:
                             size = sum(len(chunk) for chunk in iter(lambda: stream.read(1024 * 1024), b""))
@@ -112,19 +131,19 @@ class RepositoryMaintenance:
                             issues.append(AuditIssue("content-size", content_id))
                     if content_id not in roots:
                         issues.append(AuditIssue("unreferenced-content", content_id))
+                for content_id, custody_key in present:
+                    if str(content_id) not in known:
+                        issues.append(AuditIssue("orphan-custody", custody_key, str(content_id)))
                 try:
                     issues.extend(self._semantic_issues(connection, repository))
                 except (ValueError, TypeError, KeyError) as error:
                     issues.append(AuditIssue("invalid-semantic-metadata", "metadata", str(error)))
-            known = {row[0] for row in connection.execute("SELECT content_id FROM content_objects")}
-            issues.extend(
-                AuditIssue("orphan-blob", content_id) for content_id, _ in self._blobs() if content_id not in known
-            )
             return AuditReport(
                 tuple(sorted(issues)), tuple((key, tuple(sorted(value))) for key, value in sorted(roots.items()))
             )
         finally:
             connection.close()
+
 
     @staticmethod
     def _semantic_issues(connection: sqlite3.Connection, repository: ReadOnlyRepository) -> list[AuditIssue]:
@@ -216,25 +235,14 @@ class RepositoryMaintenance:
                 issues.append(AuditIssue("corrupt-blob", content_id))
         return tuple(sorted(issues))
 
-    def _blobs(self) -> tuple[tuple[str, Path], ...]:
-        objects = self.root / "objects"
-        result: list[tuple[str, Path]] = []
-        for path in sorted(objects.glob("sha256/*/*")):
-            digest = path.name
-            if (
-                len(digest) == _SHA256_HEX_LENGTH
-                and all(char in "0123456789abcdef" for char in digest)
-                and path.parent.name == digest[:2]
-                and path.is_file()
-                and not path.is_symlink()
-            ):
-                if not path.resolve().is_relative_to(objects.resolve()):
-                    continue
-                result.append((f"sha256:{digest}", path))
-        return tuple(result)
+    def _custody_mtime(self, custody_key: str) -> float:
+        """Return annex-object modification time for grace-period evaluation."""
+        store = GitAnnexContentStore(self.root)
+        location = store._content_location(AnnexKey(custody_key))
+        return 0.0 if location is None else location.stat().st_mtime
 
     def cleanup(self, *, now: float, grace_period: float, dry_run: bool = True) -> tuple[CleanupCandidate, ...]:
-        """Recompute safe orphans under the writer lease; preserve all history."""
+        """Recompute safe unreferenced annex custody under the writer lease."""
         if not math.isfinite(now) or not math.isfinite(grace_period) or grace_period < 0:
             msg = "Cleanup requires a finite time and nonnegative grace period"
             raise ValueError(msg)
@@ -248,34 +256,36 @@ class RepositoryMaintenance:
             roots = self._reachability(connection)
             with ReadOnlyRepository(self.root) as repository:
                 blockers = self._cleanup_blocking_issues(connection, repository, roots)
+                present = self._present_custody(repository)
             if blockers:
                 summary = ", ".join(f"{issue.code}:{issue.subject}" for issue in blockers)
                 msg = f"Cleanup refused: repository audit failed ({summary})"
                 raise ValueError(msg)
-            known = {row[0] for row in connection.execute("SELECT content_id FROM content_objects")}
+            known = {str(row[0]): str(row[2]) for row in connection.execute("SELECT content_id, byte_size, storage_key FROM content_objects")}
             candidates = tuple(
                 CleanupCandidate(
-                    content_id,
-                    path.relative_to(self.root).as_posix(),
-                    "unreferenced-content" if content_id in known else "orphan-blob",
+                    str(content_id),
+                    custody_key,
+                    "unreferenced-content" if str(content_id) in known else "orphan-custody",
                 )
-                for content_id, path in self._blobs()
-                if content_id not in roots and now - path.stat().st_mtime >= grace_period
+                for content_id, custody_key in present
+                if str(content_id) not in roots
             )
-            available_ids = {content_id for content_id, _ in self._blobs()}
-            if now - self.database.stat().st_mtime >= grace_period:
-                missing = tuple(
-                    CleanupCandidate(content_id, "", "unreferenced-missing-content")
-                    for content_id in sorted(known - roots.keys() - available_ids)
+            if grace_period:
+                candidates = tuple(
+                    candidate
+                    for candidate in candidates
+                    if candidate.reason == "orphan-custody"
+                    and now - self._custody_mtime(candidate.custody_key) >= grace_period
                 )
-                candidates = tuple(sorted((*candidates, *missing)))
             if not dry_run:
-                for candidate in candidates:
-                    # Metadata deletion first: a crash can leave an orphan, never a missing referenced blob.
-                    with connection:
-                        connection.execute("DELETE FROM content_objects WHERE content_id = ?", (candidate.content_id,))
-                    if candidate.path:
-                        (self.root / candidate.path).unlink()
+                with connection:
+                    for candidate in candidates:
+                        if candidate.reason == "unreferenced-content":
+                            connection.execute(
+                                "DELETE FROM content_objects WHERE content_id = ?", (candidate.content_id,)
+                            )
+                        GitAnnexContentStore(self.root).drop_key(AnnexKey(candidate.custody_key))
             return candidates
         finally:
             connection.close()

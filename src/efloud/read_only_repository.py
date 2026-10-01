@@ -80,6 +80,9 @@ class ReadOnlyGitAnnexContentStore:
     def verify(self, key: AnnexKey) -> bool:
         return self._store.verify(key)
 
+    def content_ref(self, key: AnnexKey, *, media_type: str | None = None):
+        return self._store.content_ref(key, media_type=media_type)
+
     def present_keys(self) -> tuple[AnnexKey, ...]:
         return self._store.present_keys()
 

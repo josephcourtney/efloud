@@ -148,7 +148,6 @@ def test_freeze_export_manifest_reopens_and_verifies_after_repository_is_gone(tm
         _sync_http(repository, adapter, _http_source(role="reference"))
         dataset = repository.datasets.freeze(DatasetSpec.latest_source_snapshot("example"))
         manifest = dataset.export(export, paths={"source:example": "catalog/example.bin"}, strategy="copy")
-        dataset_id = dataset.id
         serialized = manifest.to_bytes()
 
     assert (export / "dataset-manifest.json").read_bytes() == serialized

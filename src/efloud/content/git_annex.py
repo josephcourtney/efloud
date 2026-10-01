@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from efloud.content.protocol import AnnexKey
+from efloud.repository_models import ContentId, ContentRef
 from efloud.git_commands import GitCommandError, GitError, GitUnavailableError, run_git
 
 if TYPE_CHECKING:
@@ -101,6 +102,57 @@ class GitAnnexContentStore:
     def check_available(self) -> None:
         """Fail explicitly if the repository cannot execute git-annex."""
         _run(self.root, "annex", "version")
+        _run(self.root, "rev-parse", "--git-dir")
+
+    @classmethod
+    def open_or_initialize(
+        cls,
+        root: Path,
+        *,
+        description: str = "efloud",
+        backend: str = _DEFAULT_BACKEND,
+    ) -> GitAnnexContentStore:
+        """Open a controlled Efloud repository, initializing Git and git-annex once."""
+        resolved = root.resolve()
+        resolved.mkdir(parents=True, exist_ok=True)
+        if not (resolved / ".git").exists():
+            return cls.initialize(resolved, description=description, backend=backend)
+        store = cls(resolved, backend=backend)
+        store.check_available()
+        configured = _run(resolved, "config", "--get", "annex.uuid", check=False)
+        if configured.returncode != 0 or not configured.stdout.strip():
+            _run(resolved, "config", "user.name", _GIT_IDENTITY_NAME)
+            _run(resolved, "config", "user.email", _GIT_IDENTITY_EMAIL)
+            _run(resolved, "config", "annex.backend", backend)
+            _run(resolved, "config", "annex.securehashesonly", "true")
+            _run(resolved, "annex", "init", description)
+        return store
+
+    def content_ref(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef:
+        """Translate an annex key into Efloud's semantic content reference."""
+        completed = _run(
+            self.root,
+            "annex",
+            "examinekey",
+            str(key),
+            "--format=" + dollar + "{backend}" + "\t" + dollar + "{bytesize}" + "\t" + dollar + "{keyname}",
+        )
+        backend, byte_size, key_name = completed.stdout.rstrip("\n").split("\t", 2)
+        if backend != self.backend:
+            msg = f"Unexpected git-annex backend for {key}: {backend!r}"
+            raise GitAnnexError(msg)
+        if not byte_size.isdigit():
+            msg = f"git-annex did not report a byte size for {key}"
+            raise GitAnnexError(msg)
+        if len(key_name) != 64 or any(char not in "0123456789abcdef" for char in key_name):
+            msg = f"Unexpected SHA-256 git-annex key name: {key_name!r}"
+            raise GitAnnexError(msg)
+        return ContentRef(
+            content_id=ContentId(f"sha256:{key_name}"),
+            byte_size=int(byte_size),
+            custody_key=str(key),
+            media_type=media_type,
+        )
 
     def calculate_key(self, path: Path) -> AnnexKey:
         """Calculate the configured annex key without ingesting bytes."""

@@ -5,8 +5,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from efloud.git_commands import run_git
+from efloud.repository_models import TreeEntry
 from efloud.tree.git import GitTreeStore
 from efloud.tree.protocol import TreeBlob
+from efloud.tree.snapshot import read_tree_snapshot, write_tree_snapshot
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,3 +60,18 @@ def test_git_tree_commits_are_retained_as_linear_ref_history(tmp_path: Path) -> 
     assert run_git(store.root, "rev-parse", ref).stdout.strip() == str(second_commit)
     assert run_git(store.root, "show", "-s", "--format=%P", str(second_commit)).stdout.strip() == str(first_commit)
     assert [entry.relative_path for entry in store.list_tree(second_commit)] == ["item.txt"]
+
+
+def test_semantic_tree_snapshot_is_retained_across_git_gc(tmp_path: Path) -> None:
+    store = GitTreeStore.initialize(tmp_path / "repository")
+    entries = (
+        TreeEntry("directory", "directory", metadata={"source": "inventory"}),
+        TreeEntry("directory/item.txt", "file", byte_size=7, metadata={"modified": "token"}),
+    )
+
+    tree_id = write_tree_snapshot(store, entries)
+    run_git(store.root, "gc", "--prune=now")
+
+    assert read_tree_snapshot(store, str(tree_id)) == entries
+    retained_commit = run_git(store.root, "rev-parse", "refs/efloud/tree-snapshots").stdout.strip()
+    assert run_git(store.root, "show", "-s", "--format=%T", retained_commit).stdout.strip() == str(tree_id)

@@ -252,6 +252,13 @@ class GitAnnexContentStore:
         )
         return tuple(AnnexKey(line) for line in completed.stdout.splitlines() if line)
 
+    def custody_mtime(self, key: AnnexKey) -> float:
+        """Return the modification time of locally present custody for a key."""
+        location = self._content_location(key)
+        if location is None or not location.is_file():
+            return 0.0
+        return location.stat().st_mtime
+
     def drop_key(self, key: AnnexKey) -> None:
         """Remove locally held content after Efloud has established semantic reachability safety."""
         _run(self.root, "annex", "dropkey", "--force", str(key))

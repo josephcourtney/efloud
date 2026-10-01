@@ -203,6 +203,7 @@ def test_integrity_expectation_is_checked_against_independently_computed_content
     actual = ContentRef(
         content_id=ContentId(f"sha256:{'a' * 64}"),
         byte_size=3,
+        custody_key="test:key",
     )
     checks = require_integrity(actual, (IntegrityExpectation.sha256("a" * 64),))
     assert checks[0].ok

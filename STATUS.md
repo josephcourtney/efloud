@@ -18,11 +18,11 @@ Milestone E of the experimental clean-break rewrite: finish deletion of the repl
 
 - macOS arm64 local environment: Git 2.56.0 and git-annex 10.20260901.
 - Real git-annex integration tests pass for content-key calculation/ingest, deduplication, presence, read, verification, URL registration, drop, and key-level reacquisition.
-- Real Git integration tests pass for canonical tree identity, nested/unusual portable paths, modes/symlinks, exact blob reads, changed-tree identity, and retained linear commit history.
+- Real Git integration tests pass for canonical tree identity, nested/unusual portable paths, modes/symlinks, exact blob reads, changed-tree identity, retained linear commit history, and tree survival after explicit Git garbage collection.
 - Repository-location-independent `DatasetId` behavior is covered and passes.
 - Phase A semantic characterization is complete, including explicit multi-source evidence and export-layout-independent dataset identity tests.
 - The internal `Catalog` boundary excludes physical tree/materialization state and has a pure `MemoryCatalog` semantic fake.
-- Exact clean branch commit `f790499a0f417cf32caec4d6bc060a6dae9d4282` passed `just check` locally: syntax, format, lint, type checking, import contracts, full tests, and coverage.
+- Exact clean branch commit `1f31b67d1a9247697e0877f806ca22a4c91d42ae` passed `just check` locally: syntax, format, lint, type checking, import contracts, full tests, and coverage.
 
 ## Decisions under test
 
@@ -40,20 +40,20 @@ Milestone E of the experimental clean-break rewrite: finish deletion of the repl
 - Maintenance enumerates annex custody through `ContentStore` and performs key-level drops only after semantic reachability checks.
 - Key reacquisition and URL registration use git-annex directly; integration coverage proves corruption/drop/reacquisition preserves semantic `ContentId`.
 - Semantic Repository persistence is typed against `Catalog`; the pure in-memory catalog supports ordinary semantic behavior.
-- Tree snapshot reads/writes are now routed through `GitTreeStore`. A canonical Git blob preserves exact semantic `TreeEntry` data and the Git tree object ID is persisted as `SourceSnapshot.tree_id`.
+- Tree snapshot reads/writes are routed through `GitTreeStore`. A canonical Git blob preserves exact semantic `TreeEntry` data and the Git tree object ID is persisted as `SourceSnapshot.tree_id`.
+- Git tree snapshots are retained by Git history rather than left as unreachable loose objects.
 - Read-only repositories decode the same Git tree projection without mutating repository state.
 - Clean schema version 4 removes `tree_snapshots` and `tree_entries`; `source_snapshots.tree_id` records the Git tree identity directly.
 - Maintenance validates referenced Git tree projections instead of recomputing the deleted custom Efloud tree hash.
-- The old SQLite `record_tree()` / `tree_entries()` methods are now unreachable but still need physical deletion from `sqlite_metadata.py`.
+- The old SQLite `record_tree()` / `tree_entries()` methods are unreachable but still need physical deletion from `sqlite_metadata.py`.
 
 ## Immediate gaps
 
-- Delete the unreachable SQLite tree methods/imports and add a direct clean-schema assertion that the old tree tables are absent.
-- Locally verify the schema-4 Git tree cutover with `just fix` and then `just check` on a clean exact commit.
+- Delete the unreachable SQLite tree methods/imports.
 - Finish git-annex interruption/retry behavior proof.
-- Delete generic transfer/cache/transport machinery superseded by git-annex.
+- Classify each built-in acquisition path and delete generic transfer/cache/transport machinery superseded by git-annex.
 - Remove generic derivation execution from core while preserving the minimal derived-artifact provenance model.
 
 ## Resume point
 
-Continue with `TODO.md`: delete the remaining SQLite tree implementation and verify the Git tree cutover before starting the transfer/execution deletion tranche.
+Continue with `TODO.md`: delete the remaining SQLite tree implementation, then inspect the concrete transfer/runtime dependency graph before deleting acquisition infrastructure.

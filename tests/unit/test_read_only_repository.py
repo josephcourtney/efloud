@@ -9,7 +9,7 @@ import pytest
 from efloud.datasets import DatasetDefinition, DatasetSelection, ExactObservation
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository import Repository
-from efloud.repository_models import SourceId
+from efloud.repository_models import SourceId, TreeEntry
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,6 +76,29 @@ def test_read_only_repository_reads_dataset_without_mutating_store(tmp_path: Pat
     assert _tree_state(tmp_path) == before
 
 
+def test_read_only_repository_reads_git_tree_snapshot_without_mutation(tmp_path: Path) -> None:
+    with Repository(tmp_path) as repository:
+        source = repository.register_source(SourceId("tree-source"), {"kind": "test"})
+        run = repository.start_run(source_ids=(source,), started_at=100.0)
+        snapshot = repository.record_tree_snapshot(
+            source_id=source,
+            run_id=run,
+            entries=(TreeEntry("dir", "directory", metadata={"marker": "kept"}),),
+            complete=True,
+            observed_at=101.0,
+        )
+        assert snapshot.tree_id is not None
+        tree_id = snapshot.tree_id
+    before = _tree_state(tmp_path)
+
+    with ReadOnlyRepository(tmp_path) as repository:
+        assert repository.tree_entries(tree_id) == (
+            TreeEntry("dir", "directory", metadata={"marker": "kept"}),
+        )
+
+    assert _tree_state(tmp_path) == before
+
+
 def test_read_only_repository_does_not_initialize_missing_store(tmp_path: Path) -> None:
     root = tmp_path / "missing"
 
@@ -95,7 +118,7 @@ def test_read_only_repository_rejects_historical_schema_without_mutation(tmp_pat
 
     with pytest.raises(
         RuntimeError,
-        match=r"Unsupported efloud metadata schema version: 2; expected 3",
+        match=r"Unsupported efloud metadata schema version: 2; expected 4",
     ):
         ReadOnlyRepository(tmp_path)
 

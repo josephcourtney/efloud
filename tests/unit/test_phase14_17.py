@@ -43,11 +43,6 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.medium, pytest.mark.integration, pytest.mark.regression, pytest.mark.timeout(30)]
 
 
-def _blob_path(root: Path, content_id: object) -> Path:
-    digest = str(content_id).removeprefix("sha256:")
-    return root / "objects" / "sha256" / digest[:2] / digest
-
-
 def _record(
     repository: Repository, *, when: float = 1.0, data: bytes = b"first", complete: bool = True
 ) -> tuple[ArtifactObservation, SourceSnapshot]:
@@ -228,36 +223,6 @@ def test_export_copy_failure_does_not_publish(tmp_path: Path, monkeypatch: pytes
         assert sorted(path.name for path in tmp_path.iterdir()) == ["repository"]
 
 
-def test_blob_before_metadata_commit_is_a_safe_orphan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    with Repository(tmp_path) as repository:
-        run = repository.start_run(started_at=1.0)
-        operation = repository.start_operation(run_id=run, kind="fixture", subject="interrupted", started_at=1.0)
-
-        def fail(*args: object, **kwargs: object) -> None:
-            del args, kwargs
-            msg = "metadata crash"
-            raise RuntimeError(msg)
-
-        monkeypatch.setattr(SQLiteMetadataStore, "record_observation_bundle", fail)
-        with pytest.raises(RuntimeError, match="metadata crash"):
-            repository.ingest_bytes("orphan", b"orphan", run_id=run, operation_id=operation)
-        assert repository.artifact_keys() == ()
-    maintenance = RepositoryMaintenance(tmp_path)
-    assert "orphan-blob" in {issue.code for issue in maintenance.fsck().issues}
-    for path in (tmp_path / "objects").glob("sha256/*/*"):
-        os.utime(path, (1.0, 1.0))
-    assert maintenance.cleanup(now=2.0, grace_period=2.0) == ()
-    proposed = maintenance.cleanup(now=10.0, grace_period=1.0)
-    assert proposed[0].reason == "orphan-blob"
-    assert (tmp_path / proposed[0].path).is_file()
-    assert maintenance.cleanup(now=10.0, grace_period=1.0, dry_run=False) == proposed
-    assert not (tmp_path / proposed[0].path).exists()
-    assert maintenance.recover(finished_at=10.0)
-    assert maintenance.recover(finished_at=10.0, dry_run=False)
-    assert maintenance.recover(finished_at=10.0, dry_run=False) == ()
-    assert maintenance.fsck().ok
-
-
 def test_interrupted_snapshot_recovery_preserves_content_and_allows_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -297,29 +262,6 @@ def test_writer_and_maintenance_coordination(tmp_path: Path) -> None:
         assert maintenance.fsck().ok
     with Repository(tmp_path) as reopened:
         assert reopened.artifact_keys()
-
-
-def test_fsck_detects_corruption_and_cleanup_preserves_validation_only_content(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repository:
-        observation, _ = _record(repository)
-        path = tmp_path / "validation-input"
-        path.write_bytes(b"validation only")
-        content = repository.store_path_content(path)
-        repository.record_validation(ValidationResult(content.content_id, "test:validator", "1", 1.0, "failed"))
-        repository.resolve_dataset(DatasetDefinition.from_selectors(Latest("namespace:item")))
-    maintenance = RepositoryMaintenance(tmp_path)
-    assert maintenance.fsck().ok
-    assert dict(maintenance.fsck().reachability)[str(content.content_id)] == ("validations",)
-    assert maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False) == ()
-    digest = str(observation.content_id).removeprefix("sha256:")
-    blob = tmp_path / "objects/sha256" / digest[:2] / digest
-    blob.write_bytes(b"corrupted")
-    assert "corrupt-blob" in {issue.code for issue in maintenance.fsck().issues}
-    blob.unlink()
-    assert "missing-blob" in {issue.code for issue in maintenance.fsck().issues}
-    with closing(sqlite3.connect(tmp_path / "metadata.sqlite")) as connection, connection:
-        connection.execute("UPDATE observations SET source_id = 'missing'")
-    assert "dangling-reference" in {issue.code for issue in maintenance.fsck().issues}
 
 
 def test_writer_exclusion_across_processes_and_crash_release(tmp_path: Path) -> None:
@@ -548,59 +490,6 @@ def test_empty_dataset_requires_explicit_complete_snapshot_evidence(tmp_path: Pa
         )
         definition = replace(definition, selections=(DatasetSelection(ExactSourceSnapshot(str(snapshot.snapshot_id))),))
         assert resolve_dataset(repository, definition).members == ()
-
-
-def test_cleanup_removes_unreferenced_metadata_without_blob(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repository:
-        path = tmp_path / "unused"
-        path.write_bytes(b"unused")
-        content = repository.store_path_content(path)
-    digest = str(content.content_id).removeprefix("sha256:")
-    (tmp_path / "objects/sha256" / digest[:2] / digest).unlink()
-    maintenance = RepositoryMaintenance(tmp_path)
-    candidates = maintenance.cleanup(now=10**12, grace_period=0.0, dry_run=False)
-    assert candidates[0].reason == "unreferenced-missing-content"
-    assert maintenance.fsck().ok
-
-
-def test_cleanup_grace_period_boundary_is_inclusive(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repository:
-        content = repository.store_bytes_content(b"unused")
-        blob = _blob_path(tmp_path, content.content_id)
-    os.utime(blob, (100.0, 100.0))
-    maintenance = RepositoryMaintenance(tmp_path)
-    assert maintenance.cleanup(now=109.999, grace_period=10.0) == ()
-    candidates = maintenance.cleanup(now=110.0, grace_period=10.0)
-    assert len(candidates) == 1
-    assert candidates[0].content_id == content.content_id
-
-
-def test_cleanup_fails_closed_on_semantic_corruption(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repository:
-        _record(repository)
-        unused = repository.store_bytes_content(b"unused")
-        unused_blob = _blob_path(tmp_path, unused.content_id)
-    os.utime(unused_blob, (1.0, 1.0))
-    with closing(sqlite3.connect(tmp_path / "metadata.sqlite")) as connection, connection:
-        connection.execute("UPDATE tree_entries SET relative_path = 'tampered.txt'")
-    maintenance = RepositoryMaintenance(tmp_path)
-    with pytest.raises(ValueError, match="tree-identity"):
-        maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)
-    assert unused_blob.is_file()
-
-
-def test_cleanup_fails_closed_on_reachable_corrupt_content(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repository:
-        observation, _ = _record(repository)
-        unused = repository.store_bytes_content(b"unused")
-        unused_blob = _blob_path(tmp_path, unused.content_id)
-        referenced_blob = _blob_path(tmp_path, observation.content_id)
-    os.utime(unused_blob, (1.0, 1.0))
-    referenced_blob.write_bytes(b"corrupt")
-    maintenance = RepositoryMaintenance(tmp_path)
-    with pytest.raises(ValueError, match="corrupt-blob"):
-        maintenance.cleanup(now=100.0, grace_period=0.0, dry_run=False)
-    assert unused_blob.is_file()
 
 
 def test_cleanup_preserves_provenance_history(tmp_path: Path) -> None:

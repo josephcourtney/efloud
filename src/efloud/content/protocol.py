@@ -27,7 +27,17 @@ class AnnexKey:
         return self.value
 
 
-class ContentStore(Protocol):
+class ContentReader(Protocol):
+    """Read-only content-custody port."""
+
+    def has_content(self, key: AnnexKey) -> bool: ...
+
+    def open(self, key: AnnexKey) -> BinaryIO: ...
+
+    def verify(self, key: AnnexKey) -> bool: ...
+
+
+class ContentStore(ContentReader, Protocol):
     """Narrow content-custody port; semantic identity remains outside the store."""
 
     def ingest_path(self, path: Path) -> AnnexKey: ...
@@ -43,4 +53,4 @@ class ContentStore(Protocol):
     def verify(self, key: AnnexKey) -> bool: ...
 
 
-__all__ = ["AnnexKey", "ContentStore"]
+__all__ = ["AnnexKey", "ContentReader", "ContentStore"]

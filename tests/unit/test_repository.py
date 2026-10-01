@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from efloud.catalog.memory import MemoryCatalog
 from efloud.datasets import DatasetDefinition, ExactObservation, Latest, LatestAll, LatestBefore
 from efloud.inventory import AbsenceEvidence
 from efloud.json_types import json_mapping_or_none
@@ -51,6 +52,39 @@ def test_content_dedup_and_observation_history(tmp_path: Path) -> None:
         assert repo.verify_content(first.content_id)
         assert repo.contains_content(first.content_id)
 
+
+
+def test_semantic_repository_slice_accepts_memory_catalog(tmp_path: Path) -> None:
+    with Repository(tmp_path, metadata_store=MemoryCatalog()) as repo:
+        source, run, operation = _run(repo)
+        observation = repo.ingest_bytes(
+            "artifact:a",
+            b"hello",
+            run_id=run,
+            operation_id=operation,
+            source_id=source,
+            observed_at=101.0,
+        )
+        assert repo.source(source) is not None
+        assert repo.run(run) is not None
+        assert repo.operation(operation) is not None
+        assert repo.observation(observation.observation_id) == observation
+        assert repo.content(observation.content_id) is not None
+        assert repo.latest_observation("artifact:a") == observation
+
+
+def test_memory_catalog_repository_rejects_legacy_tree_access(tmp_path: Path) -> None:
+    with Repository(tmp_path, metadata_store=MemoryCatalog()) as repo:
+        source, run, _operation = _run(repo)
+        with pytest.raises(TypeError, match="legacy materialization/tree"):
+            repo.record_tree_snapshot(
+                source_id=source,
+                run_id=run,
+                entries=(),
+                complete=True,
+                scope=(),
+                observed_at=101.0,
+            )
 
 def test_repository_survives_reopen(tmp_path: Path) -> None:
     repo = Repository(tmp_path)

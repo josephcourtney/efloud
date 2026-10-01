@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from efloud.tree.protocol import TreeStore
 
 _MANIFEST_PATH = "efloud-tree.json"
+_RETENTION_REF = "refs/efloud/tree-snapshots"
 
 
 def _entry_payload(entry: TreeEntry) -> JsonObject:
@@ -30,13 +31,17 @@ def _entry_payload(entry: TreeEntry) -> JsonObject:
 
 
 def write_tree_snapshot(store: TreeStore, entries: tuple[TreeEntry, ...]) -> GitTreeId:
-    """Persist one canonical semantic tree projection in Git's object database."""
+    """Persist and retain one canonical semantic tree projection in Git."""
     ordered = tuple(sorted(entries, key=lambda entry: entry.relative_path))
     if len({entry.relative_path for entry in ordered}) != len(ordered):
         msg = "Tree snapshot entries must have unique relative paths"
         raise ValueError(msg)
     payload = [_entry_payload(entry) for entry in ordered]
-    return store.write_tree((TreeBlob(_MANIFEST_PATH, canonical_json_bytes(payload)),))
+    tree = store.write_tree((TreeBlob(_MANIFEST_PATH, canonical_json_bytes(payload)),))
+    # The commit/ref is storage reachability only. SourceSnapshot.tree_id remains
+    # the Git tree object ID, so commit metadata never participates in semantic identity.
+    store.commit_tree(tree, ref=_RETENTION_REF, message="retain Efloud tree snapshot")
+    return tree
 
 
 def read_tree_snapshot(store: TreeStore, tree_id: str) -> tuple[TreeEntry, ...]:

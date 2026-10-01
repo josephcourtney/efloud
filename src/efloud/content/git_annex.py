@@ -135,7 +135,7 @@ class GitAnnexContentStore:
             "annex",
             "examinekey",
             str(key),
-            "--format=" + dollar + "{backend}" + "\t" + dollar + "{bytesize}" + "\t" + dollar + "{keyname}",
+            "--format=${backend}\t${bytesize}\t${keyname}",
         )
         backend, byte_size, key_name = completed.stdout.rstrip("\n").split("\t", 2)
         if backend != self.backend:

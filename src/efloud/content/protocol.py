@@ -40,6 +40,8 @@ class ContentReader(Protocol):
 
     def present_keys(self) -> tuple[AnnexKey, ...]: ...
 
+    def custody_mtime(self, key: AnnexKey) -> float: ...
+
 
 class ContentStore(ContentReader, Protocol):
     """Narrow content-custody port; semantic identity remains outside the store."""
@@ -59,6 +61,8 @@ class ContentStore(ContentReader, Protocol):
     def present_keys(self) -> tuple[AnnexKey, ...]: ...
 
     def drop_key(self, key: AnnexKey) -> None: ...
+
+    def custody_mtime(self, key: AnnexKey) -> float: ...
 
 
 __all__ = ["AnnexKey", "ContentReader", "ContentStore"]

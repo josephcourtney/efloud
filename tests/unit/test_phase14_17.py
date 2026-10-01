@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import sqlite3
-import subprocess
 import sys
 from contextlib import closing
 from dataclasses import replace

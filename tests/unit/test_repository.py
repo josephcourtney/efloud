@@ -53,7 +53,6 @@ def test_content_dedup_and_observation_history(tmp_path: Path) -> None:
         assert repo.contains_content(first.content_id)
 
 
-
 def test_semantic_repository_slice_accepts_memory_catalog(tmp_path: Path) -> None:
     with Repository(tmp_path, metadata_store=MemoryCatalog()) as repo:
         source, run, operation = _run(repo)
@@ -85,6 +84,7 @@ def test_memory_catalog_repository_rejects_legacy_tree_access(tmp_path: Path) ->
                 scope=(),
                 observed_at=101.0,
             )
+
 
 def test_repository_survives_reopen(tmp_path: Path) -> None:
     repo = Repository(tmp_path)

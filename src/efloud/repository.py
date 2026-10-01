@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, BinaryIO, Protocol, Self, cast
 
 from efloud.content.git_annex import GitAnnexContentStore
 from efloud.content.protocol import AnnexKey, ContentStore
-from efloud.catalog.protocol import Catalog
 from efloud.datasets import DatasetDefinition, DatasetManifest, ImmutableDataset, resolve_dataset
 from efloud.metadata_envelopes import source_definition_history_payload
 from efloud.repository_models import (
@@ -41,6 +40,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import TracebackType
 
+    from efloud.catalog.protocol import Catalog
     from efloud.derivation import DerivationKey
     from efloud.inventory import AbsenceEvidence
     from efloud.json_types import JsonObject
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
 _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
+
 
 class _LegacyRepositoryState(Protocol):
     """Temporary capability for physical materialization and custom-tree state."""
@@ -60,6 +61,7 @@ class _LegacyRepositoryState(Protocol):
     def record_tree(self, tree_id: TreeId, entries: Iterable[TreeEntry], *, created_at: float) -> None: ...
 
     def tree_entries(self, tree_id: TreeId) -> tuple[TreeEntry, ...]: ...
+
 
 _SOURCE_REVISION_KEY = "source_definition_revision_id"
 
@@ -118,7 +120,7 @@ class Repository:
 
     def _legacy_state(self) -> _LegacyRepositoryState:
         """Return the temporary physical-state capability used during the migration."""
-        state = cast(_LegacyRepositoryState, self.catalog)
+        state = cast("_LegacyRepositoryState", self.catalog)
         if not hasattr(state, "record_materialization") or not hasattr(state, "record_tree"):
             msg = "This repository backend does not provide legacy materialization/tree state."
             raise TypeError(msg)

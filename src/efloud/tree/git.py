@@ -5,7 +5,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from efloud.git_commands import run_git
+from efloud.git_commands import run_git, run_git_bytes
 from efloud.tree.protocol import GitCommitId, GitTreeEntry, GitTreeId, TreeBlob
 
 _GIT_IDENTITY_NAME = "Efloud"
@@ -112,6 +112,13 @@ class GitTreeStore:
                 )
             )
         return tuple(entries)
+
+    def read_blob(self, object_id: str) -> bytes:
+        """Read one exact blob payload from the Git object database."""
+        if not object_id or any(char.isspace() for char in object_id):
+            msg = f"Invalid Git object ID: {object_id!r}"
+            raise ValueError(msg)
+        return run_git_bytes(self.root, "cat-file", "blob", object_id).stdout
 
     def commit_tree(
         self,

@@ -83,7 +83,8 @@ class RepositoryMaintenance:
             roots.setdefault(row[0], set()).add("provenance")
         return roots
 
-    def _present_custody(self, repository: ReadOnlyRepository) -> tuple[tuple[ContentId, str], ...]:
+    @staticmethod
+    def _present_custody(repository: ReadOnlyRepository) -> tuple[tuple[ContentId, str], ...]:
         """Enumerate locally present annex custody and its semantic content identity."""
         result: list[tuple[ContentId, str]] = []
         for key in repository.content_store.present_keys():
@@ -236,8 +237,7 @@ class RepositoryMaintenance:
     def _custody_mtime(self, custody_key: str) -> float:
         """Return annex-object modification time for grace-period evaluation."""
         store = GitAnnexContentStore(self.root)
-        location = store._content_location(AnnexKey(custody_key))
-        return 0.0 if location is None else location.stat().st_mtime
+        return store.custody_mtime(AnnexKey(custody_key))
 
     def cleanup(self, *, now: float, grace_period: float, dry_run: bool = True) -> tuple[CleanupCandidate, ...]:
         """Recompute safe unreferenced annex custody under the writer lease."""

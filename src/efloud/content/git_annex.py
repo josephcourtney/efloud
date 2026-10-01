@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import tempfile
@@ -211,7 +212,15 @@ class GitAnnexContentStore:
             staged.unlink(missing_ok=True)
 
     def _content_location(self, key: AnnexKey) -> Path | None:
-        completed = _run(self.root, "annex", "contentlocation", str(key), check=False)
+        """Resolve an annex object path without consulting mutable annex state."""
+        completed = _run(
+            self.root,
+            "annex",
+            "examinekey",
+            str(key),
+            "--format=" + "${objectpath}",
+            check=False,
+        )
         if completed.returncode != 0:
             return None
         value = completed.stdout.strip()
@@ -233,20 +242,25 @@ class GitAnnexContentStore:
         return location.open("rb")
 
     def verify(self, key: AnnexKey) -> bool:
-        """Delegate byte-integrity verification to a full git-annex fsck."""
-        if not self.has_content(key):
+        """Verify locally present SHA-256 content without mutating annex state."""
+        location = self._content_location(key)
+        if location is None or not location.is_file():
             return False
-        completed = _run(
+        examined = _run(
             self.root,
-            "annex",
-            "fsck",
-            f"--key={key}",
-            "--numcopies=1",
-            "--json",
-            "--json-error-messages",
-            check=False,
+            "annex", "examinekey", str(key), "--format=" + "${backend}" + "\t" + "${bytesize}" + "\t" + "${keyname}",
         )
-        return completed.returncode == 0
+        backend, byte_size, key_name = examined.stdout.rstrip("\n").split("\t", 2)
+        if backend != self.backend or backend != "SHA256" or not byte_size.isdigit():
+            return False
+        digest = hashlib.sha256()
+        size = 0
+        with location.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+        return size == int(byte_size) and digest.hexdigest() == key_name
+
 
 
 __all__ = [

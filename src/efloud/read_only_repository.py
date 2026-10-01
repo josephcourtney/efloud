@@ -164,7 +164,8 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
     def open_content(self, content_id: ContentId | str) -> BinaryIO:
         content = self.metadata.content(ContentId(str(content_id)))
         if content is None:
-            raise KeyError(f"Unknown repository content: {content_id}")
+            msg = f"Unknown repository content: {content_id}"
+            raise KeyError(msg)
         return self.content_store.open(AnnexKey(content.custody_key))
 
     def contains_content(self, content_id: ContentId | str) -> bool:
@@ -222,7 +223,6 @@ class ReadOnlyRepository:  # ruff: ignore[too-many-public-methods] - mirrors the
 
 
 __all__ = [
-    "ReadOnlyFilesystemBlobStore",
     "ReadOnlyRepository",
     "ReadOnlySQLiteMetadataStore",
 ]

@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from efloud.content.protocol import AnnexKey
-from efloud.repository_models import ContentId, ContentRef
 from efloud.git_commands import GitCommandError, GitError, GitUnavailableError, run_git
+from efloud.repository_models import ContentId, ContentRef
 
 if TYPE_CHECKING:
     import subprocess
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 _DEFAULT_BACKEND = "SHA256"
 _GIT_IDENTITY_NAME = "Efloud"
 _GIT_IDENTITY_EMAIL = "efloud@localhost.invalid"
+KEY_NAME_LENGTH = 64
 
 
 class GitAnnexError(RuntimeError):
@@ -144,7 +145,7 @@ class GitAnnexContentStore:
         if not byte_size.isdigit():
             msg = f"git-annex did not report a byte size for {key}"
             raise GitAnnexError(msg)
-        if len(key_name) != 64 or any(char not in "0123456789abcdef" for char in key_name):
+        if len(key_name) != KEY_NAME_LENGTH or any(char not in "0123456789abcdef" for char in key_name):
             msg = f"Unexpected SHA-256 git-annex key name: {key_name!r}"
             raise GitAnnexError(msg)
         return ContentRef(

@@ -643,7 +643,8 @@ class Repository:
     def open_content(self, content_id: ContentId | str) -> BinaryIO:
         content = self.catalog.content(ContentId(str(content_id)))
         if content is None:
-            raise KeyError(f"Unknown repository content: {content_id}")
+            msg = f"Unknown repository content: {content_id}"
+            raise KeyError(msg)
         return self.content_store.open(AnnexKey(content.custody_key))
 
     def contains_content(self, content_id: ContentId | str) -> bool:

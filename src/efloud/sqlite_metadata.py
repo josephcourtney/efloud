@@ -315,8 +315,7 @@ class SQLiteMetadataStore:
                 (str(content.content_id),),
             ).fetchone()
             if existing is not None and (
-                int(existing["byte_size"]) != content.byte_size
-                or existing["storage_key"] != content.custody_key
+                int(existing["byte_size"]) != content.byte_size or existing["storage_key"] != content.custody_key
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)
@@ -347,8 +346,7 @@ class SQLiteMetadataStore:
                 (str(content.content_id),),
             ).fetchone()
             if existing is not None and (
-                int(existing["byte_size"]) != content.byte_size
-                or existing["storage_key"] != content.custody_key
+                int(existing["byte_size"]) != content.byte_size or existing["storage_key"] != content.custody_key
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)

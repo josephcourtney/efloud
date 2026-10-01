@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from efloud.repository_models import ContentRef
-
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
+
+    from efloud.repository_models import ContentRef
 
 
 @dataclass(frozen=True, slots=True)

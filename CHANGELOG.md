@@ -12,6 +12,8 @@ All notable changes to Efloud are documented here following [Keep a Changelog](h
 
 ### Changed
 
+- Replaced filesystem-CAS maintenance with git-annex custody enumeration and key-level cleanup; deleted the superseded filesystem blob store.
+
 - Cut Repository content custody over to the internal git-annex ContentStore on the experimental redesign branch; semantic ContentRef identity remains path-independent while opaque annex custody keys are retained as infrastructure evidence.
 - Close dataset/export acceptance through the clean public API: verify resolve-versus-freeze semantics, frozen historical evidence, incomplete-snapshot behavior, detached handoff, missing/corrupt content, safe exclusive publication, and a standard-library-only manifest consumer.
 - Exercise explicit Linux reflink export on a reflink-enabled XFS CI filesystem and atomic `renameat2(RENAME_NOREPLACE)` publication; document detached dataset manifest v1 as a repository-independent contract.

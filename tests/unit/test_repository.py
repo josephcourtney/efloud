@@ -213,7 +213,7 @@ def test_schema_v1_is_rejected_without_migration(tmp_path: Path) -> None:
 
     with pytest.raises(
         RuntimeError,
-        match=r"Unsupported efloud metadata schema version: 1; expected 3",
+        match=r"Unsupported efloud metadata schema version: 1; expected 4",
     ):
         Repository(tmp_path)
 

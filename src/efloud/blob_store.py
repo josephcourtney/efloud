@@ -86,6 +86,7 @@ class FilesystemBlobStore:
         return ContentRef(
             content_id=ContentId(f"sha256:{digest}"),
             byte_size=byte_size,
+            custody_key=f"sha256:{digest}",
             media_type=media_type,
         )
 

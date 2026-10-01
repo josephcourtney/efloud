@@ -241,6 +241,22 @@ class GitAnnexContentStore:
             raise FileNotFoundError(str(key))
         return location.open("rb")
 
+    def present_keys(self) -> tuple[AnnexKey, ...]:
+        """List locally present annex keys without changing annex state."""
+        completed = _run(
+            self.root,
+            "annex",
+            "findkeys",
+            "--in=here",
+            "--format=" + "${key}" + "\\n",
+        )
+        return tuple(AnnexKey(line) for line in completed.stdout.splitlines() if line)
+
+    def drop_key(self, key: AnnexKey) -> None:
+        """Remove locally held content after Efloud has established semantic reachability safety."""
+        _run(self.root, "annex", "dropkey", "--force", str(key))
+
+
     def verify(self, key: AnnexKey) -> bool:
         """Verify locally present SHA-256 content without mutating annex state."""
         location = self._content_location(key)

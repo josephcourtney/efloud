@@ -4,7 +4,7 @@ Purpose: compact handoff record of current state, active focus, verified evidenc
 
 ## Current focus
 
-Milestone E of the experimental clean-break rewrite: delete replaced transfer/tree/derivation machinery after completing the first Repository-to-Catalog dependency cut.
+Milestone E of the experimental clean-break rewrite: finish deletion of the replaced custom tree persistence, then continue into transfer/derivation removal.
 
 ## Baseline
 
@@ -12,17 +12,17 @@ Milestone E of the experimental clean-break rewrite: delete replaced transfer/tr
 - Starting main commit: `53023cf9482e7a2cfca20a0f71f5cb05483ba1b8`.
 - Current main already contains declarative `efloud.toml` and canonical lock/signing work; that boundary is being reused.
 - The experiment has internal `ContentStore`, `TreeStore`, and `Catalog` ports; none are package-root API.
-- The legacy filesystem CAS, custom tree persistence, transfer/runtime code, and derivation execution still exist and remain replacement/deletion targets.
+- The legacy filesystem CAS is deleted. Generic transfer/runtime code, obsolete SQLite tree methods, and derivation execution remain replacement/deletion targets.
 
 ## Verified evidence
 
 - macOS arm64 local environment: Git 2.56.0 and git-annex 10.20260901.
-- Real git-annex integration tests pass for content-key calculation/ingest, deduplication, presence, read, and verification.
-- Real Git integration tests pass for canonical tree identity, nested/unusual portable paths, modes/symlinks, changed-tree identity, and retained linear commit history.
+- Real git-annex integration tests pass for content-key calculation/ingest, deduplication, presence, read, verification, URL registration, drop, and key-level reacquisition.
+- Real Git integration tests pass for canonical tree identity, nested/unusual portable paths, modes/symlinks, exact blob reads, changed-tree identity, and retained linear commit history.
 - Repository-location-independent `DatasetId` behavior is covered and passes.
 - Phase A semantic characterization is complete, including explicit multi-source evidence and export-layout-independent dataset identity tests.
 - The internal `Catalog` boundary excludes physical tree/materialization state and has a pure `MemoryCatalog` semantic fake.
-- Exact branch commit `5db183180de957d01bf472eb1eefdab213d358b8` passed `just check` locally: syntax, format, lint, type checking, import contracts, full tests, and coverage.
+- Exact clean branch commit `f790499a0f417cf32caec4d6bc060a6dae9d4282` passed `just check` locally: syntax, format, lint, type checking, import contracts, full tests, and coverage.
 
 ## Decisions under test
 
@@ -36,23 +36,24 @@ Milestone E of the experimental clean-break rewrite: delete replaced transfer/tr
 ## Current state
 
 - Phase A is complete and locally validated.
-- The initial real Git/git-annex infrastructure proof is complete for ingest/verify and tree/commit operations.
-- Repository content custody has now been cut over in production code to the internal git-annex ContentStore; real repository reopen/persistence coverage is present.
-- The exact clean branch head passed `just check` after the cutover and read-only custody fixes.
-- The first CAS-specific test migration is complete: obsolete blob-store contract tests and filesystem-layout assertions were removed or converted to semantic content assertions; reflink export permissions were corrected so cloned handoff files are independently writable.
-- The filesystem CAS implementation has now been deleted. Maintenance enumerates annex custody through the ContentStore and performs key-level drops only after semantic reachability checks.
-- Key reacquisition and URL registration now use git-annex directly; integration coverage proves that corruption/drop/reacquisition preserves the semantic `ContentId`.
-- The narrow semantic `Catalog` and pure in-memory fake are implemented and locally validated.
-- The first Repository dependency cut is complete: semantic persistence is typed against `Catalog`, while materialization/custom-tree operations are isolated behind an explicitly temporary legacy capability.
+- Repository content custody is cut over to git-annex; the filesystem CAS implementation is deleted.
+- Maintenance enumerates annex custody through `ContentStore` and performs key-level drops only after semantic reachability checks.
+- Key reacquisition and URL registration use git-annex directly; integration coverage proves corruption/drop/reacquisition preserves semantic `ContentId`.
+- Semantic Repository persistence is typed against `Catalog`; the pure in-memory catalog supports ordinary semantic behavior.
+- Tree snapshot reads/writes are now routed through `GitTreeStore`. A canonical Git blob preserves exact semantic `TreeEntry` data and the Git tree object ID is persisted as `SourceSnapshot.tree_id`.
+- Read-only repositories decode the same Git tree projection without mutating repository state.
+- Clean schema version 4 removes `tree_snapshots` and `tree_entries`; `source_snapshots.tree_id` records the Git tree identity directly.
+- Maintenance validates referenced Git tree projections instead of recomputing the deleted custom Efloud tree hash.
+- The old SQLite `record_tree()` / `tree_entries()` methods are now unreachable but still need physical deletion from `sqlite_metadata.py`.
 
 ## Immediate gaps
 
-- Delete or replace the remaining generic transfer/cache/transport machinery where git-annex can own the behavior.
-- Replace custom tree persistence/identity with the Git tree boundary.
-- Remove generic derivation execution from core while preserving semantic derived-artifact provenance.
-- Finish git-annex interruption/retry and any remaining unusual-filename behavior proof.
-- Locally run the current branch after this tranche; the GitHub edits in this tranche have not yet been locally verified here.
+- Delete the unreachable SQLite tree methods/imports and add a direct clean-schema assertion that the old tree tables are absent.
+- Locally verify the schema-4 Git tree cutover with `just fix` and then `just check` on a clean exact commit.
+- Finish git-annex interruption/retry behavior proof.
+- Delete generic transfer/cache/transport machinery superseded by git-annex.
+- Remove generic derivation execution from core while preserving the minimal derived-artifact provenance model.
 
 ## Resume point
 
-Continue with `TODO.md`: inspect the remaining transfer/tree/derivation machinery and delete the first replaceable slice; keep the temporary legacy materialization/tree capability isolated until its replacement is ready.
+Continue with `TODO.md`: delete the remaining SQLite tree implementation and verify the Git tree cutover before starting the transfer/execution deletion tranche.

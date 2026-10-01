@@ -76,6 +76,7 @@ def test_present_keys_and_drop_key_are_custody_operations(tmp_path: Path) -> Non
     assert not store.has_content(key)
 
 
+
 def test_registered_url_reacquires_dropped_and_corrupt_content(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     source_dir = tmp_path / "source"
@@ -89,12 +90,7 @@ def test_registered_url_reacquires_dropped_and_corrupt_content(tmp_path: Path) -
     identity = store.content_ref(key)
 
     handler = functools.partial(SimpleHTTPRequestHandler, directory=str(source_dir))
-
-    class QuietHandler(handler.func):  # type: ignore[misc]
-        def log_message(self, format: str, *args: object) -> None:
-            del format, args
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

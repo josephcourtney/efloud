@@ -5,12 +5,13 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from efloud.catalog import MemoryCatalog
-from efloud.content.protocol import AnnexKey
 from efloud.repository import Repository
+
 if TYPE_CHECKING:
     from pathlib import Path
     from typing import BinaryIO
 
+    from efloud.content.protocol import AnnexKey
     from efloud.metadata_store import MetadataStore
     from efloud.repository_models import ContentRef
 

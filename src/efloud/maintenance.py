@@ -19,8 +19,6 @@ from efloud.writer_coordination import WriterLease
 if TYPE_CHECKING:
     from pathlib import Path
 
-_SHA256_HEX_LENGTH = 64
-
 _REFERENCE_TABLES = ("observations", "tree_entries", "validations", "materializations")
 
 
@@ -230,9 +228,9 @@ class RepositoryMaintenance:
             if repository.content(content_id) is None:
                 issues.append(AuditIssue("missing-content-metadata", content_id))
             elif not repository.contains_content(content_id):
-                issues.append(AuditIssue("missing-blob", content_id))
+                issues.append(AuditIssue("missing-content", content_id))
             elif not repository.verify_content(content_id):
-                issues.append(AuditIssue("corrupt-blob", content_id))
+                issues.append(AuditIssue("corrupt-content", content_id))
         return tuple(sorted(issues))
 
     def _custody_mtime(self, custody_key: str) -> float:
@@ -275,8 +273,7 @@ class RepositoryMaintenance:
                 candidates = tuple(
                     candidate
                     for candidate in candidates
-                    if candidate.reason == "orphan-custody"
-                    and now - self._custody_mtime(candidate.custody_key) >= grace_period
+                    if now - self._custody_mtime(candidate.custody_key) >= grace_period
                 )
             if not dry_run:
                 with connection:

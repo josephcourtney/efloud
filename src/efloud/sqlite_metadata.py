@@ -41,21 +41,6 @@ if TYPE_CHECKING:
 
     from efloud.json_types import JsonObject
 
-_SHA256_HEX_LENGTH = 64
-
-
-def _storage_key_for(content_id: ContentId) -> str:
-    """Derive the canonical SQLite locator without consulting any blob backend."""
-    text = str(content_id)
-    prefix = "sha256:"
-    if not text.startswith(prefix):
-        return text
-    digest = text.removeprefix(prefix)
-    if len(digest) != _SHA256_HEX_LENGTH or any(ch not in "0123456789abcdef" for ch in digest):
-        return text
-    return f"sha256/{digest[:2]}/{digest}"
-
-
 _RUN_TERMINAL = frozenset({"succeeded", "partial", "failed", "cancelled"})
 _OPERATION_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
 
@@ -331,7 +316,7 @@ class SQLiteMetadataStore:
             ).fetchone()
             if existing is not None and (
                 int(existing["byte_size"]) != content.byte_size
-                or existing["storage_key"] != _storage_key_for(content.content_id)
+                or existing["storage_key"] != content.custody_key
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)
@@ -343,7 +328,7 @@ class SQLiteMetadataStore:
                 (
                     str(content.content_id),
                     content.byte_size,
-                    _storage_key_for(content.content_id),
+                    content.custody_key,
                     content.media_type,
                 ),
             )
@@ -363,7 +348,7 @@ class SQLiteMetadataStore:
             ).fetchone()
             if existing is not None and (
                 int(existing["byte_size"]) != content.byte_size
-                or existing["storage_key"] != _storage_key_for(content.content_id)
+                or existing["storage_key"] != content.custody_key
             ):
                 msg = f"Conflicting content record for {content.content_id}"
                 raise ValueError(msg)
@@ -375,7 +360,7 @@ class SQLiteMetadataStore:
                 (
                     str(content.content_id),
                     content.byte_size,
-                    _storage_key_for(content.content_id),
+                    content.custody_key,
                     content.media_type,
                 ),
             )
@@ -698,6 +683,7 @@ class SQLiteMetadataStore:
         return ContentRef(
             content_id=ContentId(row["content_id"]),
             byte_size=int(row["byte_size"]),
+            custody_key=row["storage_key"],
             media_type=row["media_type"],
         )
 

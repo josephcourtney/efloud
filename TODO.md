@@ -20,12 +20,10 @@ Acceptance: ordinary semantic repository behavior depends on `Catalog`; the rema
 
 Acceptance: real integration tests prove Git/git-annex can satisfy the target content contract before `ContentRef` or repository persistence is cut over.
 
-## 3. Finish and verify the Repository content cutover
+## 3. Finish the remaining git-annex behavior proof
 
-- [ ] Run the new Repository/git-annex integration slice on the supported local environment.
-- [ ] Add get/drop/reacquire and corruption/interruption coverage to the real git-annex boundary.
-- [ ] Rewrite maintenance and repository tests that assert filesystem-CAS paths, orphan blobs, or custom blob corruption mechanics.
-- [ ] Remove the remaining production CAS dependency and delete `blob_store.py` once no semantic behavior depends on it.
-- [ ] Keep detached manifests portable and independently verifiable; annex custody evidence must not become a requirement for detached byte verification.
+- [ ] Cover get/reacquire and URL-backed acquisition through the real git-annex boundary.
+- [ ] Cover interruption/retry and destructive-operation failure behavior on real filesystem primitives.
+- [ ] Remove any remaining tests or documentation that describe the deleted filesystem CAS.
 
-Acceptance: Repository content operations are entirely annex-backed, the exact branch head passes the applicable local checks, and the filesystem CAS is no longer a production authority.
+Acceptance: the remaining content-custody behaviors are proven against real git-annex, and no production or test contract refers to the deleted filesystem CAS.

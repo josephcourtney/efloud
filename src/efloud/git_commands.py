@@ -29,6 +29,20 @@ class GitCommandError(GitError):
         self.stderr = stderr
 
 
+def _git_command(root: Path, args: tuple[str, ...], env: Mapping[str, str] | None) -> tuple[tuple[str, ...], dict[str, str]]:
+    if not root.is_dir():
+        msg = f"Git working directory does not exist: {root}"
+        raise GitError(msg)
+    git = shutil.which("git")
+    if git is None:
+        msg = "git is not available on PATH"
+        raise GitUnavailableError(msg)
+    process_env = os.environ.copy()
+    if env is not None:
+        process_env.update(env)
+    return (git, *args), process_env
+
+
 def run_git(
     root: Path,
     *args: str,
@@ -37,17 +51,7 @@ def run_git(
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run Git without a shell from one explicit repository working directory."""
-    if not root.is_dir():
-        msg = f"Git working directory does not exist: {root}"
-        raise GitError(msg)
-    git = shutil.which("git")
-    if git is None:
-        msg = "git is not available on PATH"
-        raise GitUnavailableError(msg)
-    command = (git, *args)
-    process_env = os.environ.copy()
-    if env is not None:
-        process_env.update(env)
+    command, process_env = _git_command(root, args, env)
     completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - no shell; argv is passed directly to Git.
         command,
         cwd=root,
@@ -62,4 +66,26 @@ def run_git(
     return completed
 
 
-__all__ = ["GitCommandError", "GitError", "GitUnavailableError", "run_git"]
+def run_git_bytes(
+    root: Path,
+    *args: str,
+    check: bool = True,
+    env: Mapping[str, str] | None = None,
+    input_bytes: bytes | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run Git with binary stdin/stdout for object-database operations."""
+    command, process_env = _git_command(root, args, env)
+    completed = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - no shell; argv is passed directly to Git.
+        command,
+        cwd=root,
+        check=False,
+        capture_output=True,
+        input=input_bytes,
+        env=process_env,
+    )
+    if check and completed.returncode != 0:
+        raise GitCommandError(command, completed.returncode, completed.stderr.decode("utf-8", errors="replace"))
+    return completed
+
+
+__all__ = ["GitCommandError", "GitError", "GitUnavailableError", "run_git", "run_git_bytes"]

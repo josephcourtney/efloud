@@ -37,7 +37,8 @@ Milestone D of the experimental clean-break rewrite: cut Repository content cust
 
 - Phase A is complete and locally validated.
 - The initial real Git/git-annex infrastructure proof is complete for ingest/verify and tree/commit operations.
-- Repository content custody has now been cut over in production code to the internal git-annex ContentStore; real repository reopen/persistence coverage has been added but this branch head has not yet been locally verified.
+- Repository content custody has now been cut over in production code to the internal git-annex ContentStore; real repository reopen/persistence coverage is present.
+- The first CAS-specific test migration is complete: obsolete blob-store contract tests and filesystem-layout assertions were removed or converted to semantic content assertions; reflink export permissions were corrected so cloned handoff files are independently writable.
 - The narrow semantic `Catalog` and pure in-memory fake are implemented and locally validated.
 - `Repository` still directly owns the broad legacy metadata/blob abstractions; this is now the immediate dependency-cut target.
 
@@ -45,7 +46,8 @@ Milestone D of the experimental clean-break rewrite: cut Repository content cust
 
 - Route the remaining semantic repository persistence through `Catalog` and isolate legacy materialization/custom-tree calls.
 - Finish git-annex get/drop/reacquire, appropriate URL delegation, corruption, interruption/retry, and destructive-operation behavior.
-- Rewrite/remove CAS-specific tests and maintenance after the real Repository cutover is locally verified.
+- Redesign repository maintenance so fsck/cleanup operate through git-annex custody rather than the removed filesystem CAS layout.
+- Locally run the current branch after the test migration; the GitHub edits in this tranche have not been locally verified here.
 
 ## Resume point
 

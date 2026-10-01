@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from efloud.content.git_annex import GitAnnexContentStore
 from efloud.content.protocol import AnnexKey
 from efloud.dataset_selectors import snapshot_observations
+from efloud.git_commands import GitError
 from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_models import ContentId, stable_id
 from efloud.schema import CURRENT_SCHEMA_VERSION
@@ -19,7 +20,7 @@ from efloud.writer_coordination import WriterLease
 if TYPE_CHECKING:
     from pathlib import Path
 
-_REFERENCE_TABLES = ("observations", "tree_entries", "validations", "materializations")
+_REFERENCE_TABLES = ("observations", "validations", "materializations")
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -149,10 +150,6 @@ class RepositoryMaintenance:
     def _semantic_issues(connection: sqlite3.Connection, repository: ReadOnlyRepository) -> list[AuditIssue]:
         issues: list[AuditIssue] = []
         issues.extend(RepositoryMaintenance._snapshot_issues(repository))
-        for row in connection.execute("SELECT tree_id FROM tree_snapshots"):
-            entries = repository.tree_entries(row[0])
-            if stable_id("tree", [entry.identity_payload() for entry in entries]) != row[0]:
-                issues.append(AuditIssue("tree-identity", row[0]))
         for row in connection.execute("SELECT dataset_id FROM datasets"):
             dataset = repository.dataset(row[0])
             exact = [
@@ -194,6 +191,11 @@ class RepositoryMaintenance:
         issues: list[AuditIssue] = []
         for source in repository.sources():
             for snapshot in repository.source_snapshots_for(source.source_id, limit=None):
+                if snapshot.tree_id is not None:
+                    try:
+                        repository.tree_entries(snapshot.tree_id)
+                    except (ValueError, GitError) as error:
+                        issues.append(AuditIssue("tree-projection", str(snapshot.tree_id), str(error)))
                 if snapshot.complete:
                     try:
                         snapshot_observations(repository, snapshot)

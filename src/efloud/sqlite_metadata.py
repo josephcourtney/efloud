@@ -29,7 +29,6 @@ from efloud.repository_models import (
     SnapshotId,
     SourceId,
     SourceSnapshot,
-    TreeEntry,
     TreeId,
     ValidationResult,
 )
@@ -688,60 +687,6 @@ class SQLiteMetadataStore:
     def artifact_keys(self) -> tuple[ArtifactKey, ...]:
         rows = self._connection.execute("SELECT artifact_key FROM logical_artifacts ORDER BY artifact_key").fetchall()
         return tuple(ArtifactKey(row["artifact_key"]) for row in rows)
-
-    def record_tree(self, tree_id: TreeId, entries: Iterable[TreeEntry], *, created_at: float) -> None:
-        ordered = tuple(sorted(entries, key=lambda entry: entry.relative_path))
-        with self._connection:
-            self._connection.execute(
-                "INSERT OR IGNORE INTO tree_snapshots(tree_id, created_at) VALUES (?, ?)",
-                (str(tree_id), created_at),
-            )
-            existing_count = int(
-                self._connection.execute(
-                    "SELECT COUNT(*) FROM tree_entries WHERE tree_id = ?",
-                    (str(tree_id),),
-                ).fetchone()[0]
-            )
-            if existing_count not in {0, len(ordered)}:
-                msg = f"Conflicting tree record for {tree_id}"
-                raise ValueError(msg)
-            if existing_count == 0:
-                self._connection.executemany(
-                    """
-                    INSERT INTO tree_entries(
-                        tree_id, relative_path, kind, content_id, byte_size, target, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            str(tree_id),
-                            entry.relative_path,
-                            entry.kind,
-                            str(entry.content_id) if entry.content_id is not None else None,
-                            entry.byte_size,
-                            entry.target,
-                            _dump(entry.metadata),
-                        )
-                        for entry in ordered
-                    ],
-                )
-
-    def tree_entries(self, tree_id: TreeId) -> tuple[TreeEntry, ...]:
-        rows = self._connection.execute(
-            "SELECT * FROM tree_entries WHERE tree_id = ? ORDER BY relative_path",
-            (str(tree_id),),
-        ).fetchall()
-        return tuple(
-            TreeEntry(
-                relative_path=row["relative_path"],
-                kind=row["kind"],
-                content_id=ContentId(row["content_id"]) if row["content_id"] is not None else None,
-                byte_size=int(row["byte_size"]) if row["byte_size"] is not None else None,
-                target=row["target"],
-                metadata=_load_object(row["metadata_json"]),
-            )
-            for row in rows
-        )
 
     def record_source_snapshot(self, snapshot: SourceSnapshot) -> None:
         with self._connection:

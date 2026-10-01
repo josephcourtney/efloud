@@ -50,8 +50,8 @@ internal repository writer
 Repository
    |-----------------------------|
    |                             |
-MetadataStore                 BlobStore
-(SQLite default)              (filesystem CAS default)
+Catalog                      ContentStore
+(SQLite default)              (git-annex default)
    |                             |
    |-----------------------------|
                  |
@@ -80,8 +80,8 @@ Responsibility boundaries are:
   recording;
 - **repository** owns artifact, observation, content, provenance, source snapshot,
   dataset, validation, retention, and lifecycle semantics;
-- **metadata storage** owns identities and relationships;
-- **blob storage** owns immutable bytes by content identity;
+- **catalog storage** owns semantic identities and relationships;
+- **content custody** owns immutable bytes and their physical availability;
 - **datasets/exports** provide reproducible consumer handoff;
 - **materialized views, caches, and CLI presentation** are derived or operational
   state only.
@@ -516,33 +516,38 @@ where practical.
 
 A future PostgreSQL or other metadata backend must preserve repository semantics.
 
-## Blob store
+## Content custody
 
-The default blob store is a portable content-addressed filesystem layout. The
-semantic contract is storage-location independent:
+The default content-custody implementation is git-annex. Efloud owns the semantic
+content identity; git-annex owns immutable byte custody, cryptographic verification,
+and physical storage.
+
+The internal `ContentStore` contract is deliberately custody-oriented:
 
 ```text
-put bytes/path -> ContentRef
-open(ContentId)
-contains(ContentId)
-verify(ContentId)
-delete(ContentId)
+ingest bytes/path -> opaque annex key
+annex key         -> ContentRef(content_id, byte_size, custody_key)
+open(custody_key)
+has_content(custody_key)
+verify(custody_key)
 ```
 
-A local file descriptor/path is an optional backend capability, useful for reflink
-optimization, not a requirement of repository/dataset code.
+The annex key is persisted as infrastructure evidence needed to recover the bytes,
+but it is never part of `ContentId`, artifact identity, dataset identity, or detached
+manifest identity. The filesystem location of an annex object is entirely opaque to
+Efloud semantics.
 
-Blob rules:
+Efloud establishes custody before committing semantic catalog records. A failed
+catalog transaction may therefore leave unreferenced annex content; it must never
+leave an authoritative reference to unavailable content.
 
-- immutable after installation;
-- identity derived from bytes;
-- idempotent put by content identity;
-- successful put is immediately readable;
-- atomic installation where supported;
-- identical content stored once;
-- backend paths/keys excluded from semantic identity.
+Git-annex is also responsible for its own immutable-object integrity checks. Efloud
+verification combines that custody check with independently recorded semantic
+`ContentRef` metadata such as byte size.
 
-Chunk-level deduplication is deferred until measurements justify it.
+The current implementation uses a cryptographic SHA-256 git-annex backend with
+secure hashes enabled. Other custody backends remain possible behind the same
+internal port if concrete requirements justify them.
 
 ## Transactional ingestion
 
@@ -550,10 +555,9 @@ The semantic ingestion order is:
 
 ```text
 acquire/stage bytes
-      -> compute actual ContentId
+      -> establish git-annex custody and actual ContentId
       -> validate required expectations
-      -> install/reuse immutable content
-      -> metadata transaction
+      -> semantic catalog transaction
            content + observation + provenance + validation
            + source/snapshot/run/operation updates
       -> commit

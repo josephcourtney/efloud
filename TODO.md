@@ -2,14 +2,7 @@
 
 Purpose: ephemeral, execution-level tasks for the experimental Git/git-annex redesign. Completed items are removed rather than retained as history.
 
-## 1. Finish the Git tree cutover
-
-- [ ] Delete the now-unreachable `SQLiteMetadataStore.record_tree()` / `tree_entries()` implementation and its obsolete tree-model imports.
-- [ ] Verify the schema-4 tree cutover with the complete local quality gate.
-
-Acceptance: Git is the only durable tree representation; SQLite stores only the Git tree identity on source snapshots and no custom tree rows remain.
-
-## 2. Complete the remaining Git/git-annex proof
+## 1. Complete the remaining Git/git-annex proof
 
 - [ ] Detect the tested Git/git-annex capabilities needed by Efloud; define a minimum version only if concrete incompatibility requires one.
 - [ ] Cover interruption/retry on real filesystem primitives.
@@ -17,10 +10,20 @@ Acceptance: Git is the only durable tree representation; SQLite stores only the 
 
 Acceptance: the remaining Git/git-annex behaviors required by Efloud are proven against the supported real implementation.
 
-## 3. Delete replaced execution machinery
+## 2. Delete replaced acquisition/runtime machinery
 
-- [ ] Classify each built-in source acquisition path as native git-annex, special-remote, or adapter-assisted temporary retrieval.
-- [ ] Delete generic transfer/cache/retry machinery superseded by git-annex while preserving source-specific discovery/authentication.
-- [ ] Remove generic derivation execution from core while retaining the minimal provenance representation required for consumer-supplied transformations.
+- [ ] Cut byte-preserving `HttpSource` acquisition to the git-annex URL/key boundary while preserving HTTP response/change evidence separately from semantic content identity.
+- [ ] Keep `RestSource` adapter-assisted where canonical JSON normalization is part of the declared source semantics; remove generic HTTP cache/retry/rate-limit machinery that is no longer needed for custody.
+- [ ] Keep `RsyncSource` adapter-assisted for enumeration, scoped coverage, and absence evidence; reduce its transport layer to the smallest temporary-retrieval mechanism required by those semantics.
+- [ ] Replace `LocalSource` staging-copy custody with a narrow stable-read/import path that pins bytes directly into git-annex without making the adapter an authoritative writer.
+- [ ] Keep collection enumeration/provider semantics separate from byte custody; item retrieval should delegate to an appropriate source/provider acquisition boundary rather than recreate generic transport logic.
 
-Acceptance: production has one content backend, one tree identity mechanism, and no general workflow executor owned by Efloud.
+Acceptance: source-specific discovery and evidence remain in adapters, but generic content custody/retry/cache logistics are not reimplemented alongside git-annex.
+
+## 3. Delete generic derivation execution
+
+- [ ] Remove generic derived-task scheduling/execution from core planning and executor paths.
+- [ ] Retain only the semantic provenance representation needed to record consumer-supplied transformations and promoted outputs.
+- [ ] Delete derivation-only indexes/tests/contracts that no longer describe Efloud's repository role.
+
+Acceptance: Efloud records provenance for transformed data but no longer owns a general workflow executor.

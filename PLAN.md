@@ -32,7 +32,7 @@ Use real temporary repositories for integration tests and machine-readable outpu
 
 Exit: git-annex satisfies the content-custody contract and Git satisfies the filesystem-tree contract without leaking object paths or commit identity into semantic identity.
 
-## Milestone D — Cut content identity and repository persistence over
+## Milestone D — Cut content identity and repository persistence over **(substantially complete)**
 
 Redefine `ContentRef` to carry semantic content identity plus an opaque annex custody key. The custody key is persisted as infrastructure evidence, never as a filesystem path or dataset identity. Route Repository byte ingest/open/presence/verification through `ContentStore`, and route durable semantic records through `Catalog`.
 
@@ -44,10 +44,11 @@ Implementation sequence:
 5. remove remaining production assumptions that `content_objects.storage_key` is a filesystem locator;
 6. delete or rewrite tests that assert the removed filesystem CAS contract; replace them with semantic custody assertions;
 7. redesign repository maintenance around git-annex custody rather than scanning `objects/sha256` paths; **complete**.
+8. cut Repository semantic persistence over the narrow Catalog port; isolate materialization/custom-tree state behind a temporary legacy capability; **complete**.
 
 The cutover must preserve the transaction ordering: annex custody must be established before semantic catalog records can reference the content. A failed catalog write may leave unreferenced annex content, but must never create an authoritative reference to unavailable content.
 
-Exit: all new observations and repository content operations use annex-backed content refs; no production semantic query requires a custom CAS path; detached dataset identity remains independent of the annex key; maintenance audits and cleans through git-annex custody.
+Exit: all new observations and repository content operations use annex-backed content refs; no production semantic query requires a custom CAS path; detached dataset identity remains independent of the annex key; maintenance audits and cleans through git-annex custody; semantic Repository persistence depends only on Catalog.
 
 ## Milestone E — Delete replaced transfer/tree/derivation machinery
 

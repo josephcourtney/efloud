@@ -55,9 +55,145 @@
   ]
 
 # =================================== build ====================================
+[build-system]
   requires      = ["uv_build>=0.12.0,<0.13.0"]
   build-backend = "uv_build"
 [tool.uv]
 
   [tool.uv.sources]
     showcov = { git = "https://github.com/josephcourtney/showcov.git", rev = "main" }
+
+
+# ==================================== lint ====================================
+[tool.ruff]
+  extend         = "./ruff.default.toml"
+  extend-exclude = []
+
+  [tool.ruff.lint]
+
+    # disable autofix when linting
+    unfixable = [
+      # "F401", # delete unused imports
+      "F841", # remove assignment to unused variable
+    ]
+
+
+    extend-ignore = [
+      ## example:
+      # "PLC1901", # `{expression} != ""` can be simplified to `{expression}` as an empty string is falsey
+      #
+    ]
+    [tool.ruff.lint.extend-per-file-ignores]
+      # The public facade deliberately wraps private compatibility implementation
+      # objects until TODO 1 deletes the remaining alpha compatibility layer.
+      "src/efloud/api.py" = ["SLF001"]
+
+      # These two classes intentionally implement wide repository contracts. Splitting them solely to satisfy
+      # a method-count threshold would preserve the same interface while obscuring the cohesive abstraction.
+      "src/efloud/repository.py"      = ["PLR0904"]
+      "src/efloud/sqlite_metadata.py" = ["PLR0904"]
+
+
+# =================================== test ===================================
+[tool.pytest.ini_options]
+
+  minversion = "9.0"
+  testpaths = ["tests"]
+  python_files = ["test_*.py"]
+  addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--import-mode=importlib",
+    "--cov=.",
+    "--cov-branch",
+    "--cov-report=",
+    "--cov-context=test",
+    "--timeout-method=thread",
+    "--test-categories-enforcement=strict",
+    "--test-categories-distribution-enforcement=off",
+  ]
+  xfail_strict = true
+
+  # Keep default runs quiet; enable live logs only from specific just recipes.
+  log_cli             = false
+  log_cli_level       = "INFO"
+  log_cli_format      = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+  log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+  # Optional: avoid the progress UI style if you prefer classic dots / simpler output.
+  console_output_style = "progress"
+
+  norecursedirs = [
+    ".hypothesis",
+    ".git",
+    ".tox",
+    ".venv",
+    "dist",
+    "build",
+    ".pytest_cache",
+    ".eggs",
+    ".uv",
+    ".cache",
+  ]
+  asyncio_mode = "auto"
+
+  filterwarnings = [
+    "error::DeprecationWarning:showcov\\.",
+    "ignore::DeprecationWarning:pkg_resources",
+    "ignore::DeprecationWarning:distutils",
+    "ignore::UserWarning:hypothesis",
+    "ignore:`use_rich_markup=` will be deprecated.*:PendingDeprecationWarning:rich_click.*",
+  ]
+
+  markers = [
+    # Structural levels
+    "unit: Fast, isolated tests of individual functions/classes. No real I/O or global state.",
+    "component: Tests of a bounded context via public APIs with in-process fakes.",
+    "integration: Tests involving real external dependencies (DB, queues, containers, external services).",
+    "system: Full system / end-to-end tests treating the app as a black box.",
+    "contract: Service/API or data/schema contract tests.",
+
+    # Purpose markers
+    "acceptance: Requirement-driven system tests tied to user stories or acceptance criteria.",
+    "regression: Prevent re-introduction of known bugs or failures.",
+    "sanity: Narrow checks verifying specific bugfixes or features.",
+    "smoke: Fast, critical-path tests run before larger suites.",
+    "performance: Performance tests (latency, throughput, resource usage).",
+    "performance_regression: Tests comparing runtime metrics to stored baselines.",
+    "security: Security-focused tests.",
+    "fuzz: Fuzzing-style tests feeding malformed/randomized inputs.",
+    "chaos: Chaos/resilience tests injecting faults/disruptions.",
+    "privacy: Privacy-impact tests ensuring correct PII/data handling.",
+    "data_quality: Tests of data integrity, freshness, referential integrity, etc.",
+    "drift: Model/data drift detection tests (PSI, KS, etc.).",
+    "usability: Automated usability tests (accessibility, i18n).",
+    "synthetic_monitoring: Synthetic production probes.",
+
+    # Technique / infra
+    "snapshot: Snapshot-based tests.",
+    "property_based: Property-based tests (Hypothesis).",
+    "mutation: Mutation-testing related.",
+    "observability: Tests asserting presence/shape of logs/metrics/traces.",
+
+    # Operational/meta
+    "slow: Known slow tests.",
+    "flaky: Known flaky tests under triage.",
+    "legacy: Legacy tests awaiting refactor/removal.",
+    "experimental: Experimental tests or tooling not yet mandatory.",
+    "external_data: Tests requiring external vendor data (skip if vendor fixtures are absent).",
+
+    # Domain-specific
+    "db: Database behavior tests.",
+    "api: API-centric tests (HTTP/RPC).",
+    "ml: ML-related tests.",
+    "ui: UI-layer tests (web, CLI).",
+  ]
+
+
+# =================================== test:coverage ===================================
+[tool.coverage.run]
+  core     = "ctrace"
+  source   = ["efloud"]
+  branch   = true
+  parallel = true

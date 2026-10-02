@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -298,7 +299,8 @@ def _record_local(
         )
     finally:
         if acquisition.destination is not None:
-            acquisition.destination.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                acquisition.destination.unlink(missing_ok=True)
 
 def _safe_local_path(root: Path, relative_path: str) -> Path | None:
     relative = PurePosixPath(relative_path)

@@ -42,6 +42,9 @@ class _MemoryContentStore:
         self._content[key] = bytes(data)
         return key
 
+    def ingest_url(self, url: str) -> AnnexKey:
+        raise AssertionError(f"unexpected URL ingestion: {url}")
+
     def content_ref(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef:
         data = self._content[key]
         return ContentRef(

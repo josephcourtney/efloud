@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from efloud.fs import atomic_write_text, safe_json_dump
+from efloud.fs import atomic_write_bytes, atomic_write_text, safe_json_dump
 
 if TYPE_CHECKING:
     from efloud.transport.http import HttpCache
@@ -72,6 +72,24 @@ def dest_for_http_source(
     group = cache_group_name(url, cache_name)
     name = rel_dest_name(description, url, kind)
     return http_root / group / name
+
+
+async def fetch_to_file(cache: HttpCache, url: str, dest: Path, *, refresh: bool) -> HttpFetchResult:
+    """Temporary test shim; built-in HttpSource acquisition does not use this path."""
+    resp = await cache.get(url, refresh=refresh)
+    resp.raise_for_status()
+    body = resp.content
+    atomic_write_bytes(dest, body)
+    checksum = hashlib.sha256(body).hexdigest()
+    request_headers = dict(resp.request.headers) if resp.request is not None else {}
+    return HttpFetchResult(
+        status_code=resp.status_code,
+        headers=dict(resp.headers),
+        checksum=checksum,
+        size_bytes=len(body),
+        fetched_at=time.time(),
+        request_headers=request_headers,
+    )
 
 
 async def fetch_json_to_file(

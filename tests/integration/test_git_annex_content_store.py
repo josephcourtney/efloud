@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.medium,
+    pytest.mark.slow,
+    pytest.mark.timeout(120),
     pytest.mark.skipif(shutil.which("git-annex") is None, reason="git-annex is not installed"),
 ]
 

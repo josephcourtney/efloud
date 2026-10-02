@@ -216,6 +216,8 @@ class RepositoryWriter(
 
     def store_path_content(self, path: Path, *, media_type: str | None = None) -> ContentRef: ...
 
+    def store_url_content(self, url: str, *, media_type: str | None = None) -> ContentRef: ...
+
     def ingest_bytes(
         self,
         artifact_key: ArtifactKey | str,

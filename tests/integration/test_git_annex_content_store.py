@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 import shutil
 import threading
@@ -8,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from efloud import Engine, HttpSource, Repository
 from efloud.content.git_annex import GitAnnexContentStore
 from efloud.git_commands import run_git
 
@@ -162,6 +164,42 @@ def test_registered_url_reacquires_dropped_and_corrupt_content(tmp_path: Path) -
         assert store.content_ref(key) == identity
         with store.open(key) as stream:
             assert stream.read() == payload
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_builtin_http_source_acquires_directly_into_annex_custody(tmp_path: Path) -> None:
+    repository_root = tmp_path / "repository"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    payload = b"direct HTTP custody"
+    (source_dir / "payload.bin").write_bytes(payload)
+
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(source_dir))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}/payload.bin"
+        with Repository.create(repository_root) as repository:
+            run_git(
+                repository_root,
+                "config",
+                "annex.security.allowed-ip-addresses",
+                f"[127.0.0.1]:{port}",
+            )
+            result = asyncio.run(Engine(repository, [HttpSource(id="direct", url=url)]).sync())
+            assert result.ok
+            observation = repository.latest_observation("source:direct")
+            assert observation is not None
+            assert repository.verify_content(observation.content_id)
+            with repository.open_content(observation.content_id) as stream:
+                assert stream.read() == payload
+
+        assert not (repository_root / ".efloud-runtime" / "staging" / "http").exists()
     finally:
         server.shutdown()
         server.server_close()

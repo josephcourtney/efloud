@@ -5,13 +5,11 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from efloud.fs import atomic_write_text, safe_json_dump
+import httpx
 
-if TYPE_CHECKING:
-    from efloud.transport.http import HttpCache
+from efloud.fs import atomic_write_text, safe_json_dump
 
 
 @dataclass(frozen=True)
@@ -75,13 +73,13 @@ def dest_for_http_source(
 
 
 async def fetch_json_to_file(
-    cache: HttpCache,
+    client: httpx.AsyncClient,
     url: str,
     dest: Path,
     *,
-    refresh: bool,
+    headers: dict[str, str] | None = None,
 ) -> tuple[object, HttpFetchResult]:
-    resp = await cache.get(url, refresh=refresh)
+    resp = await client.get(url, headers=headers)
     resp.raise_for_status()
     data = resp.json()
     payload = safe_json_dump(data)

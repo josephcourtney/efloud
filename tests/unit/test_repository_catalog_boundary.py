@@ -29,6 +29,10 @@ class _UnusedContentStore:
         del data
         raise AssertionError
 
+    def ingest_url(self, url: str) -> AnnexKey:
+        del url
+        raise AssertionError
+
     def content_ref(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef:
         del key, media_type
         raise AssertionError

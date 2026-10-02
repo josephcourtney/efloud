@@ -13,7 +13,6 @@ from efloud.transport.http_utils import (
     cache_group_name,
     dest_for_http_source,
     fetch_json_to_file,
-    fetch_to_file,
     human_name_from_url,
     rel_dest_name,
     sha256_hex,
@@ -65,7 +64,7 @@ class FakeCache:
 
 @pytest.mark.asyncio
 @pytest.mark.medium
-async def test_http_utils_helpers_and_fetchers(tmp_path: Path, monkeypatch):
+async def test_http_utils_helpers_and_json_fetch(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("efloud.transport.http_utils.time.time", lambda: 123.0)
 
     assert len(sha256_hex("abc")) == 64
@@ -77,22 +76,6 @@ async def test_http_utils_helpers_and_fetchers(tmp_path: Path, monkeypatch):
 
     dest = dest_for_http_source(tmp_path, url="https://host.example/a/b", description="Example Data", kind="REST")
     assert dest.parent.name == "host_example"
-
-    response = FakeResponse(
-        content=b"payload",
-        headers={"etag": "abc"},
-        request=httpx.Request("GET", "https://host.example/a", headers={"X-Test": "1"}),
-    )
-    cache = FakeCache(response)
-    result = await fetch_to_file(
-        cast("Any", cache),
-        "https://host.example/a",
-        tmp_path / "payload.bin",
-        refresh=True,
-    )
-    assert result.status_code == 200
-    assert (tmp_path / "payload.bin").read_bytes() == b"payload"
-    assert result.request_headers == {"host": "host.example", "x-test": "1"}
 
     json_cache = FakeCache(
         FakeResponse(

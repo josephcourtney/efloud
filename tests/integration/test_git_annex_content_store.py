@@ -12,6 +12,7 @@ import pytest
 from efloud import Engine, HttpSource, Repository
 from efloud.content.git_annex import GitAnnexContentStore
 from efloud.git_commands import run_git
+from efloud.read_only_repository import ReadOnlyRepository
 
 if TYPE_CHECKING:
     from pathlib import Path

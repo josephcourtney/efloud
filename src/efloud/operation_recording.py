@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import time
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -233,12 +232,13 @@ def _record_local(
     operation_id: OperationId,
     acquisition: LocalAcquisition,
 ) -> RecordedOperation:
-    if acquisition.status == "failed" or acquisition.destination is None:
+    if acquisition.status == "failed":
         return RecordedOperation("failed", details={"error": acquisition.error or "Local acquisition failed"})
-    destination = acquisition.destination
+
     source_path = Path(source.path)
+    content_path = acquisition.destination or source_path
     try:
-        content = repository.store_path_content(destination, media_type=acquisition.media_type)
+        content = repository.store_path_content(content_path, media_type=acquisition.media_type)
         validation_batch = validation.validate_content(
             content,
             name=source_path.name,
@@ -297,9 +297,8 @@ def _record_local(
             },
         )
     finally:
-        with contextlib.suppress(OSError):
-            destination.unlink()
-
+        if acquisition.destination is not None:
+            acquisition.destination.unlink(missing_ok=True)
 
 def _safe_local_path(root: Path, relative_path: str) -> Path | None:
     relative = PurePosixPath(relative_path)

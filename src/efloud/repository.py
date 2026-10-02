@@ -297,6 +297,14 @@ class Repository:
         self.catalog.record_content(content)
         return content
 
+    def store_url_content(self, url: str, *, media_type: str | None = None) -> ContentRef:
+        """Acquire one byte-preserving URL directly into custody without creating an observation."""
+        self._writer_lease.require_active()
+        key = self.content_store.ingest_url(url)
+        content = self._content_ref_for_key(key, media_type=media_type)
+        self.catalog.record_content(content)
+        return content
+
     def ingest_bytes(
         self,
         artifact_key: ArtifactKey | str,

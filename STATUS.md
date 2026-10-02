@@ -17,12 +17,12 @@ Milestone E of the experimental clean-break rewrite: delete generic acquisition/
 ## Verified evidence
 
 - macOS arm64 local environment: Git 2.56.0 and git-annex 10.20260901.
-- Real git-annex integration tests pass for content-key calculation/ingest, deduplication, presence, read, verification, URL registration, drop, and key-level reacquisition.
+- Real git-annex integration tests pass for content-key calculation/ingest, deduplication, presence, read, verification, URL registration, drop, key-level reacquisition, direct byte-preserving HTTP custody, and stable local-file custody.
 - Real Git integration tests pass for canonical tree identity, nested/unusual portable paths, modes/symlinks, exact blob reads, changed-tree identity, retained linear commit history, and tree survival after explicit Git garbage collection.
 - Repository-location-independent `DatasetId` behavior is covered and passes.
 - Phase A semantic characterization is complete, including explicit multi-source evidence and export-layout-independent dataset identity tests.
 - The internal `Catalog` boundary excludes physical tree/materialization state and has a pure `MemoryCatalog` semantic fake.
-- Exact clean branch commit `1f31b67d1a9247697e0877f806ca22a4c91d42ae` passed `just check` locally: syntax, format, lint, type checking, import contracts, full tests, and coverage.
+- The LocalSource direct-custody tranche passed the full local `just check` gate on 2026-10-02.
 
 ## Decisions under test
 
@@ -45,17 +45,19 @@ Milestone E of the experimental clean-break rewrite: delete generic acquisition/
 - Read-only repositories decode the same Git tree projection without mutating repository state.
 - Clean schema version 4 removes `tree_snapshots` and `tree_entries`; `source_snapshots.tree_id` records the Git tree identity directly.
 - Maintenance validates referenced Git tree projections instead of recomputing the deleted custom Efloud tree hash.
-- The unreachable SQLite `record_tree()` / `tree_entries()` implementation and obsolete `TreeEntry` import have now been physically deleted; this post-verification cleanup still needs a local quality-gate run.
-- Acquisition classification for the next cut is explicit: byte-preserving HTTP is a git-annex-native candidate; REST normalization, rsync enumeration/scope/absence, local stable-read pinning, and collection/provider behavior remain adapter-assisted semantic boundaries rather than generic custody implementations.
+- Byte-preserving built-in `HttpSource` acquisition now delegates URL custody directly to git-annex; no HTTP staging copy is retained.
+- Built-in `LocalSource` no longer creates a runtime staging copy. `GitAnnexContentStore.ingest_path()` first snapshots caller-owned bytes into Efloud-controlled temporary storage, derives the key from that exact snapshot, and transfers those bytes into annex custody.
+- `RestSource` remains adapter-assisted because canonical JSON normalization is source interpretation rather than byte custody.
+- The generic `fetch_to_file` helper is no longer used by production acquisition; only an obsolete combined transport unit-test branch still references it.
 
 ## Immediate gaps
 
-- Locally verify the post-cutover SQLite cleanup.
+- Delete the obsolete `fetch_to_file` helper together with its unit-test branch without disturbing the rsync coverage currently colocated in that test module.
 - Finish git-annex interruption/retry behavior proof.
-- Cut byte-preserving HTTP acquisition to the annex URL/key boundary and delete redundant HTTP cache/retry/custody machinery.
-- Reduce rsync/local/collection acquisition to the smallest adapter-assisted retrieval semantics that git-annex cannot replace.
+- Reduce REST HTTP runtime support to what canonical JSON acquisition actually requires.
+- Reduce rsync/collection acquisition to the smallest adapter-assisted retrieval semantics that git-annex cannot replace.
 - Remove generic derivation execution from core while preserving the minimal derived-artifact provenance model.
 
 ## Resume point
 
-Run the local gate for the SQLite cleanup. Then start the acquisition/runtime tranche with byte-preserving `HttpSource`, because it is the clearest source whose byte custody can move directly to git-annex without changing source interpretation semantics.
+Delete the obsolete generic HTTP byte-fetch test/helper pair, then audit the remaining HTTP cache/retry/rate-limit machinery against the narrower `RestSource` requirement.

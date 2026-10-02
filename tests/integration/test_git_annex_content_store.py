@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from efloud import Engine, HttpSource, Repository
+from efloud import Engine, HttpSource, LocalSource, Repository
 from efloud.content.git_annex import GitAnnexContentStore
 from efloud.git_commands import run_git
 from efloud.read_only_repository import ReadOnlyRepository
@@ -207,3 +207,53 @@ def test_builtin_http_source_acquires_directly_into_annex_custody(tmp_path: Path
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_annex_ingest_path_keys_the_stable_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"before mutation")
+    store = GitAnnexContentStore.initialize(repository)
+    original_calculate_key = GitAnnexContentStore.calculate_key
+    calculated_paths: list[Path] = []
+
+    def calculate_key(self: GitAnnexContentStore, path: Path):
+        resolved = path.resolve()
+        calculated_paths.append(resolved)
+        if resolved == source.resolve():
+            source.write_bytes(b"after mutation")
+        return original_calculate_key(self, path)
+
+    monkeypatch.setattr(GitAnnexContentStore, "calculate_key", calculate_key)
+
+    key = store.ingest_path(source)
+
+    assert source.resolve() not in calculated_paths
+    assert source.read_bytes() == b"before mutation"
+    assert store.verify(key)
+    with store.open(key) as stream:
+        assert stream.read() == b"before mutation"
+
+
+def test_builtin_local_source_imports_without_staging_copy(tmp_path: Path) -> None:
+    repository_root = tmp_path / "repository"
+    source = tmp_path / "source.bin"
+    payload = b"direct local custody"
+    source.write_bytes(payload)
+
+    with Repository.create(repository_root) as repository:
+        result = asyncio.run(Engine(repository, [LocalSource(id="local", path=source)]).sync())
+        assert result.ok
+
+    with ReadOnlyRepository(repository_root) as repository:
+        observation = repository.latest_observation("source:local")
+        assert observation is not None
+        assert repository.verify_content(observation.content_id)
+        with repository.open_content(observation.content_id) as stream:
+            assert stream.read() == payload
+
+    assert source.read_bytes() == payload
+    assert not (repository_root / ".efloud-runtime" / "staging" / "local").exists()

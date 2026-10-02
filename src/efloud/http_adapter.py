@@ -16,13 +16,7 @@ from efloud.adapters import (
 )
 from efloud.sources import HttpSource, RestSource
 from efloud.transport.http import HttpCache, HttpCacheConfig
-from efloud.transport.http_utils import (
-    HttpFetchResult,
-    cache_group_name,
-    dest_for_http_source,
-    fetch_json_to_file,
-    fetch_to_file,
-)
+from efloud.transport.http_utils import cache_group_name, dest_for_http_source, fetch_json_to_file
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -49,7 +43,7 @@ def _source(
     return source
 
 
-def _http_cache(context: AdapterExecutionContext, source: HttpSource | RestSource) -> HttpCache:
+def _http_cache(context: AdapterExecutionContext, source: RestSource) -> HttpCache:
     runtime = context.runtime
     runtime.http_cache_root.mkdir(parents=True, exist_ok=True)
     runtime.rate_limits_root.mkdir(parents=True, exist_ok=True)
@@ -70,19 +64,6 @@ def _http_cache(context: AdapterExecutionContext, source: HttpSource | RestSourc
             retry_wait_max=30.0,
         )
     )
-
-
-async def _fetch_http_result(
-    cache: HttpCache,
-    source: HttpSource | RestSource,
-    destination: Path,
-    *,
-    refresh: bool,
-) -> tuple[HttpFetchResult, str | None]:
-    if isinstance(source, RestSource):
-        _, result = await fetch_json_to_file(cache, source.url, destination, refresh=refresh)
-        return result, "application/json"
-    return await fetch_to_file(cache, source.url, destination, refresh=refresh), None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +94,7 @@ class HttpSourceAdapter:
         cache = _http_cache(context, source)
         refresh = context.operation.refresh.refresh if context.operation.refresh is not None else False
         try:
-            result, media_type = await _fetch_http_result(cache, source, destination, refresh=refresh)
+            _, result = await fetch_json_to_file(cache, source.url, destination, refresh=refresh)
         except (OSError, httpx.HTTPError, TypeError, ValueError) as exc:
             return HttpAcquisition(
                 source_id=source.id,
@@ -141,7 +122,7 @@ class HttpSourceAdapter:
             checksum=result.checksum,
             size_bytes=result.size_bytes,
             request_headers=request_headers,
-            media_type=media_type,
+            media_type="application/json",
             expected_integrity=source.expected_integrity,
         )
 

@@ -193,6 +193,8 @@ def test_builtin_http_source_acquires_directly_into_annex_custody(tmp_path: Path
             )
             result = asyncio.run(Engine(repository, [HttpSource(id="direct", url=url)]).sync())
             assert result.ok
+
+        with ReadOnlyRepository(repository_root) as repository:
             observation = repository.latest_observation("source:direct")
             assert observation is not None
             assert repository.verify_content(observation.content_id)

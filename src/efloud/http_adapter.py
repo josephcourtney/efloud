@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -15,17 +14,10 @@ from efloud.adapters import (
     SourceAdapter,
 )
 from efloud.sources import HttpSource, RestSource
-from efloud.transport.http import HttpCache, HttpCacheConfig
-from efloud.transport.http_utils import cache_group_name, dest_for_http_source, fetch_json_to_file
+from efloud.transport.http_utils import dest_for_http_source, fetch_json_to_file
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from efloud.json_types import JsonObject
-
-
-def _sqlite_url(path: Path) -> str:
-    return f"sqlite:///{path.resolve().as_posix()}"
 
 
 def _source(
@@ -41,29 +33,6 @@ def _source(
         msg = f"Adapter {descriptor.adapter_id!r} cannot acquire {type(source).__name__}."
         raise TypeError(msg)
     return source
-
-
-def _http_cache(context: AdapterExecutionContext, source: RestSource) -> HttpCache:
-    runtime = context.runtime
-    runtime.http_cache_root.mkdir(parents=True, exist_ok=True)
-    runtime.rate_limits_root.mkdir(parents=True, exist_ok=True)
-    group = cache_group_name(source.url, source.cache_name)
-    return HttpCache(
-        HttpCacheConfig(
-            name=group,
-            ttl_seconds=300,
-            timeout=60.0,
-            cache_db_path=str(runtime.http_cache_root / f"{group}.db"),
-            enable_cache=True,
-            rate_limit_storage=_sqlite_url(runtime.rate_limits_root / "rate_limits.sqlite"),
-            rate_limit_scope=None,
-            raise_on_rate_limit=False,
-            retries=5,
-            retry_wait_multiplier=1.0,
-            retry_wait_min=1.0,
-            retry_wait_max=30.0,
-        )
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,10 +60,11 @@ class HttpSourceAdapter:
             kind="REST",
             cache_name=source.cache_name,
         )
-        cache = _http_cache(context, source)
         refresh = context.operation.refresh.refresh if context.operation.refresh is not None else False
+        headers = {"Cache-Control": "no-cache"} if refresh else None
         try:
-            _, result = await fetch_json_to_file(cache, source.url, destination, refresh=refresh)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                _, result = await fetch_json_to_file(client, source.url, destination, headers=headers)
         except (OSError, httpx.HTTPError, TypeError, ValueError) as exc:
             return HttpAcquisition(
                 source_id=source.id,
@@ -105,20 +75,17 @@ class HttpSourceAdapter:
                 expected_integrity=source.expected_integrity,
                 error=f"{type(exc).__name__}: {exc}",
             )
-        finally:
-            with contextlib.suppress(OSError, RuntimeError):
-                await cache.aclose()
 
         request_headers: JsonObject = {str(key): str(value) for key, value in result.request_headers.items()}
-        headers = result.headers or {}
+        response_headers = result.headers or {}
         return HttpAcquisition(
             source_id=source.id,
             status="succeeded",
             destination=destination,
             observed_at=result.fetched_at,
             status_code=result.status_code,
-            etag=headers.get("etag"),
-            last_modified=headers.get("last-modified"),
+            etag=response_headers.get("etag"),
+            last_modified=response_headers.get("last-modified"),
             checksum=result.checksum,
             size_bytes=result.size_bytes,
             request_headers=request_headers,

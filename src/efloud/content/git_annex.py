@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -14,6 +15,7 @@ from efloud.repository_models import ContentId, ContentRef
 
 if TYPE_CHECKING:
     import subprocess
+    from collections.abc import Mapping
     from typing import BinaryIO
 
 _DEFAULT_BACKEND = "SHA256"
@@ -46,9 +48,10 @@ def _run(
     root: Path,
     *args: str,
     check: bool = True,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        return run_git(root, *args, check=check)
+        return run_git(root, *args, check=check, env=env)
     except GitUnavailableError as error:
         raise GitAnnexUnavailableError(str(error)) from error
     except GitCommandError as error:
@@ -66,6 +69,13 @@ def _require_regular_file(path: Path) -> Path:
         msg = f"Content input must be a regular file: {resolved}"
         raise ValueError(msg)
     return resolved
+
+
+def _require_url(url: str) -> str:
+    if not url or any(char.isspace() for char in url):
+        msg = "git-annex source URLs must be non-empty and contain no whitespace"
+        raise ValueError(msg)
+    return url
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +221,54 @@ class GitAnnexContentStore:
         finally:
             staged.unlink(missing_ok=True)
 
+    def ingest_url(self, url: str) -> AnnexKey:
+        """Download one byte-preserving URL directly into annex custody."""
+        source_url = _require_url(url)
+        fd, target_name = tempfile.mkstemp(prefix="efloud-url-", dir=self.root)
+        os.close(fd)
+        target = Path(target_name)
+        target.unlink()
+        relative_target = target.relative_to(self.root).as_posix()
+
+        index_fd, index_name = tempfile.mkstemp(prefix=".efloud-url-index-", dir=self.root)
+        os.close(index_fd)
+        index_path = Path(index_name)
+        index_path.unlink()
+        environment = {"GIT_INDEX_FILE": index_path.as_posix()}
+        try:
+            completed = _run(
+                self.root,
+                "annex",
+                "addurl",
+                "--json",
+                f"--backend={self.backend}",
+                "--no-check-gitignore",
+                f"--file={relative_target}",
+                source_url,
+                env=environment,
+            )
+            key_value: str | None = None
+            for line in completed.stdout.splitlines():
+                if not line.strip():
+                    continue
+                decoded = json.loads(line)
+                if not isinstance(decoded, dict):
+                    continue
+                candidate = decoded.get("key")
+                if decoded.get("success") is True and isinstance(candidate, str) and candidate:
+                    key_value = candidate
+            if key_value is None:
+                msg = "git-annex addurl succeeded without reporting a content key"
+                raise GitAnnexError(msg)
+            key = AnnexKey(key_value)
+            if not self.has_content(key):
+                msg = f"git-annex did not retain URL content for {key}"
+                raise GitAnnexError(msg)
+            return key
+        finally:
+            target.unlink(missing_ok=True)
+            index_path.unlink(missing_ok=True)
+
     def _content_location(self, key: AnnexKey) -> Path | None:
         """Resolve an annex object path without consulting mutable annex state."""
         completed = _run(
@@ -265,10 +323,7 @@ class GitAnnexContentStore:
 
     def register_url(self, key: AnnexKey, url: str) -> None:
         """Register an external URL as a source from which git-annex may retrieve a key."""
-        if not url or any(char.isspace() for char in url):
-            msg = "git-annex source URLs must be non-empty and contain no whitespace"
-            raise ValueError(msg)
-        _run(self.root, "annex", "registerurl", str(key), url)
+        _run(self.root, "annex", "registerurl", str(key), _require_url(url))
 
     def get(self, key: AnnexKey) -> None:
         """Reacquire a key through git-annex's configured remotes or registered URLs."""

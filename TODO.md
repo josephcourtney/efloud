@@ -15,7 +15,6 @@ Acceptance: the remaining Git/git-annex behaviors required by Efloud are proven 
 - [ ] Remove the obsolete `fetch_to_file` helper and its unit-test branch now that built-in `HttpSource` no longer uses generic HTTP file transport.
 - [ ] Keep `RestSource` adapter-assisted where canonical JSON normalization is part of the declared source semantics; remove generic HTTP cache/retry/rate-limit machinery that is no longer needed for custody.
 - [ ] Keep `RsyncSource` adapter-assisted for enumeration, scoped coverage, and absence evidence; reduce its transport layer to the smallest temporary-retrieval mechanism required by those semantics.
-- [ ] Replace `LocalSource` staging-copy custody with a narrow stable-read/import path that pins bytes directly into git-annex without making the adapter an authoritative writer. The custody primitive must itself guarantee that the key describes the bytes copied even if the caller-owned file changes during import.
 - [ ] Keep collection enumeration/provider semantics separate from byte custody; item retrieval should delegate to an appropriate source/provider acquisition boundary rather than recreate generic transport logic.
 
 Acceptance: source-specific discovery and evidence remain in adapters, but generic content custody/retry/cache logistics are not reimplemented alongside git-annex.

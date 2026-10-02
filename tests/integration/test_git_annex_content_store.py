@@ -62,6 +62,41 @@ def test_annex_ingest_bytes_deduplicates(tmp_path: Path) -> None:
     assert store.verify(first_key)
 
 
+def test_annex_ingest_url_keeps_only_annex_custody(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    payload = b"native url acquisition"
+    source = source_dir / "payload.bin"
+    source.write_bytes(payload)
+
+    store = GitAnnexContentStore.initialize(repository)
+    handler = functools.partial(SimpleHTTPRequestHandler, directory=str(source_dir))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        run_git(
+            repository,
+            "config",
+            "annex.security.allowed-ip-addresses",
+            f"[127.0.0.1]:{port}",
+        )
+        key = store.ingest_url(f"http://127.0.0.1:{port}/payload.bin")
+        assert str(key).startswith("SHA256-")
+        assert store.has_content(key)
+        assert store.verify(key)
+        with store.open(key) as stream:
+            assert stream.read() == payload
+        assert not any(path.name.startswith("efloud-url-") for path in repository.iterdir())
+        assert not any(path.name.startswith(".efloud-url-index-") for path in repository.iterdir())
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_repository_content_reference_survives_reopen(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     store = GitAnnexContentStore.open_or_initialize(root)

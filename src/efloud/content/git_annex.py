@@ -183,23 +183,23 @@ class GitAnnexContentStore:
         return AnnexKey(value)
 
     def ingest_path(self, path: Path) -> AnnexKey:
-        """Copy caller-owned bytes into git-annex without a persistent second store."""
+        """Snapshot caller-owned bytes, then derive identity from that exact snapshot."""
         source = _require_regular_file(path)
-        key = self.calculate_key(source)
-        if self.has_content(key):
-            return key
         fd, tmp_name = tempfile.mkstemp(prefix=".efloud-annex-", dir=self.root)
         os.close(fd)
         staged = Path(tmp_name)
         try:
             shutil.copyfile(source, staged)
+            key = self.calculate_key(staged)
+            if self.has_content(key):
+                return key
             _run(self.root, "annex", "setkey", str(key), staged.as_posix())
+            if not self.has_content(key):
+                msg = f"git-annex did not retain ingested content for {key}"
+                raise GitAnnexError(msg)
+            return key
         finally:
             staged.unlink(missing_ok=True)
-        if not self.has_content(key):
-            msg = f"git-annex did not retain ingested content for {key}"
-            raise GitAnnexError(msg)
-        return key
 
     def ingest_bytes(self, data: bytes) -> AnnexKey:
         """Write transient bytes once, then transfer their custody to git-annex."""

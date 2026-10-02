@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
+from urllib.parse import urlparse
 
 from efloud.adapters import (
     CollectionAcquisition,
@@ -76,12 +77,19 @@ def _record_http(
     operation_id: OperationId,
     acquisition: HttpAcquisition,
 ) -> RecordedOperation:
-    if acquisition.status == "failed" or acquisition.destination is None:
+    if acquisition.status == "failed":
         return RecordedOperation("failed", details={"error": acquisition.error or "HTTP acquisition failed"})
-    content = repository.store_path_content(acquisition.destination, media_type=acquisition.media_type)
+    if acquisition.destination is None:
+        if isinstance(source, RestSource):
+            return RecordedOperation("failed", details={"error": "REST acquisition produced no canonicalized payload"})
+        content = repository.store_url_content(source.url, media_type=acquisition.media_type)
+        validation_name = Path(urlparse(source.url).path).name or source.id
+    else:
+        content = repository.store_path_content(acquisition.destination, media_type=acquisition.media_type)
+        validation_name = acquisition.destination.name
     validation_batch = validation.validate_content(
         content,
-        name=acquisition.destination.name,
+        name=validation_name,
         expectations=_http_integrity_expectations(source, acquisition),
         checked_at=acquisition.observed_at,
     )
@@ -104,20 +112,34 @@ def _record_http(
         metadata["status_code"] = acquisition.status_code
     if acquisition.checksum is not None:
         metadata["transport_checksum"] = acquisition.checksum
-    observation = repository.observe_content(
-        f"source:{source.id}",
-        content.content_id,
-        run_id=run_id,
-        operation_id=operation_id,
-        source_id=source.id,
-        observed_at=acquisition.observed_at,
-        upstream_locator=source.url,
-        upstream_modified_at=_http_modified_timestamp(acquisition.last_modified),
-        upstream_version=acquisition.etag,
-        metadata=metadata,
-        materialization_kind="http",
-        materialization_path=acquisition.destination,
-    )
+    if acquisition.destination is None:
+        observation = repository.observe_content(
+            f"source:{source.id}",
+            content.content_id,
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=source.id,
+            observed_at=acquisition.observed_at,
+            upstream_locator=source.url,
+            upstream_modified_at=_http_modified_timestamp(acquisition.last_modified),
+            upstream_version=acquisition.etag,
+            metadata=metadata,
+        )
+    else:
+        observation = repository.observe_content(
+            f"source:{source.id}",
+            content.content_id,
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=source.id,
+            observed_at=acquisition.observed_at,
+            upstream_locator=source.url,
+            upstream_modified_at=_http_modified_timestamp(acquisition.last_modified),
+            upstream_version=acquisition.etag,
+            metadata=metadata,
+            materialization_kind="http",
+            materialization_path=acquisition.destination,
+        )
     evidence: JsonObject = {"adapter": operation.producer.to_dict(), "validation": validation_payload}
     if acquisition.status_code is not None:
         evidence["status_code"] = acquisition.status_code

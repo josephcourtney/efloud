@@ -103,22 +103,30 @@ def _observe_http_content(
     content: ContentRef,
     metadata: JsonObject,
 ) -> ArtifactObservation:
-    common = {
-        "run_id": run_id,
-        "operation_id": operation_id,
-        "source_id": source.id,
-        "observed_at": acquisition.observed_at,
-        "upstream_locator": source.url,
-        "upstream_modified_at": _http_modified_timestamp(acquisition.last_modified),
-        "upstream_version": acquisition.etag,
-        "metadata": metadata,
-    }
     if acquisition.destination is None:
-        return repository.observe_content(f"source:{source.id}", content.content_id, **common)
+        return repository.observe_content(
+            f"source:{source.id}",
+            content.content_id,
+            run_id=run_id,
+            operation_id=operation_id,
+            source_id=source.id,
+            observed_at=acquisition.observed_at,
+            upstream_locator=source.url,
+            upstream_modified_at=_http_modified_timestamp(acquisition.last_modified),
+            upstream_version=acquisition.etag,
+            metadata=metadata,
+        )
     return repository.observe_content(
         f"source:{source.id}",
         content.content_id,
-        **common,
+        run_id=run_id,
+        operation_id=operation_id,
+        source_id=source.id,
+        observed_at=acquisition.observed_at,
+        upstream_locator=source.url,
+        upstream_modified_at=_http_modified_timestamp(acquisition.last_modified),
+        upstream_version=acquisition.etag,
+        metadata=metadata,
         materialization_kind="http",
         materialization_path=acquisition.destination,
     )

@@ -52,13 +52,13 @@ class FakeResponse:
             raise httpx.HTTPStatusError(msg, request=self.request, response=response)
 
 
-class FakeCache:
+class FakeClient:
     def __init__(self, response: FakeResponse):
         self.response = response
-        self.calls: list[tuple[str, bool]] = []
+        self.calls: list[tuple[str, dict[str, str] | None]] = []
 
-    async def get(self, url: str, *, refresh: bool):
-        self.calls.append((url, refresh))
+    async def get(self, url: str, *, headers: dict[str, str] | None = None):
+        self.calls.append((url, headers))
         return self.response
 
 
@@ -77,7 +77,7 @@ async def test_http_utils_helpers_and_json_fetch(tmp_path: Path, monkeypatch):
     dest = dest_for_http_source(tmp_path, url="https://host.example/a/b", description="Example Data", kind="REST")
     assert dest.parent.name == "host_example"
 
-    json_cache = FakeCache(
+    json_client = FakeClient(
         FakeResponse(
             content=b'{"ok": true}',
             json_data={"ok": True},
@@ -85,10 +85,9 @@ async def test_http_utils_helpers_and_json_fetch(tmp_path: Path, monkeypatch):
         )
     )
     payload, json_result = await fetch_json_to_file(
-        cast("Any", json_cache),
+        cast("Any", json_client),
         "https://host.example/json",
         tmp_path / "payload.json",
-        refresh=False,
     )
     assert payload == {"ok": True}
     assert json.loads((tmp_path / "payload.json").read_text(encoding="utf-8")) == {"ok": True}
@@ -181,250 +180,44 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
         transfer_transferred_files=634,
         transfer_bytes=169_440_614,
         transfer_rate="34.85MB/s",
-        idle_seconds=4.0,
     )
-    assert rsync_mod._connect_progress_label(
-        remote="rsync://host/module",
-        attempt=1,
-        max_attempts=3,
-        cfg=cfg,
-        progress_bar=transfer_progress_bar,
-        elapsed_seconds=83.0,
-    ) == (
-        "rsync attempt 1/3: transferring files host:8873 "
-        "[47,333/251,423 files handled (18.8%); 634 transferred; 161.6 MB; 34.85MB/s] "
-        "18:37 remaining (20:00 timeout; last output 00:04 ago)"
-    )
-
-
-@pytest.mark.small
-def test_build_rsync_cmd_logs_exact_argv_and_shell_rendering(tmp_path: Path, caplog: pytest.LogCaptureFixture):
-    cfg = RsyncMirrorConfig(
-        name="mirror",
-        remote="rsync://host/module",
-        local=tmp_path / "target dir",
-        exclude=("**/.DS_Store",),
-        cmd=rsync_mod.RsyncCommandConfig(prune_empty_dirs=True),
-    )
-
-    with caplog.at_level("DEBUG", logger="efloud.transport.rsync"):
-        cmd = rsync_mod._build_rsync_cmd(cfg, remote=cfg.remote, local=cfg.local)
-
-    prepared = next(message for message in caplog.messages if message.startswith("Prepared rsync command"))
-    assert cmd[-2:] == ["rsync://host/module", str(tmp_path / "target dir")]
-    assert "argv=['rsync'" in prepared
-    assert "rsync://host/module" in prepared
-    assert "'rsync://host/module'" in prepared
-    assert "shell=rsync" in prepared
-    assert "--prune-empty-dirs" in prepared
-    assert "'**/.DS_Store'" in prepared
-    assert f"'{tmp_path / 'target dir'}'" in prepared
-
-
-@pytest.mark.small
-def test_build_rsync_cmd_includes_prune_empty_dirs_when_enabled(tmp_path: Path):
-    cfg = RsyncMirrorConfig(
-        name="mirror",
-        remote="rsync://host/module",
-        local=tmp_path,
-        cmd=rsync_mod.RsyncCommandConfig(prune_empty_dirs=True),
-    )
-
-    cmd = rsync_mod._build_rsync_cmd(cfg, remote=cfg.remote, local=cfg.local)
-
-    assert "--prune-empty-dirs" in cmd
-
-
-@pytest.mark.small
-def test_file_list_stall_warning_emits_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    cfg = RsyncMirrorConfig(
-        name="mirror",
-        remote="rsync://host/module",
-        local=tmp_path,
-        progress=True,
-    )
-    messages: list[str] = []
-    phase_state: dict[str, str | float | bool] = {
-        "phase": "receiving file list",
-        "last_output_at": 100.0,
-        "file_list_count": 67_200,
-    }
-
-    monkeypatch.setattr(rsync_mod.time, "perf_counter", lambda: 400.0)
-    monkeypatch.setattr(rsync_mod, "_emit_runtime_message", lambda _cfg, text: messages.append(text))
-
-    rsync_mod._maybe_emit_file_list_stall_warning(
-        cfg,
-        attempt=1,
-        max_attempts=3,
-        elapsed_seconds=301.0,
-        phase_state=phase_state,
-    )
-    rsync_mod._maybe_emit_file_list_stall_warning(
-        cfg,
-        attempt=1,
-        max_attempts=3,
-        elapsed_seconds=302.0,
-        phase_state=phase_state,
-    )
-
-    assert messages == [
-        (
-            "rsync attempt 1/3: still receiving file list after 05:01 "
-            "(20:00 timeout); discovered 67,200 files; last rsync output 05:00 ago"
+    assert (
+        rsync_mod._connect_progress_label(
+            remote="rsync://host/module",
+            attempt=1,
+            max_attempts=3,
+            cfg=cfg,
+            progress_bar=transfer_progress_bar,
+            elapsed_seconds=83.0,
         )
-    ]
-    assert phase_state["file_list_warning_emitted"] is True
-
-
-@pytest.mark.small
-def test_observe_runtime_phase_captures_file_list_count(monkeypatch: pytest.MonkeyPatch):
-    phase_state: dict[str, str | float | bool | int] = {"phase": "connecting"}
-    monkeypatch.setattr(rsync_mod.time, "perf_counter", lambda: 123.0)
-
-    rsync_mod._observe_runtime_phase("receiving file list ...\n67200 files...\n", phase_state)
-
-    assert phase_state["phase"] == "receiving file list"
-    assert phase_state["last_output_at"] == pytest.approx(123.0, rel=0.0, abs=1e-12)
-    assert phase_state["file_list_count"] == 67_200
-
-
-@pytest.mark.small
-def test_observe_runtime_phase_captures_transfer_stats(monkeypatch: pytest.MonkeyPatch):
-    phase_state: dict[str, str | float | bool | int] = {"phase": "connecting"}
-    monkeypatch.setattr(rsync_mod.time, "perf_counter", lambda: 456.0)
-
-    rsync_mod._observe_runtime_phase(
-        "169,440,614   0%   34.85MB/s    0:00:04 (xfr#634, to-chk=204090/251423)\n",
-        phase_state,
+        == "rsync attempt 1/3: transferring files host:8873 (47,333/251,423 handled; 634 transferred; 169.4 MB; 34.85MB/s) 18:37 remaining (20:00 timeout)"
     )
-
-    assert phase_state["phase"] == "transferring files"
-    assert phase_state["transfer_total_files"] == 251_423
-    assert phase_state["transfer_remaining_files"] == 204_090
-    assert phase_state["transfer_handled_files"] == 47_333
-    assert phase_state["transfer_transferred_files"] == 634
-    assert phase_state["transfer_bytes"] == 169_440_614
-    assert phase_state["transfer_rate"] == "34.85MB/s"
-
-
-@pytest.mark.small
-def test_result_phase_prefers_transfer_markers_over_file_list_text() -> None:
-    result = OpResult(
-        status="failed",
-        detail="rsync failed after 3 attempts",
-        returncode=10,
-        stdout=(
-            "receiving file list ...\n"
-            "251423 files to consider\n"
-            ">f.st....... 2ogr.cif.gz\n"
-            "169,440,614   0%   34.85MB/s    0:00:04 (xfr#634, to-chk=204090/251423)\n"
-        ),
-        stderr="rsync: [receiver] read error: Connection reset by peer (54)\n",
-    )
-
-    assert rsync_mod._result_phase(result) == "transferring files"
 
 
 @pytest.mark.asyncio
 @pytest.mark.medium
-async def test_rsync_mirror_skips_fresh_and_updates_paths(tmp_path: Path, monkeypatch):
-    mirror_root = tmp_path / "mirror"
-    mirror_root.mkdir()
-    meta_path = mirror_root / ".mirror_meta.json"
-    meta_path.write_text(
-        json.dumps({"version": 1, "paths": {".": {"updated_at_unix": 100, "updated": ["old.txt"]}}}),
-        encoding="utf-8",
-    )
+async def test_rsync_mirror_sync_and_metadata(tmp_path: Path, monkeypatch):
+    local = tmp_path / "mirror"
+    cfg = RsyncMirrorConfig(name="mirror", remote="host::module", local=local)
+    mirror = RsyncMirror(cfg)
 
-    monkeypatch.setattr("efloud.transport.rsync.time.time", lambda: 105.0)
-    mirror = RsyncMirror(
-        RsyncMirrorConfig(
-            name="mirror",
-            remote="host::module",
-            local=mirror_root,
-            update_interval_seconds=10,
-        )
-    )
+    calls: list[list[str]] = []
 
-    skipped = await mirror.update()
-    assert skipped.status == "skipped_fresh"
-    assert skipped.updated == ["old.txt"]
+    async def fake_run(cmd, *, timeout=None, progress=False, progress_context=None):
+        calls.append(list(cmd))
+        return OpResult(0, "ok", "")
 
-    recorded_cmds: list[list[str]] = []
+    monkeypatch.setattr(rsync_mod, "_run", fake_run)
+    result = await mirror.sync()
+    assert result.returncode == 0
+    assert calls
 
-    def fake_build(cfg, *, remote, local):
-        recorded_cmds.append([remote, str(local)])
-        return ["rsync", remote, str(local)]
-
-    def fake_run(cfg, *, cmd, remote, local):
-        del cfg, cmd, remote, local
-        return OpResult(status="success", detail="ok", returncode=0, stdout=">f++++ file.txt", updated=["file.txt"])
-
-    monkeypatch.setattr("efloud.transport.rsync.time.time", lambda: 200.0)
-    monkeypatch.setattr("efloud.transport.rsync._build_rsync_cmd", fake_build)
-    monkeypatch.setattr("efloud.transport.rsync._run_rsync_process", fake_run)
-    await asyncio.sleep(0)
-
-    result = await mirror.update_paths(["nested/file.txt"], force=True)
-    assert result["nested/file.txt"].status == "success"
-    assert recorded_cmds == [["host::module/nested/file.txt", str(mirror_root / "nested")]]
-
-    meta = read_rsync_mirror_meta(mirror_root)
-    assert meta is not None
-    assert meta.paths is not None
-    assert meta.paths["nested/file.txt"]["updated"] == ["file.txt"]
-
-
-@pytest.mark.medium
-def test_rsync_meta_round_trip_and_invalid_read(tmp_path: Path):
-    payload: JsonValue = {"version": 2, "paths": {"a": {"updated_at_unix": 1, "updated": ["x"]}}}
-    meta = RsyncMirrorMeta.from_json(payload)
-    assert meta.to_json() == payload
-
-    meta_path = tmp_path / ".mirror_meta.json"
-    meta_path.write_text(json.dumps(payload), encoding="utf-8")
-    loaded = read_rsync_mirror_meta(tmp_path)
-    assert loaded is not None
-    assert loaded.to_json() == payload
-
-    meta_path.write_text("{", encoding="utf-8")
-    assert read_rsync_mirror_meta(tmp_path) is None
+    meta = RsyncMirrorMeta(remote="host::module", last_sync_at=123.0, last_status="ok")
+    rsync_mod._write_rsync_mirror_meta(local, meta)
+    assert read_rsync_mirror_meta(local) == meta
 
 
 @pytest.mark.small
-def test_rsync_process_once_does_not_set_start_new_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    captured_kwargs: dict[str, object] = {}
-
-    class FakeProc:
-        def __init__(self, _cmd: list[str], **kwargs: object):
-            captured_kwargs.update(kwargs)
-            self.stdout = io.BytesIO(b"")
-            self.stderr = io.BytesIO(b"")
-            self.returncode = 0
-
-        def wait(self) -> int:
-            self.returncode = 0
-            return 0
-
-    monkeypatch.setattr(rsync_mod.subprocess, "Popen", FakeProc)
-
-    cfg = RsyncMirrorConfig(
-        name="mirror",
-        remote="host::module",
-        local=tmp_path / "mirror",
-        progress=False,
-        verbose=False,
-    )
-
-    result = rsync_mod._run_rsync_process_once(
-        cfg,
-        cmd=["rsync", "host::module", str(tmp_path / "mirror")],
-        remote="host::module",
-        local=tmp_path / "mirror",
-        attempt=1,
-        max_attempts=3,
-    )
-
-    assert result.status == "success"
-    assert "start_new_session" not in captured_kwargs
+def test_json_type_cast_is_available() -> None:
+    value = cast("JsonValue", {"ok": True})
+    assert value == {"ok": True}

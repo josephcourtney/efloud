@@ -118,6 +118,8 @@ def _sync_http(
     assert result.ok
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_resolve_is_read_only_while_freeze_persists_same_identity(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     adapter = SequencedHttpAdapter((b"payload",))
@@ -151,6 +153,8 @@ def test_resolve_is_read_only_while_freeze_persists_same_identity(tmp_path: Path
         assert reopened.content_identity == resolved_content_identity
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_freeze_export_manifest_reopens_and_verifies_after_repository_is_gone(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     export = tmp_path / "export"
@@ -173,6 +177,8 @@ def test_freeze_export_manifest_reopens_and_verifies_after_repository_is_gone(tm
     assert not (elsewhere / "metadata.sqlite").exists()
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_frozen_membership_and_detached_evidence_ignore_later_source_changes(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     adapter = SequencedHttpAdapter((b"first", b"second"))
@@ -203,6 +209,8 @@ def test_frozen_membership_and_detached_evidence_ignore_later_source_changes(tmp
     assert detached["members"][0]["source_revision"]["definition"]["tags"] == ["stable"]
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_incomplete_source_snapshot_never_implies_absence_or_reproducibility(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     mirror = tmp_path / "mirror"
@@ -264,6 +272,8 @@ def test_incomplete_source_snapshot_never_implies_absence_or_reproducibility(tmp
             repository.datasets.resolve(DatasetSpec.source("missing").require(complete_snapshots=True))
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_corrupt_export_fails_verification_without_repository_mutation(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     export = tmp_path / "export"
@@ -283,6 +293,8 @@ def test_corrupt_export_fails_verification_without_repository_mutation(tmp_path:
     assert (root / "metadata.sqlite").read_bytes() == metadata_before
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_public_export_rejects_unsafe_collision_and_destination_race(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -319,6 +331,8 @@ def test_public_export_rejects_unsafe_collision_and_destination_race(
         assert not (destination / "dataset-manifest.json").exists()
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_exported_symlinks_are_private_and_cannot_mutate_repository_content(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     destination = tmp_path / "export"
@@ -380,6 +394,8 @@ def test_linux_reflink_path_invokes_ficlone_without_copy_fallback(
     assert destination.read_bytes() == b"reflink payload"
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_linux_native_reflink_public_export_on_required_cow_filesystem() -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("Linux-specific native reflink acceptance")
@@ -400,6 +416,8 @@ def test_linux_native_reflink_public_export_on_required_cow_filesystem() -> None
         shutil.rmtree(workspace, ignore_errors=True)
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 def test_generic_standard_library_consumer_validates_manifest_and_bytes(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     destination = tmp_path / "export"

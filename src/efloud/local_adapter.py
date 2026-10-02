@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,13 +39,31 @@ def _source(
     return source
 
 
-def _inspect_source(source_path: Path) -> tuple[float, int]:
+def _staging_path(context: AdapterExecutionContext, source: LocalSource) -> Path:
+    identity = hashlib.sha256(source.id.encode("utf-8")).hexdigest()
+    suffix = Path(source.path).suffix
+    return context.runtime.staging_root / "local" / f"{identity}{suffix}"
+
+
+def _copy_stable_source(source_path: Path, destination: Path) -> tuple[float, int]:
     resolved = source_path.resolve(strict=True)
+    before = resolved.stat()
     if not resolved.is_file():
         msg = f"Local source is not a regular file: {resolved}"
         raise ValueError(msg)
-    stat = resolved.stat()
-    return stat.st_mtime, stat.st_size
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    try:
+        shutil.copyfile(resolved, temporary)
+        after = resolved.stat()
+        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            msg = f"Local source changed while being imported: {resolved}"
+            raise RuntimeError(msg)
+        temporary.replace(destination)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+    return before.st_mtime, before.st_size
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,9 +73,14 @@ class LocalSourceAdapter:
     async def acquire(self, context: AdapterExecutionContext) -> LocalAcquisition:
         source = _source(context, self.descriptor)
         source_path = Path(source.path)
+        destination = _staging_path(context, source)
         try:
-            modified_at, size_bytes = await asyncio.to_thread(_inspect_source, source_path)
-        except (OSError, ValueError) as exc:
+            modified_at, size_bytes = await asyncio.to_thread(
+                _copy_stable_source,
+                source_path,
+                destination,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
             return LocalAcquisition(
                 source_id=source.id,
                 status="failed",
@@ -67,7 +93,7 @@ class LocalSourceAdapter:
         return LocalAcquisition(
             source_id=source.id,
             status="succeeded",
-            destination=None,
+            destination=destination,
             observed_at=time.time(),
             source_modified_at=modified_at,
             size_bytes=size_bytes,

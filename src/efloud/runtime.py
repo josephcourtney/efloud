@@ -36,13 +36,5 @@ class EngineRuntime:
     def rsync_root(self) -> Path:
         return self.staging_root / "rsync"
 
-    @property
-    def http_cache_root(self) -> Path:
-        return self.operational_root / "cache" / "http"
-
-    @property
-    def rate_limits_root(self) -> Path:
-        return self.operational_root / "rate-limits"
-
 
 __all__ = ["EngineRuntime"]

@@ -94,11 +94,20 @@ class HttpSourceAdapter:
         context: AdapterExecutionContext,
     ) -> HttpAcquisition:
         source = _source(context, self.descriptor)
+        if isinstance(source, HttpSource):
+            return HttpAcquisition(
+                source_id=source.id,
+                status="succeeded",
+                destination=None,
+                observed_at=time.time(),
+                expected_integrity=source.expected_integrity,
+            )
+
         destination = dest_for_http_source(
             context.runtime.http_root,
             url=source.url,
             description=source.description or source.id,
-            kind="REST" if isinstance(source, RestSource) else "HTTP",
+            kind="REST",
             cache_name=source.cache_name,
         )
         cache = _http_cache(context, source)
@@ -111,7 +120,7 @@ class HttpSourceAdapter:
                 status="failed",
                 destination=destination,
                 observed_at=time.time(),
-                media_type="application/json" if isinstance(source, RestSource) else None,
+                media_type="application/json",
                 expected_integrity=source.expected_integrity,
                 error=f"{type(exc).__name__}: {exc}",
             )

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import io
 import json
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,13 +16,7 @@ from efloud.transport.http_utils import (
     sha256_hex,
     slugify,
 )
-from efloud.transport.rsync import (
-    OpResult,
-    RsyncMirror,
-    RsyncMirrorConfig,
-    RsyncMirrorMeta,
-    read_rsync_mirror_meta,
-)
+from efloud.transport.rsync import OpResult, RsyncMirror, RsyncMirrorConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -128,13 +120,11 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
     assert rsync_mod._join_remote_path("rsync://host/base/", "/child") == "rsync://host/base/child"
     assert rsync_mod._looks_like_file_path("dir/file.txt") is True
     assert rsync_mod._looks_like_file_path("dir/subdir") is False
-    assert rsync_mod._updated_paths(["a", 1, "b"]) == ["a", "b"]
     assert rsync_mod._remote_host_and_port("host::module", configured_port=8873) == ("host", 8873)
     assert rsync_mod._remote_host_and_port("rsync://host:9900/module", configured_port=8873) == ("host", 9900)
     assert rsync_mod._format_clock_duration(83.9) == "01:23"
     assert rsync_mod._format_clock_duration(1200.0) == "20:00"
     assert rsync_mod._format_clock_duration(3723.0) == "01:02:03"
-    assert rsync_mod._parse_file_list_count("receiving file list ...\n67200 files...\n") == 67_200
     assert rsync_mod._parse_file_list_count("receiving file list ...\n67,200 files...\n") == 67_200
     assert rsync_mod._parse_transfer_progress(
         "169,440,614   0%   34.85MB/s    0:00:04 (xfr#634, to-chk=204090/251423)\n"
@@ -150,71 +140,47 @@ def test_rsync_helper_functions_build_expected_values(tmp_path: Path):
     assert rsync_mod._render_shell_arg("dir/file.txt") == "'dir/file.txt'"
     assert rsync_mod._render_shell_arg("**/.DS_Store") == "'**/.DS_Store'"
     assert rsync_mod._render_shell_arg("--archive") == "--archive"
-    assert (
-        rsync_mod._render_shell_command([
-            "rsync",
-            "--exclude",
-            "**/.DS_Store",
-            "rsync://host/module",
-            "dest",
-        ])
-        == "rsync --exclude '**/.DS_Store' 'rsync://host/module' dest"
-    )
-    progress_bar = rsync_mod._ProgressBarState(current_phase="receiving file list", file_list_count=67_200)
-    assert (
-        rsync_mod._connect_progress_label(
-            remote="rsync://host/module",
-            attempt=1,
-            max_attempts=3,
-            cfg=cfg,
-            progress_bar=progress_bar,
-            elapsed_seconds=83.0,
-        )
-        == "rsync attempt 1/3: receiving file list host:8873 (67,200 files) 18:37 remaining (20:00 timeout)"
-    )
-
-    transfer_progress_bar = rsync_mod._ProgressBarState(
-        current_phase="transferring files",
-        transfer_total_files=251_423,
-        transfer_handled_files=47_333,
-        transfer_transferred_files=634,
-        transfer_bytes=169_440_614,
-        transfer_rate="34.85MB/s",
-    )
-    assert (
-        rsync_mod._connect_progress_label(
-            remote="rsync://host/module",
-            attempt=1,
-            max_attempts=3,
-            cfg=cfg,
-            progress_bar=transfer_progress_bar,
-            elapsed_seconds=83.0,
-        )
-        == "rsync attempt 1/3: transferring files host:8873 (47,333/251,423 handled; 634 transferred; 169.4 MB; 34.85MB/s) 18:37 remaining (20:00 timeout)"
-    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.medium
-async def test_rsync_mirror_sync_and_metadata(tmp_path: Path, monkeypatch):
+async def test_rsync_mirror_executes_without_persistent_transport_state(tmp_path: Path, monkeypatch):
     local = tmp_path / "mirror"
     cfg = RsyncMirrorConfig(name="mirror", remote="host::module", local=local)
     mirror = RsyncMirror(cfg)
+    calls: list[tuple[list[str], str, Path]] = []
 
-    calls: list[list[str]] = []
+    def fake_run(config, *, cmd, remote, local):
+        assert config is cfg
+        calls.append((list(cmd), remote, local))
+        return OpResult(status="success", returncode=0, detail="ok", updated=["foo.txt"])
 
-    async def fake_run(cmd, *, timeout=None, progress=False, progress_context=None):
-        calls.append(list(cmd))
-        return OpResult(0, "ok", "")
+    monkeypatch.setattr(rsync_mod, "_run_rsync_process", fake_run)
+    first = await mirror.update()
+    second = await mirror.update()
 
-    monkeypatch.setattr(rsync_mod, "_run", fake_run)
-    result = await mirror.sync()
-    assert result.returncode == 0
-    assert calls
+    assert first.ok and second.ok
+    assert len(calls) == 2
+    assert not (local / ".mirror_meta.json").exists()
 
-    meta = RsyncMirrorMeta(remote="host::module", last_sync_at=123.0, last_status="ok")
-    rsync_mod._write_rsync_mirror_meta(local, meta)
-    assert read_rsync_mirror_meta(local) == meta
+
+@pytest.mark.asyncio
+@pytest.mark.medium
+async def test_rsync_path_updates_execute_each_requested_scope(tmp_path: Path, monkeypatch):
+    cfg = RsyncMirrorConfig(name="mirror", remote="host::module", local=tmp_path / "mirror")
+    mirror = RsyncMirror(cfg)
+    remotes: list[str] = []
+
+    def fake_run(config, *, cmd, remote, local):
+        del config, cmd, local
+        remotes.append(remote)
+        return OpResult(status="success", returncode=0, detail="ok")
+
+    monkeypatch.setattr(rsync_mod, "_run_rsync_process", fake_run)
+    results = await mirror.update_paths(["aa/", "bb/file.txt"])
+
+    assert set(results) == {"aa/", "bb/file.txt"}
+    assert remotes == ["host::module/aa", "host::module/bb/file.txt"]
 
 
 @pytest.mark.small

@@ -26,7 +26,6 @@ from efloud.collections import (
 )
 from efloud.fs import atomic_write_bytes, atomic_write_text, safe_json_dump
 from efloud.sources import CollectionSource
-from efloud.transport.http import HttpCache, HttpCacheConfig
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -46,27 +45,8 @@ _COLLECTION_DESCRIPTOR = AdapterDescriptor(
 )
 
 
-def _sqlite_url(path: Path) -> str:
-    return f"sqlite:///{path.resolve().as_posix()}"
-
-
 def _definition(definitions: Sequence[CollectionDefinition], source_id: str) -> CollectionDefinition | None:
     return next((definition for definition in definitions if definition.source_id == source_id), None)
-
-
-def _cache(context: AdapterExecutionContext, definition: CollectionDefinition) -> HttpCache:
-    context.runtime.http_cache_root.mkdir(parents=True, exist_ok=True)
-    context.runtime.rate_limits_root.mkdir(parents=True, exist_ok=True)
-    return HttpCache(
-        HttpCacheConfig(
-            name=f"collection:{definition.source_id}",
-            headers=dict(definition.request_headers or {}),
-            timeout=definition.timeout_seconds,
-            cache_db_path=str(context.runtime.http_cache_root / definition.cache_db_filename),
-            rate_limit_storage=_sqlite_url(context.runtime.rate_limits_root / definition.rate_limit_db_filename),
-            retries=definition.retries,
-        )
-    )
 
 
 def _write_response(
@@ -88,19 +68,19 @@ async def _fetch_collection_items(
     inventory: CollectionInventory,
     destination_root: Path,
 ) -> tuple[CollectionItemAcquisition, ...]:
-    cache = _cache(context, definition)
-    try:
-        refresh = context.operation.refresh.refresh if context.operation.refresh is not None else False
+    refresh = context.operation.refresh.refresh if context.operation.refresh is not None else False
+    async with httpx.AsyncClient(
+        headers=dict(definition.request_headers or {}),
+        timeout=definition.timeout_seconds,
+    ) as client:
         return await _fetch_items(
-            cache=cache,
+            client=client,
             source=source,
             definition=definition,
             items=inventory.items,
             destination_root=destination_root,
             refresh=refresh,
         )
-    finally:
-        await cache.aclose()
 
 
 async def _acquire_collection(
@@ -138,7 +118,7 @@ async def _acquire_collection(
 
 async def _fetch_item(
     *,
-    cache: HttpCache,
+    client: httpx.AsyncClient,
     source: CollectionSource,
     definition: CollectionDefinition,
     item: CollectionItem,
@@ -149,8 +129,9 @@ async def _fetch_item(
     url = f"{source.url.rstrip('/')}/{request_path.lstrip('/')}"
     destination = destination_root / definition.bucket(item.item_id)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    headers = {"Cache-Control": "no-cache"} if refresh else None
     try:
-        response = await cache.get(url, refresh=refresh)
+        response = await client.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_FOUND:
             return CollectionItemAcquisition(
                 item_id=item.item_id,
@@ -184,7 +165,7 @@ async def _fetch_item(
 
 async def _fetch_items(
     *,
-    cache: HttpCache,
+    client: httpx.AsyncClient,
     source: CollectionSource,
     definition: CollectionDefinition,
     items: tuple[CollectionItem, ...],
@@ -196,7 +177,7 @@ async def _fetch_items(
     async def run(item: CollectionItem) -> CollectionItemAcquisition:
         async with semaphore:
             return await _fetch_item(
-                cache=cache,
+                client=client,
                 source=source,
                 definition=definition,
                 item=item,

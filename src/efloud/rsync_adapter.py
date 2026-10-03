@@ -29,10 +29,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _sqlite_url(path: Path) -> str:
-    return f"sqlite:///{path.resolve().as_posix()}"
-
-
 def _source(
     context: AdapterExecutionContext,
     descriptor: AdapterDescriptor,
@@ -67,21 +63,16 @@ def _updated_paths(results: JsonObject) -> tuple[str, ...]:
 
 def _rsync_mirror(context: AdapterExecutionContext, source: RsyncSource, local_root: Path) -> RsyncMirror:
     runtime = context.runtime
-    runtime.rate_limits_root.mkdir(parents=True, exist_ok=True)
     return RsyncMirror(
         RsyncMirrorConfig(
             name=source.description or source.id,
             remote=source.url,
             local=local_root,
-            meta_path=local_root / ".mirror_meta.json",
             delete=False,
             timeout_seconds=1200.0,
             port=source.port,
             include=source.include,
             exclude=source.exclude or ('"**/.DS_Store"',),
-            rate_limit_storage=_sqlite_url(runtime.rate_limits_root / "mirror_rate_limits.sqlite"),
-            rate_limit_scope=None,
-            raise_on_rate_limit=False,
             progress=runtime.runtime_progress and source.id != "pdb_mmcif",
             dry_run=False,
             cmd=rsync_command_for_source(source),
@@ -105,14 +96,12 @@ class RsyncSourceAdapter:
             runtime_progress=runtime.runtime_progress,
         )
         mirror = _rsync_mirror(context, source, local_root)
-        force = context.operation.refresh.refresh if context.operation.refresh is not None else False
         observed_at = time.time()
         try:
             results = await run_rsync_operation(
                 source=source,
                 mirror=mirror,
                 rsync_paths=rsync_paths,
-                force=force,
                 synthetic_results=synthetic,
                 runtime_progress=runtime.runtime_progress,
             )

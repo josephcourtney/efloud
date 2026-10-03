@@ -212,7 +212,6 @@ async def _run_compact_mmcif(
     source: RsyncSource,
     mirror: RsyncMirror,
     rsync_paths: tuple[str, ...],
-    force: bool,
     synthetic_count: int,
     runtime_progress: bool,
 ) -> dict[str, OpResult]:
@@ -228,7 +227,7 @@ async def _run_compact_mmcif(
         inline=True,
     )
     for relative_path in rsync_paths:
-        shard_results = await mirror.update_paths([relative_path], force=force)
+        shard_results = await mirror.update_paths([relative_path])
         raw = shard_results.get(relative_path, OpResult(status="failed", detail="missing shard result"))
         result = _normalize_path_result(source, relative_path, raw)
         results[relative_path] = result
@@ -257,7 +256,6 @@ async def run_rsync_operation(
     source: RsyncSource,
     mirror: RsyncMirror,
     rsync_paths: tuple[str, ...] | None,
-    force: bool,
     synthetic_results: JsonMapping,
     runtime_progress: bool,
 ) -> JsonObject:
@@ -268,12 +266,11 @@ async def run_rsync_operation(
                 source=source,
                 mirror=mirror,
                 rsync_paths=rsync_paths,
-                force=force,
                 synthetic_count=len(synthetic_results),
                 runtime_progress=runtime_progress,
             )
             if compact
-            else await mirror.update_paths(list(rsync_paths), force=force)
+            else await mirror.update_paths(list(rsync_paths))
         )
         results: JsonObject = {}
         for relative_path, raw_result in per_path.items():
@@ -281,7 +278,7 @@ async def run_rsync_operation(
         for relative_path, payload in synthetic_results.items():
             results[relative_path] = payload
         return results
-    return {"update": _op_payload(await mirror.update(force=force))}
+    return {"update": _op_payload(await mirror.update())}
 
 
 __all__ = [

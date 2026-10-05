@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import io
 import time
-import urllib.request
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -40,11 +39,8 @@ class MemoryContentStore:
         return key
 
     def ingest_url(self, url: str) -> AnnexKey:
-        with urllib.request.urlopen(url) as response:  # noqa: S310 - test double accepts fixture URLs
-            payload = response.read()
-        key = self.ingest_bytes(payload)
-        self._urls[key] = url
-        return key
+        msg = f"MemoryContentStore does not perform network acquisition: {url}"
+        raise AssertionError(msg)
 
     def content_ref(self, key: AnnexKey, *, media_type: str | None = None) -> ContentRef:
         data = self._content[key]
@@ -80,18 +76,8 @@ class MemoryContentStore:
         self._urls[key] = url
 
     def get(self, key: AnnexKey) -> None:
-        if key in self._content:
-            return
-        url = self._urls.get(key)
-        if url is None:
+        if key not in self._content:
             raise FileNotFoundError(str(key))
-        with urllib.request.urlopen(url) as response:  # noqa: S310 - test double accepts fixture URLs
-            payload = response.read()
-        if self._key(payload) != key:
-            msg = f"Reacquired bytes do not match {key}"
-            raise ValueError(msg)
-        self._content[key] = payload
-        self._created_at[key] = time.time()
 
     def custody_mtime(self, key: AnnexKey) -> float:
         try:

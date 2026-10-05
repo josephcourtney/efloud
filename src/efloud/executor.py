@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Literal
 from efloud.adapters import AdapterExecutionContext, AdapterRegistry
 from efloud.derivation import source_inputs
 from efloud.operation_recording import RecordedOperation, record_source_acquisition, run_derived_operation
-from efloud.read_only_repository import ReadOnlyRepository
 from efloud.repository_models import ObservationId, OperationId, RunId, SourceId
+from efloud.repository_view import ExtensionRepositoryView
 from efloud.sources import CollectionSource, source_definition
 from efloud.validation import ValidationRegistry, ValidationService, builtin_validation_registry
 
@@ -141,17 +141,17 @@ async def _source_result(
     if adapter is None:
         return RecordedOperation("failed", details={"error": f"No adapter registered for {source.adapter_id}."})
     input_source_ids = _string_tuple(operation.parameters, "input_source_ids")
-    with ReadOnlyRepository(context.repository.root) as view:
-        inputs = source_inputs(view, input_source_ids)
-        acquisition = await adapter.acquire(
-            AdapterExecutionContext(
-                runtime=context.runtime,
-                repository=view,
-                source=source,
-                operation=operation,
-                inputs=inputs,
-            )
+    view = ExtensionRepositoryView(context.repository)
+    inputs = source_inputs(view, input_source_ids)
+    acquisition = await adapter.acquire(
+        AdapterExecutionContext(
+            runtime=context.runtime,
+            repository=view,
+            source=source,
+            operation=operation,
+            inputs=inputs,
         )
+    )
     return record_source_acquisition(
         context.repository,
         context.validation,

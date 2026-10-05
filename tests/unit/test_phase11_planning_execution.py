@@ -21,6 +21,7 @@ from efloud.repository import Repository
 from efloud.repository_models import SourceId
 from efloud.runtime import EngineRuntime
 from efloud.sources import HttpSource, RsyncSource
+from tests.support.content_store import MemoryContentStore, MemoryTreeStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -104,12 +105,16 @@ def _source(source_id: str) -> HttpSource:
     )
 
 
+def _repository(root: Path) -> Repository:
+    return Repository(root, content_store=MemoryContentStore(), tree_store=MemoryTreeStore())
+
+
 def test_planning_is_deterministic_and_performs_no_acquisition_or_authoritative_mutation(tmp_path: Path) -> None:
     adapter = RecordingHttpAdapter()
     registry = AdapterRegistry((adapter,))
     sources = (_source("b"), _source("a"))
 
-    with Repository(tmp_path) as repository:
+    with _repository(tmp_path) as repository:
         planner = SyncPlanner(registry)
         first = planner.plan(sources=sources, repository=repository)
         second = planner.plan(sources=sources, repository=repository)
@@ -133,7 +138,7 @@ def test_repository_snapshot_changes_deterministic_plan_identity(tmp_path: Path)
     adapter = RecordingHttpAdapter()
     source = _source("a")
 
-    with Repository(tmp_path) as repository:
+    with _repository(tmp_path) as repository:
         planner = SyncPlanner(AdapterRegistry((adapter,)))
         before = planner.plan(sources=(source,), repository=repository)
 
@@ -160,7 +165,7 @@ def test_dry_run_executes_exact_plan_shape_without_repository_mutation(tmp_path:
     source = _source("a")
     request = SyncRequest(dry_run=True, max_concurrency=1)
 
-    with Repository(tmp_path) as repository:
+    with _repository(tmp_path) as repository:
         engine = Engine(repository, (source,), adapters=AdapterRegistry((adapter,)))
         plan = engine.plan(request)
         result = asyncio.run(engine.sync(request))
@@ -181,7 +186,7 @@ def test_executor_enforces_requested_concurrency_bound(tmp_path: Path) -> None:
     adapter = RecordingHttpAdapter(delay_seconds=0.02)
     sources = (_source("a"), _source("b"), _source("c"))
 
-    with Repository(tmp_path) as repository:
+    with _repository(tmp_path) as repository:
         engine = Engine(repository, sources, adapters=AdapterRegistry((adapter,)))
         result = asyncio.run(engine.sync(SyncRequest(max_concurrency=2)))
         assert result.ok
@@ -194,7 +199,7 @@ def test_failed_dependency_blocks_derived_operation_and_persists_adapter_produce
     task = DependentTask()
     source = _source("a")
 
-    with Repository(tmp_path) as repository:
+    with _repository(tmp_path) as repository:
         engine = Engine(
             repository,
             (source,),
@@ -225,7 +230,7 @@ def test_runtime_operational_layout_does_not_affect_plan_identity(tmp_path: Path
     runtime_fields = {item.name for item in fields(EngineRuntime)}
     assert not runtime_fields & {"http_dir", "cache_dir", "mirrors_dir"}
 
-    with Repository(tmp_path) as repository:
+    with _repository(tmp_path) as repository:
         default = Engine(repository, (source,)).plan()
         alternate = Engine(
             repository,
@@ -247,7 +252,7 @@ def test_dry_run_records_selection_reasons_without_mutation(tmp_path: Path) -> N
     adapter = RecordingHttpAdapter()
     sources = (_source("a"), _source("b"))
     request = SyncRequest(source_ids=("a",), dry_run=True)
-    with Repository(tmp_path) as repository:
+    with _repository(tmp_path) as repository:
         engine = Engine(repository, sources, adapters=AdapterRegistry((adapter,)))
         plan = engine.plan(request)
         decisions = {decision.source_id: decision for decision in plan.decisions}

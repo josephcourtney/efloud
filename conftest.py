@@ -55,6 +55,23 @@ def pytest_configure(config: pytest.Config) -> None:
     _FAST_PHASE_DURATIONS = defaultdict(float)
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Classify external/backend acceptance work as slow unless already marked.
+
+    The fast development suite is for semantic/component feedback. Tests that
+    intentionally exercise integration or acceptance boundaries remain in the
+    full gate but must not make every edit pay Git/git-annex, packaging, or
+    end-to-end setup costs.
+    """
+    slow = pytest.mark.slow
+    for item in items:
+        keywords = item.keywords
+        external_boundary = "integration" in keywords or "acceptance" in keywords
+        packaging_contract = "contract" in keywords and "medium" in keywords
+        if (external_boundary or packaging_contract) and "slow" not in keywords:
+            item.add_marker(slow)
+
+
 @pytest.hookimpl
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     if not _ENFORCE_FAST_BUDGET:

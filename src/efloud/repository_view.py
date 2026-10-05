@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class ExtensionRepositoryView:
+class ExtensionRepositoryView:  # ruff: ignore[too-many-public-methods] - mirrors the intentionally narrow reader protocol.
     """Read-only extension capability over an already-open repository.
 
     This is a capability facade rather than a second repository connection: it

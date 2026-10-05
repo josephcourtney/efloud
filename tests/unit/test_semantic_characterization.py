@@ -7,6 +7,7 @@ import pytest
 from efloud.dataset_export import export_dataset_manifest
 from efloud.datasets import DatasetDefinition, DatasetSelection, ExactObservation, ImmutableDataset
 from efloud.repository import Repository
+from tests.support.content_store import MemoryContentStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,7 +59,7 @@ def _resolve_two_source_dataset(repository: Repository) -> ImmutableDataset:
 
 
 def test_multi_source_dataset_preserves_source_and_role_evidence(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repository:
+    with Repository(tmp_path, content_store=MemoryContentStore()) as repository:
         dataset = _resolve_two_source_dataset(repository)
         members = dataset.artifacts()
 
@@ -86,7 +87,7 @@ def test_multi_source_dataset_preserves_source_and_role_evidence(tmp_path: Path)
 
 
 def test_dataset_identity_is_independent_of_detached_export_layout(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repository:
+    with Repository(tmp_path, content_store=MemoryContentStore()) as repository:
         dataset = _resolve_two_source_dataset(repository)
 
         first = export_dataset_manifest(

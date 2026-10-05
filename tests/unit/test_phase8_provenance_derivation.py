@@ -8,6 +8,7 @@ from efloud.derivation import DerivedTaskSpec, derivation_key_for
 from efloud.indexing import DerivedIndexDefinition, DerivedIndexRegistry
 from efloud.repository import Repository
 from efloud.repository_models import ProducerRef
+from tests.support.content_store import MemoryContentStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
     from efloud.repository_models import ArtifactObservation, RunId
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
+
+
+def _repository(root: Path, store: MemoryContentStore | None = None) -> Repository:
+    return Repository(root, content_store=store or MemoryContentStore())
 
 
 def _input_observation(
@@ -43,7 +48,7 @@ def _input_observation(
 
 
 def test_producer_identity_and_lifecycle_transitions_are_explicit(tmp_path: Path) -> None:
-    with Repository(tmp_path) as repo:
+    with _repository(tmp_path) as repo:
         run_id = repo.start_run(started_at=1.0)
         producer = ProducerRef("test:worker", "7")
         operation_id = repo.start_operation(
@@ -96,7 +101,7 @@ def test_content_derivation_reuses_content_with_fresh_observation_provenance(tmp
         parameters={"mode": "fixture"},
     )
 
-    with Repository(tmp_path) as repo:
+    with _repository(tmp_path) as repo:
         first_run = repo.start_run(started_at=10.0)
         first_input = _input_observation(repo, first_run, observed_at=11.0)
         first_key = derivation_key_for(spec, outputs=("derived:a",), inputs=(first_input,))
@@ -166,7 +171,7 @@ def test_observation_sensitive_derivations_distinguish_identical_bytes(tmp_path:
         dependency_semantics="observation",
         parameters={},
     )
-    with Repository(tmp_path) as repo:
+    with _repository(tmp_path) as repo:
         first_run = repo.start_run(started_at=10.0)
         first = _input_observation(repo, first_run, observed_at=11.0)
         repo.finish_run(first_run, status="succeeded", finished_at=12.0)
@@ -198,8 +203,9 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
             description="Fixture semantic index",
         )
     ])
+    store = MemoryContentStore()
 
-    with Repository(tmp_path) as repo:
+    with _repository(tmp_path, store) as repo:
         first_run = repo.start_run(started_at=100.0)
         first_input = _input_observation(repo, first_run, observed_at=101.0)
         first = indexes.build(
@@ -213,7 +219,7 @@ def test_semantic_index_reuses_by_derivation_key_without_ttl(tmp_path: Path) -> 
         assert first.reused is False
         assert len(builds) == 1
 
-    with Repository(tmp_path) as reopened:
+    with _repository(tmp_path, store) as reopened:
         second_run = reopened.start_run(started_at=200.0)
         second_input = _input_observation(reopened, second_run, observed_at=201.0)
         second = indexes.build(

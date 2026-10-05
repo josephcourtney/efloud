@@ -13,6 +13,7 @@ from efloud.inventory import InventoryCoverage, InventoryItem, SourceInventory
 from efloud.repository import Repository
 from efloud.repository_models import ArtifactKey, SourceId
 from efloud.sources import CollectionSource
+from tests.support.content_store import MemoryContentStore, MemoryTreeStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.db, pytest.mark.regression, pytest.mark.medium]
 if TYPE_CHECKING:
@@ -73,7 +74,11 @@ def test_engine_records_collection_result(tmp_path: Path, monkeypatch: pytest.Mo
         )
 
     monkeypatch.setattr(CollectionSourceAdapter, "acquire", fake_acquire)
-    with Repository(tmp_path) as repository:
+    with Repository(
+        tmp_path,
+        content_store=MemoryContentStore(),
+        tree_store=MemoryTreeStore(),
+    ) as repository:
         engine = Engine(repository, (source,), collections=(definition,))
         result = asyncio.run(engine.sync())
         assert result.skipped_source_ids == ()

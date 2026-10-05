@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ExtensionRepositoryView:  # ruff: ignore[too-many-public-methods] - mirrors ExtensionReader.
     """Read-only extension capability over an already-open repository.
 
@@ -35,10 +35,10 @@ class ExtensionRepositoryView:  # ruff: ignore[too-many-public-methods] - mirror
     """
 
     _repository: ExtensionReader
+    root: Path = field(init=False)
 
-    @property
-    def root(self) -> Path:
-        return self._repository.root
+    def __post_init__(self) -> None:
+        self.root = self._repository.root
 
     def latest_state(
         self,

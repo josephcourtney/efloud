@@ -180,7 +180,9 @@ async def test_rsync_path_updates_execute_each_requested_scope(tmp_path: Path, m
     results = await mirror.update_paths(["aa/", "bb/file.txt"])
 
     assert set(results) == {"aa/", "bb/file.txt"}
-    assert remotes == ["host::module/aa", "host::module/bb/file.txt"]
+    # A trailing slash is semantic in rsync: copy the directory contents into
+    # the scoped local directory rather than nesting another aa directory.
+    assert remotes == ["host::module/aa/", "host::module/bb/file.txt"]
 
 
 @pytest.mark.small

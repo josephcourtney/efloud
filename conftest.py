@@ -55,6 +55,7 @@ def pytest_configure(config: pytest.Config) -> None:
     _FAST_PHASE_DURATIONS = defaultdict(float)
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Classify external/backend acceptance work as slow unless already marked.
 

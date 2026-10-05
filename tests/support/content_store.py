@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from efloud.content.protocol import AnnexKey
 from efloud.repository_models import ContentId, ContentRef
+from efloud.tree.protocol import GitCommitId, GitTreeEntry, GitTreeId, TreeBlob
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -97,3 +98,43 @@ class MemoryContentStore:
             return self._created_at[key]
         except KeyError as exc:
             raise FileNotFoundError(str(key)) from exc
+
+
+@dataclass(slots=True)
+class MemoryTreeStore:
+    """Fast tree/history double for tests that do not exercise Git object storage."""
+
+    _blobs: dict[str, bytes] = field(default_factory=dict)
+    _trees: dict[str, tuple[GitTreeEntry, ...]] = field(default_factory=dict)
+    _commits: dict[str, str] = field(default_factory=dict)
+
+    def write_tree(self, entries: tuple[TreeBlob, ...]) -> GitTreeId:
+        listed: list[GitTreeEntry] = []
+        digest = hashlib.sha256()
+        for entry in entries:
+            object_id = hashlib.sha256(entry.data).hexdigest()
+            self._blobs[object_id] = bytes(entry.data)
+            listed.append(GitTreeEntry(entry.relative_path, entry.mode, "blob", object_id))
+            digest.update(entry.relative_path.encode())
+            digest.update(b"\0")
+            digest.update(entry.mode.encode())
+            digest.update(b"\0")
+            digest.update(object_id.encode())
+            digest.update(b"\0")
+        tree_id = GitTreeId(digest.hexdigest())
+        self._trees[str(tree_id)] = tuple(listed)
+        return tree_id
+
+    def list_tree(self, treeish: GitTreeId | GitCommitId | str) -> tuple[GitTreeEntry, ...]:
+        key = str(treeish)
+        tree_id = self._commits.get(key, key)
+        return self._trees[tree_id]
+
+    def read_blob(self, object_id: str) -> bytes:
+        return self._blobs[object_id]
+
+    def commit_tree(self, tree: GitTreeId, *, ref: str, message: str) -> GitCommitId:
+        digest = hashlib.sha256(f"{tree}\0{ref}\0{message}".encode()).hexdigest()
+        commit = GitCommitId(digest)
+        self._commits[str(commit)] = str(tree)
+        return commit

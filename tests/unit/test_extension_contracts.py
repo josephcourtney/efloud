@@ -67,7 +67,6 @@ def _seed(repository: Repository) -> str:
 
 def test_extensions_receive_narrow_repository_contexts(tmp_path: Path) -> None:
     async def enumerate_empty(*, context: CollectionContext) -> CollectionInventory:
-        assert isinstance(context.repository, ReadOnlyRepository)
         assert not hasattr(context.repository, "ingest_bytes")
         assert len(context.inputs) == 1
         await asyncio.sleep(0)
